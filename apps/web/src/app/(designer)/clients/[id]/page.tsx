@@ -5,6 +5,57 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, ClientDetail, ClientPayload, Address } from '@/lib/api';
 
+function GenerateLinkButton({ projectId, onGenerated }: { projectId: string; onGenerated: (token: string) => void }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleGenerate() {
+    setLoading(true);
+    setError('');
+    const result = await api.generatePortalToken(projectId);
+    setLoading(false);
+    if (result.error) { setError(result.error); return; }
+    onGenerated(result.data!.portalToken);
+  }
+
+  return (
+    <div>
+      <button
+        onClick={handleGenerate}
+        disabled={loading}
+        title="Generate client portal link"
+        style={{
+          background: 'transparent',
+          border: '1px dashed var(--border-strong)',
+          borderRadius: 7, padding: '3px 9px',
+          fontSize: 11, fontWeight: 700, cursor: loading ? 'default' : 'pointer',
+          color: 'var(--text-muted)',
+          display: 'flex', alignItems: 'center', gap: 5,
+          transition: 'all 0.15s',
+        }}
+      >
+        {loading ? (
+          <>
+            <svg className="anim-rotate" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M21 12a9 9 0 11-6.219-8.56" />
+            </svg>
+            Generating…
+          </>
+        ) : (
+          <>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+            </svg>
+            Generate link
+          </>
+        )}
+      </button>
+      {error && <div style={{ fontSize: 11, color: '#b41e1e', marginTop: 4 }}>{error}</div>}
+    </div>
+  );
+}
+
 function CopyLinkButton({ portalToken }: { portalToken: string }) {
   const [copied, setCopied] = useState(false);
   function handleCopy() {
@@ -391,7 +442,7 @@ export default function ClientDetailPage() {
                       padding: '10px 12px', borderRadius: 10,
                       border: '1px solid var(--border)', background: 'var(--bg-input)',
                     }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: p.portalToken ? 8 : 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                         <div>
                           <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>{p.name}</div>
                           <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{formatDate(p.createdAt)}</div>
@@ -403,8 +454,20 @@ export default function ClientDetailPage() {
                           {st.label}
                         </div>
                       </div>
-                      {p.portalToken && (
+                      {p.portalToken ? (
                         <CopyLinkButton portalToken={p.portalToken} />
+                      ) : (
+                        <GenerateLinkButton
+                          projectId={p.id}
+                          onGenerated={(token) => {
+                            setClient((prev) => prev ? {
+                              ...prev,
+                              projects: prev.projects.map((proj) =>
+                                proj.id === p.id ? { ...proj, portalToken: token } : proj
+                              ),
+                            } : prev);
+                          }}
+                        />
                       )}
                     </div>
                   );

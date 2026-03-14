@@ -9,6 +9,7 @@ import logger from './config/logger';
 import authRouter from './routes/auth';
 import clientsRouter from './routes/clients';
 import portalRouter from './routes/portal';
+import projectsRouter from './routes/projects';
 
 const app = express();
 const PORT = process.env.API_PORT ?? 4000;
@@ -41,6 +42,7 @@ app.get('/health', (_req, res) => {
 app.use('/api/auth', authRouter);
 app.use('/api/clients', clientsRouter);
 app.use('/api/portal', portalRouter);
+app.use('/api/projects', projectsRouter);
 
 // Global error handler
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {

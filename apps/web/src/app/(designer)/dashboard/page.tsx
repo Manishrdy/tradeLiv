@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuthStore } from '@/lib/store/auth';
-import { api, DesignerProfile } from '@/lib/api';
+import { api, DesignerProfile, DashboardStats } from '@/lib/api';
 
 const STATS = [
   {
@@ -114,11 +114,11 @@ const QUICK_ACTIONS = [
 export default function DashboardPage() {
   const { user } = useAuthStore();
   const [profile, setProfile] = useState<DesignerProfile | null>(null);
+  const [stats, setStats] = useState<DashboardStats>({ activeProjects: 0, totalClients: 0, totalShortlisted: 0, totalOrders: 0 });
 
   useEffect(() => {
-    api.getMe().then((r) => {
-      if (r.data) setProfile(r.data);
-    });
+    api.getMe().then((r) => { if (r.data) setProfile(r.data); });
+    api.getDashboardStats().then((r) => { if (r.data) setStats(r.data); });
   }, []);
 
   const firstName = (profile?.fullName ?? user?.fullName ?? '').split(' ')[0] || 'Designer';
@@ -142,7 +142,12 @@ export default function DashboardPage() {
 
       {/* ── Stat cards ──────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 40 }}>
-        {STATS.map((s) => (
+        {STATS.map((s, i) => {
+          const liveValues = [stats.activeProjects, stats.totalClients, stats.totalShortlisted, stats.totalOrders];
+          const liveValue = liveValues[i];
+          const liveSub = liveValue === 0 ? s.sub : `${liveValue} total`;
+          return { ...s, value: String(liveValue ?? 0), sub: liveSub };
+        }).map((s) => (
           <Link key={s.label} href={s.href} style={{ textDecoration: 'none' }}>
             <div
               className="card"
@@ -171,7 +176,7 @@ export default function DashboardPage() {
               <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{s.sub}</div>
             </div>
           </Link>
-        ))}
+          ))}
       </div>
 
       {/* ── Get started ─────────────────────────────────── */}
