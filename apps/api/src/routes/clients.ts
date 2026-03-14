@@ -73,7 +73,7 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
       where: { id: req.params.id, designerId: req.user!.id },
       include: {
         projects: {
-          select: { id: true, name: true, status: true, createdAt: true },
+          select: { id: true, name: true, status: true, portalToken: true, createdAt: true },
           orderBy: { createdAt: 'desc' },
         },
         _count: { select: { projects: true } },

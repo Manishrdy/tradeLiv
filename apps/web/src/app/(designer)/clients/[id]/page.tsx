@@ -5,6 +5,49 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, ClientDetail, ClientPayload, Address } from '@/lib/api';
 
+function CopyLinkButton({ portalToken }: { portalToken: string }) {
+  const [copied, setCopied] = useState(false);
+  function handleCopy() {
+    const url = `${window.location.origin}/client/p/${portalToken}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+  return (
+    <button
+      onClick={handleCopy}
+      title="Copy client portal link"
+      style={{
+        background: copied ? 'rgba(39,103,73,0.12)' : 'transparent',
+        border: `1px solid ${copied ? 'rgba(39,103,73,0.3)' : 'var(--border)'}`,
+        borderRadius: 7, padding: '3px 9px',
+        fontSize: 11, fontWeight: 700, cursor: 'pointer',
+        color: copied ? '#276749' : 'var(--text-muted)',
+        display: 'flex', alignItems: 'center', gap: 5,
+        transition: 'all 0.15s', flexShrink: 0,
+      }}
+    >
+      {copied ? (
+        <>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          Copied
+        </>
+      ) : (
+        <>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+          </svg>
+          Copy link
+        </>
+      )}
+    </button>
+  );
+}
+
 function initials(name: string) {
   return name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
 }
@@ -345,20 +388,24 @@ export default function ClientDetailPage() {
                   const st = PROJECT_STATUS_COLORS[p.status] ?? PROJECT_STATUS_COLORS.draft;
                   return (
                     <div key={p.id} style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       padding: '10px 12px', borderRadius: 10,
                       border: '1px solid var(--border)', background: 'var(--bg-input)',
                     }}>
-                      <div>
-                        <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>{p.name}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{formatDate(p.createdAt)}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: p.portalToken ? 8 : 0 }}>
+                        <div>
+                          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>{p.name}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{formatDate(p.createdAt)}</div>
+                        </div>
+                        <div style={{
+                          background: st.bg, border: `1px solid ${st.border}`,
+                          borderRadius: 999, padding: '3px 9px', fontSize: 11, color: st.color, fontWeight: 600,
+                        }}>
+                          {st.label}
+                        </div>
                       </div>
-                      <div style={{
-                        background: st.bg, border: `1px solid ${st.border}`,
-                        borderRadius: 999, padding: '3px 9px', fontSize: 11, color: st.color, fontWeight: 600,
-                      }}>
-                        {st.label}
-                      </div>
+                      {p.portalToken && (
+                        <CopyLinkButton portalToken={p.portalToken} />
+                      )}
                     </div>
                   );
                 })}

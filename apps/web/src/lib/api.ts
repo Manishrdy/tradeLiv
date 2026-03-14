@@ -84,7 +84,56 @@ export interface Client {
 }
 
 export interface ClientDetail extends Client {
-  projects: { id: string; name: string; status: string; createdAt: string }[];
+  projects: { id: string; name: string; status: string; portalToken: string | null; createdAt: string }[];
+}
+
+/* ─── Portal types ──────────────────────────────────── */
+
+export interface PortalProduct {
+  id: string;
+  productName: string;
+  brandName: string | null;
+  price: number | null;
+  imageUrl: string | null;
+  productUrl: string | null;
+  dimensions: Record<string, unknown> | null;
+  material: string | null;
+}
+
+export interface PortalShortlistItem {
+  id: string;
+  status: 'suggested' | 'approved' | 'rejected' | 'added_to_cart';
+  selectedVariant: Record<string, unknown> | null;
+  sharedNotes: string | null;
+  clientNotes: string | null;
+  product: PortalProduct;
+}
+
+export interface PortalRoom {
+  id: string;
+  name: string;
+  areaSqft: number | null;
+  lengthFt: number | null;
+  widthFt: number | null;
+  shortlistItems: PortalShortlistItem[];
+}
+
+export interface PortalOrder {
+  id: string;
+  status: string;
+  totalAmount: number | null;
+  createdAt: string;
+}
+
+export interface PortalProject {
+  id: string;
+  name: string;
+  status: string;
+  createdAt: string;
+  designer: { fullName: string; businessName: string | null; phone: string | null; email: string };
+  client: { name: string; shippingAddress: Record<string, unknown> | null };
+  rooms: PortalRoom[];
+  orders: PortalOrder[];
 }
 
 export interface ClientPayload {
@@ -129,4 +178,18 @@ export const api = {
 
   updateClient: (id: string, payload: ClientPayload) =>
     request<Client>(`/api/clients/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+
+  // Portal (public — no auth required)
+  getPortalProject: (portalToken: string) =>
+    request<PortalProject>(`/api/portal/${portalToken}`),
+
+  updatePortalShortlistItem: (
+    portalToken: string,
+    itemId: string,
+    payload: { clientNotes?: string; status?: 'suggested' | 'approved' | 'rejected' },
+  ) =>
+    request<PortalShortlistItem>(`/api/portal/${portalToken}/shortlist/${itemId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
 };
