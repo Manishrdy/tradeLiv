@@ -192,20 +192,6 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 32 }}>
-            <button type="button" style={{
-              background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-              fontSize: 12, color: '#B0ADA8', fontWeight: 500,
-              fontFamily: 'inherit', letterSpacing: '-0.01em',
-              transition: 'color 0.14s',
-            }}
-              onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = '#0F0F0F')}
-              onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = '#B0ADA8')}
-            >
-              Forgot password?
-            </button>
-          </div>
-
           {error && (
             <div style={{
               background: 'rgba(185,28,28,0.04)', border: '1px solid rgba(185,28,28,0.12)',
