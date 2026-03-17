@@ -73,7 +73,7 @@ export default function NewClientPage() {
     setLoading(false);
 
     if (result.error) { setError(result.error); return; }
-    router.push(`/clients/${result.data.id}`);
+    router.push(`/clients/${result.data!.id}`);
   }
 
   return (
