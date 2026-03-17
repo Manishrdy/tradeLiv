@@ -73,6 +73,7 @@ model Designer {
 
   clients         Client[]
   projects        Project[]
+  products        Product[]
   shortlistItems  ShortlistItem[]
   scrapeBatches   ScrapeBatch[]
   pinnedComparisons PinnedComparison[]
@@ -154,6 +155,7 @@ model ScrapeBatch {
 
 model Product {
   id            String   @id @default(uuid())
+  designerId    String
   sourceUrl     String
   scrapeBatchId String?
   productName   String
@@ -171,6 +173,7 @@ model Product {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  designer       Designer        @relation(fields: [designerId], references: [id])
   scrapeBatch    ScrapeBatch?    @relation(fields: [scrapeBatchId], references: [id])
   shortlistItems ShortlistItem[]
   cartItems      CartItem[]

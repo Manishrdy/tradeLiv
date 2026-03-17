@@ -10,6 +10,8 @@ import authRouter from './routes/auth';
 import clientsRouter from './routes/clients';
 import portalRouter from './routes/portal';
 import projectsRouter from './routes/projects';
+import catalogRouter from './routes/catalog';
+import ordersRouter from './routes/orders';
 import adminRouter from './routes/admin';
 
 const app = express();
@@ -43,6 +45,8 @@ app.use('/api/auth', authRouter);
 app.use('/api/clients', clientsRouter);
 app.use('/api/portal', portalRouter);
 app.use('/api/projects', projectsRouter);
+app.use('/api/catalog', catalogRouter);
+app.use('/api/orders', ordersRouter);
 app.use('/api/admin', adminRouter);
 
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {

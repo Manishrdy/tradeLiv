@@ -227,6 +227,149 @@ export interface AuditLogEntry {
   createdAt: string;
 }
 
+/* ─── Product / Catalog types ──────────────────────── */
+
+export interface ProductDimensions {
+  length?: number;
+  width?: number;
+  height?: number;
+  depth?: number;
+  weight?: number;
+  unit?: 'cm' | 'in' | 'ft';
+}
+
+export interface Product {
+  id: string;
+  designerId: string;
+  productName: string;
+  sourceUrl: string;
+  brandName: string | null;
+  price: number | null;
+  imageUrl: string | null;
+  productUrl: string | null;
+  dimensions: ProductDimensions | null;
+  material: string | null;
+  finishes: string[];
+  leadTime: string | null;
+  category: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { shortlistItems: number; cartItems: number };
+}
+
+export interface ProductListItem {
+  id: string;
+  productName: string;
+  brandName: string | null;
+  price: number | null;
+  imageUrl: string | null;
+  category: string | null;
+  isActive: boolean;
+  sourceUrl: string;
+  material: string | null;
+  finishes: string[];
+  leadTime: string | null;
+  createdAt: string;
+  _count: { shortlistItems: number };
+}
+
+export interface ProductsResponse {
+  products: ProductListItem[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export interface ProductPayload {
+  productName: string;
+  sourceUrl: string;
+  brandName?: string;
+  price?: number;
+  imageUrl?: string;
+  productUrl?: string;
+  dimensions?: ProductDimensions;
+  material?: string;
+  finishes?: string[];
+  leadTime?: string;
+  category?: string;
+}
+
+export interface ProductUpdatePayload {
+  productName?: string;
+  sourceUrl?: string;
+  brandName?: string | null;
+  price?: number | null;
+  imageUrl?: string | null;
+  productUrl?: string | null;
+  dimensions?: ProductDimensions | null;
+  material?: string | null;
+  finishes?: string[];
+  leadTime?: string | null;
+  category?: string | null;
+}
+
+/* ─── Shortlist types ──────────────────────────────── */
+
+export interface ShortlistProduct {
+  id: string;
+  productName: string;
+  brandName: string | null;
+  price: number | null;
+  imageUrl: string | null;
+  category: string | null;
+  material: string | null;
+  dimensions: ProductDimensions | null;
+  finishes: string[];
+  leadTime: string | null;
+  isActive?: boolean;
+}
+
+export interface ShortlistItem {
+  id: string;
+  projectId: string;
+  roomId: string;
+  productId: string;
+  designerId: string;
+  selectedVariant: Record<string, string> | null;
+  quantity: number;
+  status: 'suggested' | 'approved' | 'rejected' | 'added_to_cart';
+  designerNotes: string | null;
+  clientNotes: string | null;
+  sharedNotes: string | null;
+  fitAssessment: string | null;
+  priorityRank: number | null;
+  isPinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+  product: ShortlistProduct;
+  room?: { id: string; name: string };
+}
+
+export interface ShortlistAddPayload {
+  productId: string;
+  roomId: string;
+  quantity?: number;
+  selectedVariant?: Record<string, string>;
+  designerNotes?: string;
+  sharedNotes?: string;
+  fitAssessment?: string;
+}
+
+export interface ShortlistUpdatePayload {
+  quantity?: number;
+  selectedVariant?: Record<string, string> | null;
+  designerNotes?: string | null;
+  sharedNotes?: string | null;
+  fitAssessment?: string | null;
+  priorityRank?: number | null;
+  isPinned?: boolean;
+  status?: 'suggested' | 'approved' | 'rejected' | 'added_to_cart';
+}
+
 /* ─── Portal types ──────────────────────────────────── */
 
 export interface PortalProduct {
@@ -383,6 +526,59 @@ export const api = {
 
   deleteRoom: (projectId: string, roomId: string) =>
     request<{ message: string }>(`/api/projects/${projectId}/rooms/${roomId}`, { method: 'DELETE' }),
+
+  // Catalog
+  getProducts: (params?: { search?: string; category?: string; page?: number; limit?: number; includeInactive?: boolean }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set('search', params.search);
+    if (params?.category) qs.set('category', params.category);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.includeInactive) qs.set('includeInactive', 'true');
+    const q = qs.toString();
+    return request<ProductsResponse>(`/api/catalog/products${q ? `?${q}` : ''}`);
+  },
+
+  getProductCategories: () =>
+    request<string[]>('/api/catalog/products/categories'),
+
+  getProduct: (id: string) =>
+    request<Product>(`/api/catalog/products/${id}`),
+
+  createProduct: (payload: ProductPayload) =>
+    request<Product>('/api/catalog/products', { method: 'POST', body: JSON.stringify(payload) }),
+
+  updateProduct: (id: string, payload: ProductUpdatePayload) =>
+    request<Product>(`/api/catalog/products/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+
+  deactivateProduct: (id: string) =>
+    request<Product>(`/api/catalog/products/${id}/deactivate`, { method: 'PUT' }),
+
+  reactivateProduct: (id: string) =>
+    request<Product>(`/api/catalog/products/${id}/reactivate`, { method: 'PUT' }),
+
+  // Shortlist
+  getProjectShortlist: (projectId: string, roomId?: string) => {
+    const qs = roomId ? `?roomId=${roomId}` : '';
+    return request<ShortlistItem[]>(`/api/orders/projects/${projectId}/shortlist${qs}`);
+  },
+
+  addToShortlist: (projectId: string, payload: ShortlistAddPayload) =>
+    request<ShortlistItem>(`/api/orders/projects/${projectId}/shortlist`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateShortlistItem: (projectId: string, itemId: string, payload: ShortlistUpdatePayload) =>
+    request<ShortlistItem>(`/api/orders/projects/${projectId}/shortlist/${itemId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  removeShortlistItem: (projectId: string, itemId: string) =>
+    request<{ message: string }>(`/api/orders/projects/${projectId}/shortlist/${itemId}`, {
+      method: 'DELETE',
+    }),
 
   // Portal (public)
   getPortalProject: (portalToken: string) =>
