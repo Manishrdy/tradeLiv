@@ -298,6 +298,35 @@ export interface ProductPayload {
   category?: string;
 }
 
+export interface ExtractedProduct {
+  productName: string;
+  brandName?: string;
+  price?: number;
+  imageUrl?: string;
+  productUrl?: string;
+  dimensions?: ProductDimensions;
+  material?: string;
+  finishes?: string[];
+  leadTime?: string;
+  category?: string;
+}
+
+export interface DuplicateProduct {
+  id: string;
+  productName: string;
+  brandName: string | null;
+  imageUrl: string | null;
+  isActive: boolean;
+}
+
+export interface ExtractionResult {
+  type: 'single' | 'multiple' | 'duplicate';
+  product?: ExtractedProduct;
+  products?: ExtractedProduct[];
+  totalFound?: number;
+  duplicateProduct?: DuplicateProduct;
+}
+
 export interface ProductUpdatePayload {
   productName?: string;
   sourceUrl?: string;
@@ -559,6 +588,9 @@ export const api = {
 
   reactivateProduct: (id: string) =>
     request<Product>(`/api/catalog/products/${id}/reactivate`, { method: 'PUT' }),
+
+  extractProduct: (sourceUrl: string) =>
+    request<ExtractionResult>('/api/catalog/extract', { method: 'POST', body: JSON.stringify({ sourceUrl }) }),
 
   // Shortlist
   getProjectShortlist: (projectId: string, roomId?: string) => {

@@ -3,7 +3,14 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, Product, ProductUpdatePayload, ProductDimensions } from '@/lib/api';
+import { api, Product, ProductUpdatePayload, ProductDimensions, ExtractedProduct } from '@/lib/api';
+
+const EXTRACT_STEPS = [
+  'Visiting page…',
+  'Reading product details…',
+  'Identifying product data…',
+  'Almost done…',
+];
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
@@ -57,6 +64,12 @@ export default function ProductDetailPage() {
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
 
+  // Re-extract state
+  const [reExtracting, setReExtracting] = useState(false);
+  const [reExtractStep, setReExtractStep] = useState(0);
+  const [reExtractError, setReExtractError] = useState('');
+  const [reExtractPreview, setReExtractPreview] = useState<ExtractedProduct | null>(null);
+
   // Edit fields
   const [productName, setProductName] = useState('');
   const [sourceUrl, setSourceUrl] = useState('');
@@ -82,6 +95,15 @@ export default function ProductDetailPage() {
     });
   }, [id]);
 
+  // Cycle extract step while re-extracting
+  useEffect(() => {
+    if (!reExtracting) { setReExtractStep(0); return; }
+    const interval = setInterval(() => {
+      setReExtractStep((s) => Math.min(s + 1, EXTRACT_STEPS.length - 1));
+    }, 7000);
+    return () => clearInterval(interval);
+  }, [reExtracting]);
+
   function populateForm(p: Product) {
     setProductName(p.productName);
     setSourceUrl(p.sourceUrl);
@@ -98,6 +120,58 @@ export default function ProductDetailPage() {
     setDimWidth(dim?.width != null ? String(dim.width) : '');
     setDimHeight(dim?.height != null ? String(dim.height) : '');
     setDimUnit((dim?.unit as 'in' | 'cm' | 'ft') ?? 'in');
+  }
+
+  function applyReExtract(data: ExtractedProduct) {
+    setProductName(data.productName ?? productName);
+    setBrandName(data.brandName ?? '');
+    setPrice(data.price != null ? String(data.price) : '');
+    setImageUrl(data.imageUrl ?? '');
+    setProductUrl(data.productUrl ?? '');
+    setCategory(data.category ?? '');
+    setMaterial(data.material ?? '');
+    setLeadTime(data.leadTime ?? '');
+    setFinishes(data.finishes ?? []);
+    if (data.dimensions) {
+      setDimLength(data.dimensions.length != null ? String(data.dimensions.length) : '');
+      setDimWidth(data.dimensions.width != null ? String(data.dimensions.width) : '');
+      setDimHeight(data.dimensions.height != null ? String(data.dimensions.height) : '');
+      if (data.dimensions.unit) setDimUnit(data.dimensions.unit as 'in' | 'cm' | 'ft');
+    }
+    setReExtractPreview(null);
+    setEditing(true);
+  }
+
+  async function handleReExtract() {
+    if (!product) return;
+    setReExtracting(true);
+    setReExtractError('');
+    setReExtractPreview(null);
+
+    const result = await api.extractProduct(product.sourceUrl);
+    setReExtracting(false);
+
+    if (result.error) {
+      setReExtractError(result.error);
+      return;
+    }
+
+    const data = result.data!;
+
+    if (data.type === 'duplicate') {
+      // This product IS the duplicate — just show success with current data
+      setReExtractError('This URL is already saved as this product.');
+      return;
+    }
+
+    if (data.type === 'multiple') {
+      setReExtractError('Multiple products found at this URL. Use the catalog page to add individual products.');
+      return;
+    }
+
+    if (data.product) {
+      setReExtractPreview(data.product);
+    }
   }
 
   function addFinish() {
@@ -224,7 +298,31 @@ export default function ProductDetailPage() {
         </div>
 
         {!editing && (
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {/* Re-extract button */}
+            <button
+              className="btn-ghost"
+              onClick={handleReExtract}
+              disabled={reExtracting}
+              style={{ display: 'flex', alignItems: 'center', gap: 7 }}
+            >
+              {reExtracting ? (
+                <>
+                  <svg className="anim-rotate" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 12a9 9 0 11-6.219-8.56" />
+                  </svg>
+                  {EXTRACT_STEPS[reExtractStep]}
+                </>
+              ) : (
+                <>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+                  </svg>
+                  Re-extract
+                </>
+              )}
+            </button>
+
             <button className="btn-ghost" onClick={() => setEditing(true)} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
@@ -247,6 +345,68 @@ export default function ProductDetailPage() {
           </div>
         )}
       </div>
+
+      {/* ── Re-extract feedback ──────────────────────────── */}
+      {reExtractError && (
+        <div className="error-box" style={{ marginBottom: 16 }}>{reExtractError}</div>
+      )}
+
+      {/* Re-extract preview card */}
+      {reExtractPreview && (
+        <div className="card" style={{ padding: '20px 24px', marginBottom: 20, border: '1px solid rgba(168,113,10,0.25)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2.5" strokeLinecap="round">
+                <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+              </svg>
+              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Fresh data extracted</span>
+            </div>
+            <button
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}
+              onClick={() => setReExtractPreview(null)}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Snapshot of what will be applied */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 16 }}>
+            {[
+              { label: 'Name', value: reExtractPreview.productName },
+              { label: 'Brand', value: reExtractPreview.brandName || '—' },
+              { label: 'Price', value: reExtractPreview.price != null ? `$${reExtractPreview.price.toLocaleString()}` : '—' },
+              { label: 'Category', value: reExtractPreview.category || '—' },
+              { label: 'Material', value: reExtractPreview.material || '—' },
+              { label: 'Lead Time', value: reExtractPreview.leadTime || '—' },
+            ].map((row) => (
+              <div key={row.label} style={{ padding: '8px 10px', borderRadius: 6, background: 'var(--bg-input)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 3 }}>{row.label}</div>
+                <div style={{ fontSize: 12.5, color: 'var(--text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
+            Review the extracted data above. Click Apply to load it into the edit form, then save when ready.
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="btn-primary"
+              onClick={() => applyReExtract(reExtractPreview)}
+              style={{ display: 'flex', alignItems: 'center', gap: 7 }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              Apply & Edit
+            </button>
+            <button className="btn-ghost" onClick={() => setReExtractPreview(null)}>Discard</button>
+          </div>
+        </div>
+      )}
 
       {/* ── Confirm deactivate/reactivate dialog ────────── */}
       {confirmDeactivate && (

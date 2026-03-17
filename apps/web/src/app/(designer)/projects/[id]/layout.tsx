@@ -4,12 +4,8 @@ import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
 
 const TABS = [
-  { label: 'Overview',  href: (id: string) => `/projects/${id}`,          available: true },
-  { label: 'Rooms',     href: (id: string) => `/projects/${id}/rooms`,     available: true },
-  { label: 'Catalog',   href: (id: string) => `/projects/${id}/catalog`,   available: false },
-  { label: 'Shortlist', href: (id: string) => `/projects/${id}/shortlist`, available: false },
-  { label: 'Cart',      href: (id: string) => `/projects/${id}/cart`,      available: false },
-  { label: 'Orders',    href: (id: string) => `/projects/${id}/orders`,    available: false },
+  { label: 'Overview', href: (id: string) => `/projects/${id}` },
+  { label: 'Rooms',    href: (id: string) => `/projects/${id}/rooms` },
 ];
 
 export default function ProjectLayout({ children }: { children: React.ReactNode }) {
@@ -28,8 +24,8 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
       }}>
         {TABS.map((tab) => {
           const href = tab.href(id);
-          const isActive = pathname === href;
-          return tab.available ? (
+          const isActive = pathname === href || (tab.label === 'Rooms' && pathname.startsWith(`/projects/${id}/rooms`));
+          return (
             <Link
               key={tab.label}
               href={href}
@@ -47,19 +43,6 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
             >
               {tab.label}
             </Link>
-          ) : (
-            <span
-              key={tab.label}
-              style={{
-                padding: '14px 18px',
-                fontSize: 13.5, fontWeight: 700,
-                color: 'var(--border-strong)',
-                cursor: 'default', whiteSpace: 'nowrap',
-              }}
-              title="Coming soon"
-            >
-              {tab.label}
-            </span>
           );
         })}
       </div>

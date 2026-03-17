@@ -178,6 +178,8 @@ model Product {
   shortlistItems ShortlistItem[]
   cartItems      CartItem[]
   orderLineItems OrderLineItem[]
+
+  @@index([designerId, sourceUrl])
 }
 
 model ShortlistItem {

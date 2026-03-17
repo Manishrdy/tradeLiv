@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { writeAuditLog } from '../services/auditLog';
+import { extractProductFromUrl, ExtractionResult } from '../services/catalogExtractor';
 import logger from '../config/logger';
 
 const router = Router();
@@ -47,6 +48,22 @@ const productUpdateSchema = z.object({
   category: z.string().max(100).nullable().optional(),
 });
 
+/* ─── Rate limiter (30s per designer, in-memory) ────── */
+
+const extractRateLimit = new Map<string, number>();
+const RATE_LIMIT_MS = 30_000;
+
+function checkRateLimit(designerId: string): { allowed: boolean; retryAfter?: number } {
+  const last = extractRateLimit.get(designerId);
+  if (last != null) {
+    const elapsed = Date.now() - last;
+    if (elapsed < RATE_LIMIT_MS) {
+      return { allowed: false, retryAfter: Math.ceil((RATE_LIMIT_MS - elapsed) / 1000) };
+    }
+  }
+  return { allowed: true };
+}
+
 /* ─── Helpers ───────────────────────────────────────── */
 
 function toNum(v: unknown): number | null {
@@ -60,6 +77,20 @@ function serializeProduct(p: any) {
     ...p,
     price: toNum(p.price),
   };
+}
+
+async function validateImageUrl(url: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(url, { method: 'HEAD', signal: controller.signal });
+    clearTimeout(timeout);
+    // Only treat explicit client errors as invalid (not network errors or server errors)
+    return res.status !== 404 && res.status !== 403 && res.status !== 410;
+  } catch {
+    // Network errors, timeouts, CORS — don't penalise; assume valid
+    return true;
+  }
 }
 
 /* ─── GET /api/catalog/products ─────────────────────── */
@@ -212,6 +243,18 @@ router.post('/products', async (req: AuthRequest, res: Response) => {
       payload: { productName: product.productName, brandName: product.brandName },
     });
 
+    // Validate imageUrl — clear it if clearly invalid (404/403/410), warn the client
+    let imageUrlWarning = false;
+    if (product.imageUrl) {
+      const imageValid = await validateImageUrl(product.imageUrl);
+      if (!imageValid) {
+        await prisma.product.update({ where: { id: product.id }, data: { imageUrl: null } });
+        imageUrlWarning = true;
+        res.status(201).json({ ...serializeProduct({ ...product, imageUrl: null }), imageUrlWarning });
+        return;
+      }
+    }
+
     res.status(201).json(serializeProduct(product));
   } catch (err) {
     logger.error('catalog route error', { err, path: req.path, method: req.method });
@@ -318,6 +361,63 @@ router.put('/products/:id/reactivate', async (req: AuthRequest, res: Response) =
   } catch (err) {
     logger.error('catalog route error', { err, path: req.path, method: req.method });
     res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── POST /api/catalog/extract ─────────────────────── */
+
+const extractSchema = z.object({
+  sourceUrl: z.string().url('Invalid URL'),
+});
+
+router.post('/extract', async (req: AuthRequest, res: Response) => {
+  const parsed = extractSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0].message });
+    return;
+  }
+
+  // Rate limit: 30s per designer
+  const designerId = req.user!.id;
+  const rateCheck = checkRateLimit(designerId);
+  if (!rateCheck.allowed) {
+    res.status(429).json({
+      error: `Please wait ${rateCheck.retryAfter}s before extracting again.`,
+      retryAfter: rateCheck.retryAfter,
+    });
+    return;
+  }
+
+  // URL duplicate check — if this exact URL already exists in the designer's catalog
+  try {
+    const duplicate = await prisma.product.findFirst({
+      where: { designerId, sourceUrl: parsed.data.sourceUrl },
+      select: { id: true, productName: true, brandName: true, imageUrl: true, isActive: true },
+    });
+
+    if (duplicate) {
+      res.json({ type: 'duplicate', duplicateProduct: duplicate });
+      return;
+    }
+  } catch (err) {
+    logger.error('catalog extract duplicate check error', { err });
+    // Non-fatal — proceed with extraction if duplicate check fails
+  }
+
+  // Mark rate limit timestamp before calling Claude (prevents hammering on slow responses)
+  extractRateLimit.set(designerId, Date.now());
+
+  try {
+    const result: ExtractionResult = await extractProductFromUrl(parsed.data.sourceUrl);
+    res.json(result);
+  } catch (err: any) {
+    logger.error('catalog extract error', { err, sourceUrl: parsed.data.sourceUrl });
+    const message = err?.message?.includes('parse')
+      || err?.message?.includes('extract')
+      || err?.message?.includes('No products')
+      ? err.message
+      : 'Failed to extract product details. Please try a different URL or add the product manually.';
+    res.status(422).json({ error: message });
   }
 });
 

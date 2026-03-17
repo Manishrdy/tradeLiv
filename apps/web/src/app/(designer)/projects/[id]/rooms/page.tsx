@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'next/navigation';
+import Link from 'next/link';
 import { api, Room, RoomPayload } from '@/lib/api';
 
 /* ── Constants ──────────────────────────────────────────── */
@@ -491,14 +492,28 @@ function RoomCard({
     );
   }
 
+  const shortlistCount = room._count?.shortlistItems ?? 0;
+
   return (
     <div className="card" style={{ padding: '18px 20px' }}>
       {/* Header row */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em', marginBottom: 3 }}>
-            {room.name}
-          </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Link
+            href={`/projects/${projectId}/rooms/${room.id}`}
+            style={{ textDecoration: 'none' }}
+          >
+            <div
+              style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em', marginBottom: 3, cursor: 'pointer', transition: 'color 0.12s' }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.color = 'var(--gold)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.color = 'var(--text-primary)'; }}
+            >
+              {room.name}
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ marginLeft: 6, opacity: 0.4, verticalAlign: 'middle' }}>
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+            </div>
+          </Link>
           <div style={{ display: 'flex', gap: 12, fontSize: 12.5, color: 'var(--text-muted)', fontWeight: 500 }}>
             {room.areaSqft != null && (
               <span>{room.areaSqft} sq ft</span>
@@ -513,7 +528,34 @@ function RoomCard({
             )}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+          {shortlistCount > 0 && (
+            <span style={{
+              background: 'var(--gold-dim)', border: '1px solid var(--gold-border)',
+              borderRadius: 999, padding: '3px 10px',
+              fontSize: 11, fontWeight: 700, color: 'var(--gold)',
+            }}>
+              {shortlistCount} item{shortlistCount !== 1 ? 's' : ''}
+            </span>
+          )}
+          <Link
+            href={`/projects/${projectId}/rooms/${room.id}`}
+            style={{
+              border: '1px solid var(--border)', borderRadius: 8,
+              background: 'transparent', color: 'var(--text-secondary)',
+              padding: '5px 12px', fontSize: 12, fontWeight: 600,
+              textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 5,
+              transition: 'all 0.12s',
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.borderColor = 'var(--border-strong)'; (e.currentTarget as HTMLAnchorElement).style.background = 'var(--bg-input)'; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLAnchorElement).style.background = 'transparent'; }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+            View
+          </Link>
           <button
             onClick={() => setEditing(true)}
             style={{
