@@ -121,15 +121,44 @@ function ShortlistCard({
             {statusBadge(item.status)}
           </div>
 
-          {item.product.price != null && (
-            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', marginTop: 6 }}>
-              ${item.product.price.toLocaleString('en-US')}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+            {item.product.price != null && (
+              <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)' }}>
+                ${item.product.price.toLocaleString('en-US')}
+              </div>
+            )}
+            {item.quantity > 1 && (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>
+                Qty: {item.quantity}
+              </div>
+            )}
+          </div>
+
+          {(item.product.material || item.fitAssessment) && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+              {item.product.material && (
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  Material: {item.product.material}
+                </div>
+              )}
+              {item.fitAssessment && (
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  Fit: {item.fitAssessment}
+                </div>
+              )}
             </div>
           )}
 
-          {item.product.material && (
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-              Material: {item.product.material}
+          {item.product.finishes && item.product.finishes.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+              {item.product.finishes.map((f) => (
+                <span key={f} style={{
+                  fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
+                  background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-secondary)',
+                }}>
+                  {f}
+                </span>
+              ))}
             </div>
           )}
 
@@ -363,6 +392,10 @@ export default function PortalPage() {
   const approvedCount = project.rooms.reduce(
     (sum, r) => sum + r.shortlistItems.filter((i) => i.status === 'approved').length, 0
   );
+  const rejectedCount = project.rooms.reduce(
+    (sum, r) => sum + r.shortlistItems.filter((i) => i.status === 'rejected').length, 0
+  );
+  const pendingCount = totalItems - approvedCount - rejectedCount;
 
   return (
     <div>
@@ -391,7 +424,8 @@ export default function PortalPage() {
           {[
             { label: 'Items', value: totalItems },
             { label: 'Approved', value: approvedCount },
-            { label: 'Pending', value: totalItems - approvedCount },
+            { label: 'Pending', value: pendingCount },
+            ...(rejectedCount > 0 ? [{ label: 'Rejected', value: rejectedCount }] : []),
           ].map((stat) => (
             <div key={stat.label} style={{ flex: 1, textAlign: 'center' }}>
               <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--text-primary)' }}>{stat.value}</div>

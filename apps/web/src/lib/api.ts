@@ -381,14 +381,17 @@ export interface PortalProduct {
   productUrl: string | null;
   dimensions: Record<string, unknown> | null;
   material: string | null;
+  finishes?: string[];
 }
 
 export interface PortalShortlistItem {
   id: string;
   status: 'suggested' | 'approved' | 'rejected' | 'added_to_cart';
+  quantity: number;
   selectedVariant: Record<string, unknown> | null;
   sharedNotes: string | null;
   clientNotes: string | null;
+  fitAssessment: string | null;
   product: PortalProduct;
 }
 
