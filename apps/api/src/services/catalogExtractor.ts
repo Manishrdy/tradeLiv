@@ -4,6 +4,18 @@ import logger from '../config/logger';
 
 const client = new Anthropic({ apiKey: config.claudeApiKey });
 
+/* ─── Models ─────────────────────────────────────────── */
+
+const MODEL_FAST = 'claude-haiku-4-5-20251001';  // Direct extraction (no tools)
+const MODEL_SEARCH = 'claude-sonnet-4-6';         // Web search fallback
+
+/* ─── Constants ─────────────────────────────────────── */
+
+// Signals (meta/JSON-LD) are always in <head>; 150KB captures it entirely.
+const HTML_READ_LIMIT = 150_000;
+
+/* ─── Types ──────────────────────────────────────────── */
+
 export interface ExtractedProductData {
   productName: string;
   brandName?: string;
@@ -29,217 +41,507 @@ export interface ExtractionResult {
   totalFound?: number;
 }
 
+/* ─── System prompt ──────────────────────────────────── */
+
 const SYSTEM_PROMPT = `You are a furniture product data extractor for an interior design trade platform.
 
-When given a URL, use web search to visit the page and extract product data. First determine if it is:
-A) A SINGLE PRODUCT page (shows one product with details, price, specs)
-B) A COLLECTION/CATEGORY page (shows a grid/list of multiple products)
+You receive structured signals extracted from a product page (meta tags, JSON-LD, breadcrumbs, etc.).
+Respond with ONLY a valid JSON object. No markdown, no explanation, no extra text.
 
-After searching, respond with ONLY a valid JSON object (no markdown, no backticks, no explanation).
+REQUIRED — always include these four fields:
+- productName: the product name. Use og:title or JSON-LD name. Strip " | Brand" or " - Site Name" suffixes from titles.
+- price: number only (e.g. 1299.00). Use the current/sale price if shown. null if no price found anywhere.
+- imageUrl: the main product image as a full https:// URL. Prefer og:image, then JSON-LD image, then twitter:image. CDN URLs with query params (e.g. ?w=800&fmt=webp) are valid — include them exactly. null only if truly no image signal exists.
+- category: ALWAYS infer the furniture category, even if not explicit. Use the product name and breadcrumbs. Must be exactly one of: Sofa, Dining Table, Bed, Desk, Storage, Lighting, Armchair, Side Table, Bookshelf, Mirror, Rug, Wardrobe, TV Unit, Coffee Table, Console Table, Bar Stool, Ottoman, Bench, Dresser, Nightstand, Chair, Table, Outdoor, Accessories
 
-For a SINGLE PRODUCT page, return:
+OPTIONAL — include only when clearly present in the signals:
+- brandName: manufacturer or brand name
+- dimensions: { length, width, height, unit } — unit must be "in", "cm", or "ft"
+- material: primary material (e.g. "Solid Walnut", "Bouclé Fabric")
+- finishes: array of finish/color option strings
+- leadTime: delivery lead time string (e.g. "4–6 weeks")
+- productUrl: canonical product page URL
+
+For a SINGLE PRODUCT page respond:
 {
   "type": "single",
   "product": {
-    "productName": "exact product name",
-    "brandName": "manufacturer or brand",
-    "price": 1299.00,
-    "imageUrl": "direct URL to the main product image (full https:// URL)",
-    "productUrl": "canonical product page URL",
-    "dimensions": { "length": 84, "width": 37, "height": 33, "unit": "in" },
-    "material": "primary material",
-    "finishes": ["Finish 1", "Finish 2"],
-    "leadTime": "e.g. 4-6 weeks",
-    "category": "one of the allowed categories"
+    "productName": "Sven Charme Tan Sofa",
+    "price": 1895.00,
+    "imageUrl": "https://cdn.example.com/sven-sofa.jpg?w=800",
+    "category": "Sofa",
+    "brandName": "Article",
+    "productUrl": "https://example.com/products/sven-sofa"
   }
 }
 
-For a COLLECTION/CATEGORY page, return:
+For a COLLECTION/CATEGORY page (multiple products visible) respond:
 {
   "type": "multiple",
-  "totalFound": 12,
+  "totalFound": 24,
   "products": [
-    {
-      "productName": "Product 1",
-      "brandName": "Brand",
-      "price": 999.00,
-      "imageUrl": "direct image URL",
-      "productUrl": "link to the individual product page",
-      "category": "category"
-    }
+    { "productName": "...", "price": 999.00, "imageUrl": "https://...", "category": "Chair", "productUrl": "https://..." }
   ]
 }
 
 Rules:
-- price: Extract the EXACT price shown as the primary/main price on the page for the specific product or variant in the URL. Do NOT use "starting from", "as low as", or the lowest variant price. If the URL contains a variant parameter, use that variant's price. If a single price is displayed prominently, use that. If a sale price is shown alongside a strikethrough original, use the sale price (the one the customer pays). Omit price entirely if you cannot find a specific, confident value on the page.
-- dimensions: numeric values. Set unit to original unit on the page.
-- imageUrl must be a direct image URL (from a CDN or ending in .jpg/.png/.webp), not a page URL.
-- finishes: array of available finish/color options. Omit if none found.
-- category must be one of: Sofa, Dining Table, Bed, Desk, Storage, Lighting, Armchair, Side Table, Bookshelf, Mirror, Rug, Wardrobe, TV Unit, Coffee Table, Console Table, Bar Stool, Ottoman, Bench, Dresser, Nightstand, Chair, Table, Outdoor, Accessories
-- For collection pages, include productUrl for each product.
-- IMPORTANT: Your final message MUST be ONLY the JSON object. No other text.`;
+- price: numeric only, no currency symbols or commas. Use sale/current price. null if absent.
+- imageUrl: must start with https://. Include CDN query params as-is. Never fabricate a URL.
+- category: always infer from product name or breadcrumbs. Never leave this null.
+- Output ONLY the JSON object.`;
 
-export async function extractProductFromUrl(sourceUrl: string): Promise<ExtractionResult> {
-  // Build initial messages
-  const messages: Anthropic.MessageParam[] = [
-    {
-      role: 'user',
-      content: `Extract product details from this URL: ${sourceUrl}`,
-    },
-  ];
+/* ─── HTML fetch ─────────────────────────────────────── */
 
-  // Multi-turn loop: keep going while Claude wants to use tools
-  let attempts = 0;
-  const maxAttempts = 5;
+async function fetchPageHtml(url: string): Promise<string | null> {
+  const headers: Record<string, string> = {
+    'User-Agent':
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Cache-Control': 'no-cache',
+    Pragma: 'no-cache',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Dest': 'document',
+    'Upgrade-Insecure-Requests': '1',
+  };
 
-  while (attempts < maxAttempts) {
-    attempts++;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15_000);
 
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 8192,
-      system: SYSTEM_PROMPT,
-      messages,
-      tools: [{ type: 'web_search_20250305' as any, name: 'web_search' }],
-    });
+    try {
+      const res = await fetch(url, { headers, signal: controller.signal, redirect: 'follow' });
+      clearTimeout(timeoutId);
 
-    // Check if the response contains tool use — if so, we need to continue
-    const hasToolUse = response.content.some((block) => block.type === 'tool_use');
-    const textBlocks = response.content.filter((block) => block.type === 'text');
-
-    if (hasToolUse) {
-      // Add the assistant's response (with tool use) to messages
-      messages.push({ role: 'assistant', content: response.content as any });
-
-      // Build tool results for each tool use block
-      const toolResults: any[] = [];
-      for (const block of response.content) {
-        if (block.type === 'tool_use') {
-          // web_search_20250305 is server-side — Anthropic executes the search before
-          // returning the response. We acknowledge with empty content so Claude continues
-          // using the real search results already in its context.
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: '',
-          });
-        }
-      }
-      messages.push({ role: 'user', content: toolResults });
-
-      // If we also got a text block with valid JSON, try parsing it
-      if (textBlocks.length > 0) {
-        const jsonResult = tryParseJsonFromBlocks(textBlocks);
-        if (jsonResult) return buildResult(jsonResult);
+      if (res.ok) {
+        const text = await res.text();
+        return text.length > HTML_READ_LIMIT ? text.slice(0, HTML_READ_LIMIT) : text;
       }
 
-      // Otherwise continue the loop
+      // 4xx errors are definitive — no point retrying
+      if (res.status < 500) {
+        logger.warn('fetchPageHtml client error', { url, status: res.status });
+        return null;
+      }
+
+      // 5xx — transient, retry once after a short pause
+      if (attempt === 1) {
+        logger.warn('fetchPageHtml server error, retrying', { url, status: res.status });
+        await new Promise((r) => setTimeout(r, 1_000));
+        continue;
+      }
+
+      logger.warn('fetchPageHtml server error on retry', { url, status: res.status });
+      return null;
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (attempt === 1) {
+        logger.warn('fetchPageHtml network error, retrying', { url, err: err?.message });
+        await new Promise((r) => setTimeout(r, 1_000));
+        continue;
+      }
+      logger.warn('fetchPageHtml failed after retry', { url, err: err?.message });
+      return null;
+    }
+  }
+
+  return null;
+}
+
+/* ─── Signal extraction from HTML ───────────────────── */
+
+function findJsonLdNode(data: any, type: string | string[]): any {
+  if (!data) return null;
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      const found = findJsonLdNode(item, type);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof data !== 'object') return null;
+
+  const nodeType = data['@type'];
+  const types = Array.isArray(type) ? type : [type];
+  const nodeTypes = Array.isArray(nodeType) ? nodeType : [nodeType];
+  if (types.some((t) => nodeTypes.includes(t))) return data;
+
+  if (data['@graph']) return findJsonLdNode(data['@graph'], type);
+  return null;
+}
+
+function resolveImage(raw: any): string | undefined {
+  if (!raw) return undefined;
+  const first = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof first === 'string') return first;
+  if (typeof first === 'object') {
+    return first.contentUrl ?? first.url ?? first['@id'] ?? undefined;
+  }
+  return undefined;
+}
+
+function resolveOfferPrice(
+  offers: any,
+  graphNodes?: any[],
+): { price: number | undefined; currency: string | undefined } {
+  if (!offers) return { price: undefined, currency: undefined };
+
+  const getPrice = (o: any): number | undefined => {
+    if (!o) return undefined;
+    // If offers is an @id reference, look it up in the graph
+    if (typeof o === 'string' && graphNodes) {
+      const node = graphNodes.find((n) => n['@id'] === o);
+      return node ? getPrice(node) : undefined;
+    }
+    const raw = o.price ?? o.lowPrice;
+    if (raw == null) return undefined;
+    const n = typeof raw === 'string' ? parseFloat(raw.replace(/[^0-9.]/g, '')) : Number(raw);
+    return isNaN(n) || n <= 0 ? undefined : n;
+  };
+
+  const getCurrency = (o: any): string | undefined => {
+    if (typeof o === 'string') return undefined;
+    return o?.priceCurrency ?? undefined;
+  };
+
+  if (Array.isArray(offers)) {
+    const first = offers[0];
+    return { price: getPrice(first), currency: getCurrency(first) };
+  }
+  return { price: getPrice(offers), currency: getCurrency(offers) };
+}
+
+function extractSignals(html: string, url: string): string {
+  const lines: string[] = [`url: ${url}`];
+
+  // ── <title> ───────────────────────────────────────────
+  const titleMatch = html.match(/<title[^>]*>([^<]{1,300})<\/title>/i);
+  if (titleMatch) lines.push(`page_title: ${titleMatch[1].trim()}`);
+
+  // ── <link rel="canonical"> ────────────────────────────
+  const canonicalMatch =
+    html.match(/<link\b[^>]+rel=["']canonical["'][^>]+href=["']([^"']{1,2000})["']/i) ??
+    html.match(/<link\b[^>]+href=["']([^"']{1,2000})["'][^>]+rel=["']canonical["']/i);
+  if (canonicalMatch) lines.push(`canonical_url: ${canonicalMatch[1]}`);
+
+  // ── <meta> tags ───────────────────────────────────────
+  const metaRegex = /<meta\b[^>]+>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = metaRegex.exec(html)) !== null) {
+    const tag = m[0];
+    const propMatch = tag.match(/(?:property|name|itemprop)=["']([^"']{1,100})["']/i);
+    const contentMatch = tag.match(/content=["']([^"']{1,800})["']/i);
+    if (!propMatch || !contentMatch) continue;
+    const prop = propMatch[1].toLowerCase();
+    if (
+      prop.startsWith('og:') ||
+      prop.startsWith('product:') ||
+      prop === 'twitter:title' ||
+      prop === 'twitter:image' ||
+      prop === 'twitter:description' ||
+      prop === 'description'
+    ) {
+      lines.push(`${prop}: ${contentMatch[1]}`);
+    }
+  }
+
+  // ── JSON-LD ──────────────────────────────────────────
+  const jsonLdRegex = /<script\b[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let foundProduct = false;
+  let foundBreadcrumbs = false;
+
+  while ((m = jsonLdRegex.exec(html)) !== null) {
+    let parsed: any;
+    try {
+      parsed = JSON.parse(m[1]);
+    } catch {
       continue;
     }
 
-    // No tool use — this should be the final response with JSON
-    if (textBlocks.length > 0) {
-      const jsonResult = tryParseJsonFromBlocks(textBlocks);
-      if (jsonResult) return buildResult(jsonResult);
+    // Collect all graph nodes for cross-reference resolution
+    const graphNodes: any[] = [];
+    if (parsed?.['@graph']) {
+      const g = parsed['@graph'];
+      if (Array.isArray(g)) graphNodes.push(...g);
     }
 
-    // If stop_reason is end_turn and we have no parseable JSON, one more nudge
-    if (response.stop_reason === 'end_turn' && attempts < maxAttempts) {
-      messages.push({ role: 'assistant', content: response.content as any });
+    // Product node
+    if (!foundProduct) {
+      const product = findJsonLdNode(parsed, ['Product', 'ProductGroup']);
+      if (product) {
+        foundProduct = true;
+        const { price, currency } = resolveOfferPrice(product.offers, graphNodes);
+        const slim: Record<string, unknown> = {
+          name: product.name,
+          image: resolveImage(product.image),
+          price,
+          priceCurrency: currency,
+          brand: typeof product.brand === 'object' ? product.brand?.name : product.brand,
+          material: product.material,
+          category: product.category,
+          color: product.color,
+          description:
+            typeof product.description === 'string' ? product.description.slice(0, 300) : undefined,
+        };
+        Object.keys(slim).forEach((k) => slim[k] === undefined && delete slim[k]);
+        lines.push(`json_ld_product: ${JSON.stringify(slim)}`);
+      }
+    }
+
+    // BreadcrumbList node — strong category signal
+    if (!foundBreadcrumbs) {
+      const crumbList = findJsonLdNode(parsed, 'BreadcrumbList');
+      if (crumbList && Array.isArray(crumbList.itemListElement)) {
+        const crumbs = crumbList.itemListElement
+          .sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0))
+          .map((item: any) => item.name ?? item.item?.name)
+          .filter(Boolean);
+        if (crumbs.length > 0) {
+          foundBreadcrumbs = true;
+          lines.push(`breadcrumbs: ${crumbs.join(' > ')}`);
+        }
+      }
+    }
+
+    if (foundProduct && foundBreadcrumbs) break;
+  }
+
+  // ── Microdata (itemprop) fallbacks ───────────────────
+  const itempropPrice =
+    html.match(/itemprop=["']price["'][^>]*content=["']([^"']+)["']/i) ??
+    html.match(/itemprop=["']price["'][^>]*>\s*([0-9][0-9,. ]*)/i);
+  if (itempropPrice) lines.push(`itemprop_price: ${itempropPrice[1].trim()}`);
+
+  const itempropName = html.match(/itemprop=["']name["'][^>]*content=["']([^"']+)["']/i);
+  if (itempropName) lines.push(`itemprop_name: ${itempropName[1]}`);
+
+  const itempropImage =
+    html.match(/itemprop=["']image["'][^>]*content=["']([^"']+)["']/i) ??
+    html.match(/itemprop=["']image["'][^>]*src=["']([^"']+)["']/i);
+  if (itempropImage) lines.push(`itemprop_image: ${itempropImage[1]}`);
+
+  // ── data-price fallback ──────────────────────────────
+  const dataPrice = html.match(/\bdata-price=["']([0-9]+(?:\.[0-9]{1,2})?)["']/);
+  if (dataPrice) lines.push(`data_price: ${dataPrice[1]}`);
+
+  return lines.join('\n');
+}
+
+/* ─── Main extractor ─────────────────────────────────── */
+
+export async function extractProductFromUrl(sourceUrl: string): Promise<ExtractionResult> {
+  // Stage 1: Direct fetch → signal extraction → Claude (no tools)
+  const html = await fetchPageHtml(sourceUrl);
+
+  if (html && html.length > 500) {
+    const signals = extractSignals(html, sourceUrl);
+    logger.info('Page signals extracted', {
+      url: sourceUrl,
+      signalCount: signals.split('\n').length,
+      htmlBytes: html.length,
+    });
+
+    try {
+      const response = await client.messages.create({
+        model: MODEL_FAST,
+        max_tokens: 1024,
+        system: SYSTEM_PROMPT,
+        messages: [
+          { role: 'user', content: `Extract product data from these page signals:\n\n${signals}` },
+        ],
+      });
+
+      const textBlock = response.content.find((b) => b.type === 'text') as any;
+      if (textBlock?.text) {
+        const parsed = tryParseJson(textBlock.text);
+        if (parsed) {
+          logger.info('Direct extraction succeeded', { url: sourceUrl });
+          return buildResult(parsed, sourceUrl);
+        }
+      }
+      logger.warn('Direct extraction returned no JSON', { url: sourceUrl });
+    } catch (err: any) {
+      logger.error('Direct extraction Claude call failed', { url: sourceUrl, err: err?.message });
+    }
+  } else {
+    logger.info('HTML fetch returned empty/short content', { url: sourceUrl, bytes: html?.length ?? 0 });
+  }
+
+  // Stage 2: Fallback — web search (JS-rendered pages, anti-bot protected sites)
+  logger.info('Falling back to web search', { url: sourceUrl });
+  return extractWithWebSearch(sourceUrl);
+}
+
+/* ─── Web search fallback ────────────────────────────── */
+
+async function extractWithWebSearch(sourceUrl: string): Promise<ExtractionResult> {
+  const messages: Anthropic.MessageParam[] = [
+    {
+      role: 'user',
+      content: `Search for the product at this URL and extract its details:\n${sourceUrl}\n\nI need: name, price, main image URL, and furniture category. Return ONLY the JSON object as specified.`,
+    },
+  ];
+
+  const MAX_TURNS = 4;
+
+  for (let turn = 0; turn < MAX_TURNS; turn++) {
+    const response = await client.messages.create({
+      model: MODEL_SEARCH,
+      max_tokens: 2048,
+      system: SYSTEM_PROMPT,
+      messages,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }] as any,
+    });
+
+    const { stop_reason, content } = response;
+
+    // Always try to parse JSON from any text blocks first
+    const textBlocks = content.filter((b) => b.type === 'text');
+    if (textBlocks.length > 0) {
+      const parsed = tryParseJsonFromBlocks(textBlocks);
+      if (parsed) {
+        logger.info('Web search extraction succeeded', { url: sourceUrl, turn });
+        return buildResult(parsed, sourceUrl);
+      }
+    }
+
+    if (stop_reason === 'max_tokens') {
+      // No point continuing — model ran out of space
+      break;
+    }
+
+    if (stop_reason === 'tool_use') {
+      // `web_search_20250305` is server-side: Anthropic executes the search.
+      // Send back the assistant turn + empty tool_result acknowledgements to continue.
+      messages.push({ role: 'assistant', content: content as any });
+
+      const toolUseBlocks = content.filter((b) => b.type === 'tool_use') as any[];
       messages.push({
         role: 'user',
-        content: 'Please provide the extracted product data as a JSON object now. No explanation, just the JSON.',
+        content: toolUseBlocks.map((b) => ({
+          type: 'tool_result' as const,
+          tool_use_id: b.id,
+          content: '',  // server-side: Anthropic already has the results
+        })) as any,
       });
       continue;
     }
 
-    // Give up
-    const lastText = textBlocks.map((b: any) => b.text).join('\n').slice(0, 300);
-    logger.warn('Extractor did not return valid JSON after all attempts', { lastText, attempts });
-    throw new Error('Failed to extract product data. The page may be difficult to read. Try a different URL or add the product manually.');
+    if (stop_reason === 'end_turn') {
+      // Model finished but didn't return JSON — nudge once more
+      if (turn < MAX_TURNS - 1) {
+        messages.push({ role: 'assistant', content: content as any });
+        messages.push({
+          role: 'user',
+          content:
+            'Output ONLY the JSON object with the product data. No explanation, no markdown fences.',
+        });
+        continue;
+      }
+    }
+
+    break;
   }
 
-  throw new Error('Extraction timed out after multiple attempts. Try a different URL.');
+  const lastText = (messages as any[])
+    .filter((m) => m.role === 'assistant')
+    .flatMap((m) => (Array.isArray(m.content) ? m.content : [m.content]))
+    .filter((b: any) => b?.type === 'text')
+    .map((b: any) => b.text)
+    .join('\n')
+    .slice(0, 200);
+
+  logger.warn('Web search extraction failed', { url: sourceUrl, lastText });
+  throw new Error(
+    'Failed to extract product data from this page. Try a different URL or add the product manually.',
+  );
 }
 
-function tryParseJsonFromBlocks(textBlocks: any[]): any | null {
-  for (const block of textBlocks) {
-    if (block.type !== 'text') continue;
-    let text = block.text.trim();
-    if (!text) continue;
+/* ─── JSON helpers ───────────────────────────────────── */
 
-    // Strip markdown fences
-    if (text.startsWith('```')) {
-      text = text.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-    }
+function tryParseJson(text: string): any | null {
+  let t = text.trim();
+  // Strip markdown fences
+  t = t.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+  const match = t.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+}
 
-    // Try to find JSON in the text (might have leading/trailing prose)
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) continue;
-
-    try {
-      return JSON.parse(jsonMatch[0]);
-    } catch {
-      continue;
-    }
+function tryParseJsonFromBlocks(blocks: any[]): any | null {
+  for (const block of blocks) {
+    if (block.type !== 'text' || !block.text) continue;
+    const parsed = tryParseJson(block.text);
+    if (parsed) return parsed;
   }
   return null;
 }
 
-function buildResult(parsed: any): ExtractionResult {
-  // Handle flat array
+/* ─── Result normalisation ───────────────────────────── */
+
+function buildResult(parsed: any, sourceUrl: string): ExtractionResult {
   if (Array.isArray(parsed)) {
     if (parsed.length === 0) throw new Error('No products found on this page.');
-    if (parsed.length === 1) {
-      return { type: 'single', product: normalizeProduct(parsed[0]) };
-    }
+    if (parsed.length === 1)
+      return { type: 'single', product: normalizeProduct(parsed[0], sourceUrl) };
     return {
       type: 'multiple',
       totalFound: parsed.length,
-      products: parsed.map(normalizeProduct),
+      products: parsed.map((p) => normalizeProduct(p, sourceUrl)),
     };
   }
 
-  // Structured response with type field
   if (parsed.type === 'multiple' && Array.isArray(parsed.products)) {
     if (parsed.products.length === 0) throw new Error('No products found on this page.');
     return {
       type: 'multiple',
       totalFound: parsed.totalFound ?? parsed.products.length,
-      products: parsed.products.map(normalizeProduct),
+      products: parsed.products.map((p: any) => normalizeProduct(p, sourceUrl)),
     };
   }
 
-  // Single product
   const productData = parsed.product ?? parsed;
-
   if (!productData.productName || typeof productData.productName !== 'string') {
     throw new Error('Could not extract product name from this page.');
   }
-
-  return { type: 'single', product: normalizeProduct(productData) };
+  return { type: 'single', product: normalizeProduct(productData, sourceUrl) };
 }
 
-function normalizeProduct(raw: any): ExtractedProductData {
+function normalizeProduct(raw: any, sourceUrl: string): ExtractedProductData {
   const result: ExtractedProductData = {
-    productName: raw.productName || raw.product_name || 'Unknown Product',
+    productName: String(raw.productName || raw.product_name || raw.name || 'Unknown Product').trim(),
   };
 
   if (raw.brandName && typeof raw.brandName === 'string') {
-    result.brandName = raw.brandName;
+    result.brandName = raw.brandName.trim();
   }
+
   if (raw.price != null) {
-    const p = typeof raw.price === 'string'
-      ? parseFloat(raw.price.replace(/[^0-9.]/g, ''))
-      : Number(raw.price);
+    const p =
+      typeof raw.price === 'string'
+        ? parseFloat(raw.price.replace(/[^0-9.]/g, ''))
+        : Number(raw.price);
     if (!isNaN(p) && p > 0) result.price = p;
   }
-  if (raw.imageUrl && typeof raw.imageUrl === 'string' && raw.imageUrl.startsWith('http')) {
+
+  if (raw.imageUrl && typeof raw.imageUrl === 'string' && raw.imageUrl.startsWith('https://')) {
+    result.imageUrl = raw.imageUrl;
+  } else if (raw.imageUrl && typeof raw.imageUrl === 'string' && raw.imageUrl.startsWith('http://')) {
     result.imageUrl = raw.imageUrl;
   }
-  if (raw.productUrl && typeof raw.productUrl === 'string' && raw.productUrl.startsWith('http')) {
-    result.productUrl = raw.productUrl;
+
+  const pUrl = raw.productUrl ?? raw.product_url;
+  if (pUrl && typeof pUrl === 'string' && pUrl.startsWith('http')) {
+    result.productUrl = pUrl;
+  } else {
+    result.productUrl = sourceUrl;
   }
+
   if (raw.dimensions && typeof raw.dimensions === 'object') {
     const d = raw.dimensions;
     const dims: ExtractedProductData['dimensions'] = {};
@@ -249,18 +551,15 @@ function normalizeProduct(raw: any): ExtractedProductData {
     if (['in', 'cm', 'ft'].includes(d.unit)) dims.unit = d.unit;
     if (Object.keys(dims).length > 0) result.dimensions = dims;
   }
-  if (raw.material && typeof raw.material === 'string') {
-    result.material = raw.material;
-  }
+
+  if (raw.material && typeof raw.material === 'string') result.material = raw.material.trim();
+
   if (Array.isArray(raw.finishes) && raw.finishes.length > 0) {
     result.finishes = raw.finishes.filter((f: unknown) => typeof f === 'string' && f.length > 0);
   }
-  if (raw.leadTime && typeof raw.leadTime === 'string') {
-    result.leadTime = raw.leadTime;
-  }
-  if (raw.category && typeof raw.category === 'string') {
-    result.category = raw.category;
-  }
+
+  if (raw.leadTime && typeof raw.leadTime === 'string') result.leadTime = raw.leadTime.trim();
+  if (raw.category && typeof raw.category === 'string') result.category = raw.category.trim();
 
   return result;
 }

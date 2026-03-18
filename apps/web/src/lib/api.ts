@@ -327,6 +327,18 @@ export interface ExtractionResult {
   duplicateProduct?: DuplicateProduct;
 }
 
+export interface BatchExtractionResultItem {
+  url: string;
+  type: 'single' | 'duplicate' | 'error';
+  product?: ExtractedProduct;
+  duplicateProduct?: DuplicateProduct;
+  error?: string;
+}
+
+export interface BatchExtractionResult {
+  results: BatchExtractionResultItem[];
+}
+
 export interface ProductUpdatePayload {
   productName?: string;
   sourceUrl?: string;
@@ -591,6 +603,9 @@ export const api = {
 
   extractProduct: (sourceUrl: string) =>
     request<ExtractionResult>('/api/catalog/extract', { method: 'POST', body: JSON.stringify({ sourceUrl }) }),
+
+  extractProductsBatch: (urls: string[]) =>
+    request<BatchExtractionResult>('/api/catalog/extract/batch', { method: 'POST', body: JSON.stringify({ urls }) }),
 
   // Shortlist
   getProjectShortlist: (projectId: string, roomId?: string) => {

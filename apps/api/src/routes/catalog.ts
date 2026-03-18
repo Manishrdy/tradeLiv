@@ -48,18 +48,21 @@ const productUpdateSchema = z.object({
   category: z.string().max(100).nullable().optional(),
 });
 
-/* ─── Rate limiter (30s per designer, in-memory) ────── */
+/* ─── Rate limiters (30s per designer, in-memory) ───── */
 
 const extractRateLimit = new Map<string, number>();
+const batchExtractRateLimit = new Map<string, number>();
 const RATE_LIMIT_MS = 30_000;
 
-function checkRateLimit(designerId: string): { allowed: boolean; retryAfter?: number } {
-  const last = extractRateLimit.get(designerId);
+function checkRateLimit(map: Map<string, number>, designerId: string): { allowed: boolean; retryAfter?: number } {
+  const last = map.get(designerId);
   if (last != null) {
     const elapsed = Date.now() - last;
     if (elapsed < RATE_LIMIT_MS) {
       return { allowed: false, retryAfter: Math.ceil((RATE_LIMIT_MS - elapsed) / 1000) };
     }
+    // Stale entry — evict to prevent unbounded Map growth
+    map.delete(designerId);
   }
   return { allowed: true };
 }
@@ -80,15 +83,39 @@ function serializeProduct(p: any) {
 }
 
 async function validateImageUrl(url: string): Promise<boolean> {
+  // HEAD first (cheap). Many CDN providers block HEAD with 403 but serve GET fine — so 403
+  // on HEAD is NOT treated as invalid. Only 404/410 are definitive "gone" responses.
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(url, { method: 'HEAD', signal: controller.signal });
-    clearTimeout(timeout);
-    // Only treat explicit client errors as invalid (not network errors or server errors)
-    return res.status !== 404 && res.status !== 403 && res.status !== 410;
+    const headCtrl = new AbortController();
+    const headTimeout = setTimeout(() => headCtrl.abort(), 5_000);
+    const headRes = await fetch(url, { method: 'HEAD', signal: headCtrl.signal });
+    clearTimeout(headTimeout);
+
+    if (headRes.status === 404 || headRes.status === 410) return false;
+    if (headRes.ok) return true;
+
+    // 403 on HEAD = CDN blocked the method. Probe with GET+Range to confirm resource exists.
+    if (headRes.status === 403) {
+      try {
+        const getCtrl = new AbortController();
+        const getTimeout = setTimeout(() => getCtrl.abort(), 5_000);
+        const getRes = await fetch(url, {
+          method: 'GET',
+          headers: { Range: 'bytes=0-0' },
+          signal: getCtrl.signal,
+        });
+        clearTimeout(getTimeout);
+        return getRes.status !== 404 && getRes.status !== 410;
+      } catch {
+        // GET probe failed — don't penalise; assume valid
+        return true;
+      }
+    }
+
+    // Any other status (5xx, etc.) — assume valid to avoid false positives
+    return true;
   } catch {
-    // Network errors, timeouts, CORS — don't penalise; assume valid
+    // Network errors, timeouts — don't penalise
     return true;
   }
 }
@@ -379,7 +406,7 @@ router.post('/extract', async (req: AuthRequest, res: Response) => {
 
   // Rate limit: 30s per designer
   const designerId = req.user!.id;
-  const rateCheck = checkRateLimit(designerId);
+  const rateCheck = checkRateLimit(extractRateLimit, designerId);
   if (!rateCheck.allowed) {
     res.status(429).json({
       error: `Please wait ${rateCheck.retryAfter}s before extracting again.`,
@@ -404,7 +431,7 @@ router.post('/extract', async (req: AuthRequest, res: Response) => {
     // Non-fatal — proceed with extraction if duplicate check fails
   }
 
-  // Mark rate limit timestamp before calling Claude (prevents hammering on slow responses)
+  // Stamp rate limit before calling Claude (prevents hammering on slow responses)
   extractRateLimit.set(designerId, Date.now());
 
   try {
@@ -419,6 +446,59 @@ router.post('/extract', async (req: AuthRequest, res: Response) => {
       : 'Failed to extract product details. Please try a different URL or add the product manually.';
     res.status(422).json({ error: message });
   }
+});
+
+/* ─── POST /api/catalog/extract/batch ───────────────── */
+
+const batchExtractSchema = z.object({
+  urls: z.array(z.string().url('Invalid URL')).min(1).max(5, 'Maximum 5 URLs per batch'),
+});
+
+router.post('/extract/batch', async (req: AuthRequest, res: Response) => {
+  const parsed = batchExtractSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0].message });
+    return;
+  }
+
+  // Separate rate limit from single extract so collection → batch flow isn't blocked
+  const designerId = req.user!.id;
+  const rateCheck = checkRateLimit(batchExtractRateLimit, designerId);
+  if (!rateCheck.allowed) {
+    res.status(429).json({
+      error: `Please wait ${rateCheck.retryAfter}s before extracting again.`,
+      retryAfter: rateCheck.retryAfter,
+    });
+    return;
+  }
+  batchExtractRateLimit.set(designerId, Date.now());
+
+  const results = await Promise.allSettled(
+    parsed.data.urls.map(async (url) => {
+      // Duplicate check per URL
+      const duplicate = await prisma.product.findFirst({
+        where: { designerId, sourceUrl: url },
+        select: { id: true, productName: true, brandName: true, imageUrl: true, isActive: true },
+      });
+      if (duplicate) {
+        return { url, type: 'duplicate' as const, duplicateProduct: duplicate };
+      }
+      const result = await extractProductFromUrl(url);
+      return { url, ...result };
+    })
+  );
+
+  res.json({
+    results: results.map((r, i) => {
+      if (r.status === 'fulfilled') return r.value;
+      const msg = (r.reason as any)?.message;
+      return {
+        url: parsed.data.urls[i],
+        type: 'error' as const,
+        error: msg || 'Extraction failed. Try adding this product manually.',
+      };
+    }),
+  });
 });
 
 export default router;

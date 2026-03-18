@@ -5,6 +5,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import rateLimit from 'express-rate-limit';
 import logger from './config/logger';
 import authRouter from './routes/auth';
 import clientsRouter from './routes/clients';
@@ -41,7 +42,15 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'furnlo-api' });
 });
 
-app.use('/api/auth', authRouter);
+// Auth endpoints: stricter limit to prevent brute force
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,                   // 20 attempts per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please try again in 15 minutes.' },
+});
+app.use('/api/auth', authLimiter, authRouter);
 app.use('/api/clients', clientsRouter);
 app.use('/api/portal', portalRouter);
 app.use('/api/projects', projectsRouter);
