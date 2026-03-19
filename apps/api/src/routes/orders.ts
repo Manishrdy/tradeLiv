@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { writeAuditLog } from '../services/auditLog';
+import { emitProjectEvent } from '../services/projectEvents';
 import logger from '../config/logger';
 
 const router = Router();
@@ -224,9 +225,23 @@ router.put('/projects/:projectId/shortlist/:itemId', async (req: AuthRequest, re
       return;
     }
 
+    // Sync isPinned ↔ status: starring = approved, unstarring = suggested
+    const updateData = { ...parsed.data };
+    if (updateData.isPinned === true && updateData.status === undefined) {
+      updateData.status = 'approved';
+    } else if (updateData.isPinned === false && updateData.status === undefined) {
+      updateData.status = 'suggested';
+    }
+    // If status is set explicitly, sync isPinned accordingly
+    if (updateData.status === 'approved' && updateData.isPinned === undefined) {
+      updateData.isPinned = true;
+    } else if ((updateData.status === 'rejected' || updateData.status === 'suggested') && updateData.isPinned === undefined) {
+      updateData.isPinned = false;
+    }
+
     const item = await prisma.shortlistItem.update({
       where: { id: req.params.itemId },
-      data: parsed.data,
+      data: updateData,
       include: {
         product: {
           select: {
@@ -256,6 +271,8 @@ router.put('/projects/:projectId/shortlist/:itemId', async (req: AuthRequest, re
       entityId: req.params.projectId,
       payload: { itemId: item.id, changes: Object.keys(parsed.data) },
     });
+
+    emitProjectEvent(req.params.projectId, 'shortlist_updated', { itemId: item.id });
 
     res.json(serializeShortlistItem(item));
   } catch (err) {

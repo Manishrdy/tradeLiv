@@ -46,12 +46,6 @@ enum BrandPOStatus {
   cancelled
 }
 
-enum ScrapeStatus {
-  pending
-  completed
-  failed
-}
-
 enum ActorType {
   designer
   client
@@ -60,24 +54,23 @@ enum ActorType {
 }
 
 model Designer {
-  id            String         @id @default(uuid())
-  email         String         @unique
-  passwordHash  String
-  fullName      String
-  businessName  String?
-  phone         String?
-  status        DesignerStatus @default(pending_review)
-  isAdmin       Boolean        @default(false)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id           String         @id @default(uuid())
+  email        String         @unique
+  passwordHash String
+  fullName     String
+  businessName String?
+  phone        String?
+  status       DesignerStatus @default(pending_review)
+  isAdmin      Boolean        @default(false)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
 
-  clients         Client[]
-  projects        Project[]
-  products        Product[]
-  shortlistItems  ShortlistItem[]
-  scrapeBatches   ScrapeBatch[]
+  clients           Client[]
+  projects          Project[]
+  products          Product[]
+  shortlistItems    ShortlistItem[]
   pinnedComparisons PinnedComparison[]
-  orders          Order[]
+  orders            Order[]
 }
 
 model Client {
@@ -90,8 +83,8 @@ model Client {
   shippingAddress Json?
   createdAt       DateTime @default(now())
 
-  designer  Designer  @relation(fields: [designerId], references: [id])
-  projects  Project[]
+  designer Designer  @relation(fields: [designerId], references: [id])
+  projects Project[]
 }
 
 model Project {
@@ -108,8 +101,8 @@ model Project {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  designer          Designer          @relation(fields: [designerId], references: [id])
-  client            Client            @relation(fields: [clientId], references: [id])
+  designer          Designer           @relation(fields: [designerId], references: [id])
+  client            Client             @relation(fields: [clientId], references: [id])
   rooms             Room[]
   shortlistItems    ShortlistItem[]
   cartItems         CartItem[]
@@ -118,63 +111,47 @@ model Project {
 }
 
 model Room {
-  id                   String   @id @default(uuid())
-  projectId            String
-  name                 String
-  lengthFt             Decimal?
-  widthFt              Decimal?
-  heightFt             Decimal?
-  areaSqft             Decimal?
-  categoryNeeds        String[]
-  budgetMin            Decimal?
-  budgetMax            Decimal?
-  clientRequirements   Json?
-  notes                String?
-  createdAt            DateTime @default(now())
+  id                 String   @id @default(uuid())
+  projectId          String
+  name               String
+  lengthFt           Decimal?
+  widthFt            Decimal?
+  heightFt           Decimal?
+  areaSqft           Decimal?
+  categoryNeeds      String[]
+  budgetMin          Decimal?
+  budgetMax          Decimal?
+  clientRequirements Json?
+  notes              String?
+  createdAt          DateTime @default(now())
 
-  project        Project         @relation(fields: [projectId], references: [id])
-  shortlistItems ShortlistItem[]
-  cartItems      CartItem[]
-  orderLineItems OrderLineItem[]
+  project           Project            @relation(fields: [projectId], references: [id])
+  shortlistItems    ShortlistItem[]
+  cartItems         CartItem[]
+  orderLineItems    OrderLineItem[]
   pinnedComparisons PinnedComparison[]
 }
 
-model ScrapeBatch {
-  id               String       @id @default(uuid())
-  sourceCollection String       @unique
-  scrapedById      String?
-  productCount     Int?
-  status           ScrapeStatus @default(pending)
-  scrapedAt        DateTime?
-  expiresAt        DateTime?
-  rawResponse      Json?
-
-  scrapedBy Designer?  @relation(fields: [scrapedById], references: [id])
-  products  Product[]
-}
-
 model Product {
-  id            String   @id @default(uuid())
-  designerId    String
-  sourceUrl     String
-  scrapeBatchId String?
-  productName   String
-  brandName     String?
-  price         Decimal?
-  imageUrl      String?
-  productUrl    String?
-  dimensions    Json?
-  material      String?
-  finishes      String[]
-  leadTime      String?
-  metadata      Json?
-  category      String?
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id          String   @id @default(uuid())
+  designerId  String
+  sourceUrl   String
+  productName String
+  brandName   String?
+  price       Decimal?
+  imageUrl    String?
+  productUrl  String?
+  dimensions  Json?
+  material    String?
+  finishes    String[]
+  leadTime    String?
+  metadata    Json?
+  category    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   designer       Designer        @relation(fields: [designerId], references: [id])
-  scrapeBatch    ScrapeBatch?    @relation(fields: [scrapeBatchId], references: [id])
   shortlistItems ShortlistItem[]
   cartItems      CartItem[]
   orderLineItems OrderLineItem[]
@@ -246,10 +223,10 @@ model Order {
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
-  project        Project             @relation(fields: [projectId], references: [id])
-  designer       Designer            @relation(fields: [designerId], references: [id])
-  lineItems      OrderLineItem[]
-  brandPOs       BrandPurchaseOrder[]
+  project   Project              @relation(fields: [projectId], references: [id])
+  designer  Designer             @relation(fields: [designerId], references: [id])
+  lineItems OrderLineItem[]
+  brandPOs  BrandPurchaseOrder[]
 }
 
 model OrderLineItem {

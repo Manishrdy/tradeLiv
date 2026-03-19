@@ -24,12 +24,195 @@ function formatPrice(price: number | null) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(price);
 }
 
+function formatDimensions(dim: any): string | null {
+  if (!dim) return null;
+  const parts: string[] = [];
+  if (dim.length != null) parts.push(`${dim.length}L`);
+  if (dim.width != null)  parts.push(`${dim.width}W`);
+  if (dim.height != null) parts.push(`${dim.height}H`);
+  if (parts.length === 0) return null;
+  return parts.join(' × ') + (dim.unit ? ` ${dim.unit}` : '');
+}
+
 const STATUS_STYLES: Record<string, { bg: string; border: string; color: string; label: string }> = {
   suggested:     { bg: 'rgba(0,0,0,0.04)',     border: 'rgba(0,0,0,0.09)',     color: 'var(--text-muted)',   label: 'Suggested' },
   approved:      { bg: 'var(--green-dim)',      border: 'var(--green-border)',   color: 'var(--green)',        label: 'Approved' },
-  rejected:      { bg: 'rgba(180,30,30,0.07)', border: 'rgba(180,30,30,0.18)', color: '#b91c1c',            label: 'Rejected' },
-  added_to_cart: { bg: 'rgba(50,80,190,0.07)', border: 'rgba(50,80,190,0.18)', color: '#3850be',            label: 'In Cart' },
+  rejected:      { bg: 'rgba(180,30,30,0.07)', border: 'rgba(180,30,30,0.18)', color: '#b91c1c',             label: 'Rejected' },
+  added_to_cart: { bg: 'rgba(50,80,190,0.07)', border: 'rgba(50,80,190,0.18)', color: '#3850be',             label: 'In Cart' },
 };
+
+/* ─── Comparison Modal ──────────────────────────────── */
+
+function ComparisonModal({
+  items,
+  onClose,
+}: {
+  items: ShortlistItem[];
+  onClose: () => void;
+}) {
+  const dash = <span style={{ color: 'var(--text-placeholder)' }}>—</span>;
+
+  const specRows: { label: string; render: (item: ShortlistItem) => React.ReactNode; isNote?: boolean }[] = [
+    { label: 'Category',       render: (i) => i.product.category  || dash },
+    { label: 'Material',       render: (i) => i.product.material  || dash },
+    { label: 'Dimensions',     render: (i) => formatDimensions(i.product.dimensions) || dash },
+    {
+      label: 'Finishes',
+      render: (i) => i.product.finishes?.length
+        ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {i.product.finishes.map((f) => (
+              <span key={f} className="tag-chip" style={{ fontSize: 11 }}>{f}</span>
+            ))}
+          </div>
+        : dash,
+    },
+    { label: 'Lead Time',      render: (i) => i.product.leadTime  || dash },
+    { label: 'Fit Assessment', render: (i) => i.fitAssessment     || dash, isNote: true },
+    { label: 'Shared Notes',   render: (i) => i.sharedNotes       || dash, isNote: true },
+    { label: 'Designer Notes', render: (i) => i.designerNotes     || dash, isNote: true },
+  ];
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 300,
+      background: 'rgba(0,0,0,0.55)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 20,
+    }}>
+      <div style={{
+        background: 'var(--bg-card)', borderRadius: 14,
+        width: '100%', maxWidth: Math.min(300 * items.length + 140, 1100),
+        maxHeight: '90vh', display: 'flex', flexDirection: 'column',
+        overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+      }}>
+
+        {/* Header */}
+        <div style={{
+          padding: '16px 24px', borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0,
+        }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+            Comparing {items.length} product{items.length !== 1 ? 's' : ''}
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Scrollable table */}
+        <div style={{ overflow: 'auto', flex: 1 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: 130, minWidth: 130 }} />
+              {items.map((item) => <col key={item.id} />)}
+            </colgroup>
+            <thead>
+              <tr>
+                <th style={{
+                  padding: '20px 16px', background: 'var(--bg-input)',
+                  borderRight: '1px solid var(--border)', verticalAlign: 'bottom', textAlign: 'left',
+                }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                    Product
+                  </span>
+                </th>
+                {items.map((item) => (
+                  <th key={item.id} style={{
+                    padding: '20px 16px', verticalAlign: 'top',
+                    borderLeft: '1px solid var(--border)', textAlign: 'left', fontWeight: 400,
+                  }}>
+                    {/* Image */}
+                    <div style={{
+                      width: '100%', height: 160, borderRadius: 10, overflow: 'hidden',
+                      background: 'var(--bg-input)', marginBottom: 12,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {item.product.imageUrl ? (
+                        <img
+                          src={item.product.imageUrl} alt=""
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        />
+                      ) : (
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--border-strong)" strokeWidth="1.4">
+                          <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
+                        </svg>
+                      )}
+                    </div>
+
+                    {/* Name, brand, price, badges */}
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2, lineHeight: 1.3 }}>
+                      {item.product.productName}
+                    </div>
+                    {item.product.brandName && (
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{item.product.brandName}</div>
+                    )}
+                    <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--text-primary)', letterSpacing: '-0.03em', marginBottom: 8 }}>
+                      {item.product.price != null ? formatPrice(item.product.price) : '—'}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span style={{
+                        background: STATUS_STYLES[item.status]?.bg,
+                        border: `1px solid ${STATUS_STYLES[item.status]?.border}`,
+                        color: STATUS_STYLES[item.status]?.color,
+                        borderRadius: 999, padding: '2px 9px', fontSize: 10.5, fontWeight: 600,
+                      }}>
+                        {STATUS_STYLES[item.status]?.label}
+                      </span>
+                      {item.isPinned && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10.5, color: 'var(--gold)', fontWeight: 700 }}>
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="1.5">
+                            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                          </svg>
+                          Finalist
+                        </span>
+                      )}
+                    </div>
+                    {item.quantity > 1 && (
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Qty: {item.quantity}</div>
+                    )}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {specRows.map((row, i) => {
+                const isFirstNote = row.isNote && !specRows[i - 1]?.isNote;
+                return (
+                  <tr key={row.label} style={{ borderTop: `${isFirstNote ? '2px' : '1px'} solid var(--border)` }}>
+                    <td style={{
+                      padding: '11px 16px', fontSize: 10.5, fontWeight: 700,
+                      color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em',
+                      verticalAlign: 'top', background: 'var(--bg-input)',
+                      borderRight: '1px solid var(--border)', whiteSpace: 'nowrap',
+                    }}>
+                      {row.label}
+                    </td>
+                    {items.map((item) => (
+                      <td key={item.id} style={{
+                        padding: '11px 16px', fontSize: 13, color: 'var(--text-primary)',
+                        verticalAlign: 'top', borderLeft: '1px solid var(--border)', lineHeight: 1.55,
+                      }}>
+                        {row.render(item)}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+          <button className="btn-ghost" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /* ─── Add from Catalog Modal ────────────────────────── */
 
@@ -49,7 +232,6 @@ function AddFromCatalogModal({
   const [loading, setLoading] = useState(true);
   const [selectedProduct, setSelectedProduct] = useState<ProductListItem | null>(null);
 
-  // Add form state
   const [quantity, setQuantity] = useState(1);
   const [designerNotes, setDesignerNotes] = useState('');
   const [sharedNotes, setSharedNotes] = useState('');
@@ -69,7 +251,6 @@ function AddFromCatalogModal({
     if (!selectedProduct) return;
     setAdding(true);
     setError('');
-
     const result = await api.addToShortlist(projectId, {
       productId: selectedProduct.id,
       roomId,
@@ -78,7 +259,6 @@ function AddFromCatalogModal({
       sharedNotes: sharedNotes.trim() || undefined,
       fitAssessment: fitAssessment.trim() || undefined,
     });
-
     setAdding(false);
     if (result.error) { setError(result.error); return; }
     onAdded();
@@ -91,26 +271,19 @@ function AddFromCatalogModal({
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       padding: 20,
     }}>
-      <div className="card" style={{
-        width: 580, maxHeight: '85vh', display: 'flex', flexDirection: 'column',
-        overflow: 'hidden',
-      }}>
+      <div className="card" style={{ width: 580, maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Header */}
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
               {selectedProduct ? 'Add to Shortlist' : 'Choose a Product'}
             </div>
-            <button
-              onClick={onClose}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}
-            >
+            <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                 <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
               </svg>
             </button>
           </div>
-
           {!selectedProduct && (
             <div style={{ position: 'relative' }}>
               <svg style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
@@ -118,13 +291,9 @@ function AddFromCatalogModal({
                 <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
               </svg>
               <input
-                className="input-field"
-                type="text"
-                placeholder="Search your catalog…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                style={{ paddingLeft: 32, width: '100%' }}
-                autoFocus
+                className="input-field" type="text" placeholder="Search your catalog…"
+                value={search} onChange={(e) => setSearch(e.target.value)}
+                style={{ paddingLeft: 32, width: '100%' }} autoFocus
               />
             </div>
           )}
@@ -133,17 +302,13 @@ function AddFromCatalogModal({
         {/* Body */}
         <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px 24px' }}>
           {selectedProduct ? (
-            /* ── Add form ──────────────────────────── */
             <div>
               {/* Selected product preview */}
               <div style={{
                 display: 'flex', gap: 14, padding: '12px 14px', borderRadius: 10,
                 border: '1px solid var(--border)', background: 'var(--bg-input)', marginBottom: 20,
               }}>
-                <div style={{
-                  width: 56, height: 56, borderRadius: 8, overflow: 'hidden', flexShrink: 0,
-                  background: 'var(--bg-card)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
+                <div style={{ width: 56, height: 56, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: 'var(--bg-card)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {selectedProduct.imageUrl ? (
                     <img src={selectedProduct.imageUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : (
@@ -157,11 +322,7 @@ function AddFromCatalogModal({
                   {selectedProduct.brandName && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{selectedProduct.brandName}</div>}
                   <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginTop: 2 }}>{formatPrice(selectedProduct.price)}</div>
                 </div>
-                <button
-                  onClick={() => setSelectedProduct(null)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, alignSelf: 'flex-start' }}
-                  title="Change product"
-                >
+                <button onClick={() => setSelectedProduct(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, alignSelf: 'flex-start' }} title="Change product">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                     <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                   </svg>
@@ -170,55 +331,26 @@ function AddFromCatalogModal({
 
               <div style={{ marginBottom: 14 }}>
                 <label className="form-label">Quantity</label>
-                <input
-                  className="input-field"
-                  type="number"
-                  min="1"
-                  value={quantity}
-                  onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                  style={{ width: 100 }}
-                />
+                <input className="input-field" type="number" min="1" value={quantity}
+                  onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))} style={{ width: 100 }} />
               </div>
-
               <div style={{ marginBottom: 14 }}>
                 <label className="form-label">
                   Designer Notes
                   <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10.5, opacity: 0.7, marginLeft: 4 }}>(internal, not visible to client)</span>
                 </label>
-                <textarea
-                  className="input-field"
-                  value={designerNotes}
-                  onChange={(e) => setDesignerNotes(e.target.value)}
-                  rows={2}
-                  placeholder="Internal notes for your reference…"
-                  style={{ resize: 'vertical' }}
-                />
+                <textarea className="input-field" value={designerNotes} onChange={(e) => setDesignerNotes(e.target.value)} rows={2} placeholder="Internal notes for your reference…" style={{ resize: 'vertical' }} />
               </div>
-
               <div style={{ marginBottom: 14 }}>
                 <label className="form-label">
                   Shared Notes
                   <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10.5, opacity: 0.7, marginLeft: 4 }}>(visible to client)</span>
                 </label>
-                <textarea
-                  className="input-field"
-                  value={sharedNotes}
-                  onChange={(e) => setSharedNotes(e.target.value)}
-                  rows={2}
-                  placeholder="Notes visible to your client…"
-                  style={{ resize: 'vertical' }}
-                />
+                <textarea className="input-field" value={sharedNotes} onChange={(e) => setSharedNotes(e.target.value)} rows={2} placeholder="Notes visible to your client…" style={{ resize: 'vertical' }} />
               </div>
-
               <div style={{ marginBottom: 14 }}>
                 <label className="form-label">Fit Assessment</label>
-                <input
-                  className="input-field"
-                  type="text"
-                  value={fitAssessment}
-                  onChange={(e) => setFitAssessment(e.target.value)}
-                  placeholder="e.g. Fits room dimensions well"
-                />
+                <input className="input-field" type="text" value={fitAssessment} onChange={(e) => setFitAssessment(e.target.value)} placeholder="e.g. Fits room dimensions well" />
               </div>
 
               {error && <div className="error-box" style={{ marginBottom: 14 }}>{error}</div>}
@@ -236,7 +368,6 @@ function AddFromCatalogModal({
               </div>
             </div>
           ) : (
-            /* ── Product picker ────────────────────── */
             <div>
               {loading ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-muted)', fontSize: 13, padding: '24px 0' }}>
@@ -253,20 +384,12 @@ function AddFromCatalogModal({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {products.map((p) => (
                     <div
-                      key={p.id}
-                      onClick={() => setSelectedProduct(p)}
-                      style={{
-                        display: 'flex', gap: 12, padding: '10px 12px', borderRadius: 10,
-                        border: '1px solid var(--border)', cursor: 'pointer',
-                        transition: 'all 0.12s',
-                      }}
+                      key={p.id} onClick={() => setSelectedProduct(p)}
+                      style={{ display: 'flex', gap: 12, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', cursor: 'pointer', transition: 'all 0.12s' }}
                       onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border-strong)'; (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-input)'; }}
                       onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLDivElement).style.background = ''; }}
                     >
-                      <div style={{
-                        width: 48, height: 48, borderRadius: 8, overflow: 'hidden', flexShrink: 0,
-                        background: 'var(--bg-input)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      }}>
+                      <div style={{ width: 48, height: 48, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: 'var(--bg-input)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {p.imageUrl ? (
                           <img src={p.imageUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         ) : (
@@ -301,11 +424,17 @@ function ShortlistItemCard({
   projectId,
   onUpdated,
   onRemoved,
+  isSelectedForCompare,
+  onToggleCompare,
+  compareDisabled,
 }: {
   item: ShortlistItem;
   projectId: string;
   onUpdated: () => void;
   onRemoved: () => void;
+  isSelectedForCompare: boolean;
+  onToggleCompare: () => void;
+  compareDisabled: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -319,6 +448,9 @@ function ShortlistItemCard({
   const [isPinned, setIsPinned] = useState(item.isPinned);
 
   const st = STATUS_STYLES[item.status] ?? STATUS_STYLES.suggested;
+
+  // Card border: blue when selected for compare, gold when pinned finalist, else default
+  const cardBorder = isSelectedForCompare ? '#3850be' : item.isPinned ? 'var(--gold)' : 'var(--border)';
 
   async function handleSave() {
     setSaving(true);
@@ -349,7 +481,7 @@ function ShortlistItemCard({
 
   return (
     <div style={{
-      border: `1px solid ${item.isPinned ? 'var(--gold)' : 'var(--border)'}`,
+      border: `1px solid ${cardBorder}`,
       borderRadius: 12, overflow: 'hidden',
       background: 'var(--bg-card)',
       transition: 'border-color 0.15s',
@@ -357,10 +489,7 @@ function ShortlistItemCard({
       <div style={{ display: 'flex', gap: 14, padding: '14px 16px' }}>
         {/* Image */}
         <Link href={`/catalog/${item.product.id}`} style={{ flexShrink: 0 }}>
-          <div style={{
-            width: 64, height: 64, borderRadius: 8, overflow: 'hidden',
-            background: 'var(--bg-input)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
+          <div style={{ width: 64, height: 64, borderRadius: 8, overflow: 'hidden', background: 'var(--bg-input)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {item.product.imageUrl ? (
               <img src={item.product.imageUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             ) : (
@@ -384,58 +513,63 @@ function ShortlistItemCard({
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>{item.product.brandName}</div>
               )}
             </div>
-            <div style={{
-              background: st.bg, border: `1px solid ${st.border}`,
-              borderRadius: 999, padding: '2px 9px', fontSize: 10.5, color: st.color, fontWeight: 600, flexShrink: 0,
-            }}>
+            <div style={{ background: st.bg, border: `1px solid ${st.border}`, borderRadius: 999, padding: '2px 9px', fontSize: 10.5, color: st.color, fontWeight: 600, flexShrink: 0 }}>
               {st.label}
             </div>
           </div>
 
-          {/* Price + qty row */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 6 }}>
-            <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>
-              {formatPrice(item.product.price)}
-            </span>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              Qty: {item.quantity}
-            </span>
-            {item.product.category && (
-              <span className="tag-chip">{item.product.category}</span>
-            )}
+            <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>{formatPrice(item.product.price)}</span>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Qty: {item.quantity}</span>
+            {item.product.category && <span className="tag-chip">{item.product.category}</span>}
           </div>
         </div>
 
         {/* Actions */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0, alignItems: 'center' }}>
+          {/* Compare checkbox */}
           <button
-            onClick={handleTogglePin}
-            title={item.isPinned ? 'Unpin' : 'Pin'}
+            onClick={onToggleCompare}
+            disabled={compareDisabled}
+            title={isSelectedForCompare ? 'Remove from compare' : compareDisabled ? 'Cannot compare (max 4 or different category)' : 'Add to compare'}
             style={{
-              background: 'none', border: 'none', cursor: 'pointer', padding: 4,
-              color: item.isPinned ? 'var(--gold)' : 'var(--text-muted)',
-              transition: 'color 0.12s',
+              width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+              border: `2px solid ${isSelectedForCompare ? '#3850be' : 'var(--border-strong)'}`,
+              background: isSelectedForCompare ? '#3850be' : 'var(--bg-card)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: compareDisabled ? 'not-allowed' : 'pointer',
+              opacity: compareDisabled ? 0.3 : 1,
+              transition: 'all 0.15s',
+              padding: 0,
             }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill={item.isPinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            {isSelectedForCompare && (
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            )}
+          </button>
+
+          {/* Pin (finalist) */}
+          <button onClick={handleTogglePin} title={item.isPinned ? 'Unpin finalist' : 'Pin as finalist'}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: item.isPinned ? 'var(--gold)' : 'var(--text-muted)', transition: 'color 0.12s' }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill={item.isPinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
             </svg>
           </button>
-          <button
-            onClick={() => setEditing(!editing)}
-            title="Edit"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--text-muted)' }}
-          >
+
+          {/* Edit */}
+          <button onClick={() => setEditing(!editing)} title="Edit"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--text-muted)' }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
             </svg>
           </button>
-          <button
-            onClick={() => setConfirmRemove(true)}
-            title="Remove"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--text-muted)' }}
-          >
+
+          {/* Delete */}
+          <button onClick={() => setConfirmRemove(true)} title="Remove"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--text-muted)' }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <polyline points="3 6 5 6 21 6" />
               <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
@@ -509,30 +643,16 @@ function ShortlistItemCard({
 
       {/* Confirm remove dialog */}
       {confirmRemove && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 200,
-          background: 'rgba(0,0,0,0.4)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div className="card" style={{ width: 380, padding: 24 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>
-              Remove from shortlist?
-            </div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Remove from shortlist?</div>
             <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.5 }}>
               &ldquo;{item.product.productName}&rdquo; will be removed from this room&apos;s shortlist.
             </div>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button className="btn-ghost" onClick={() => setConfirmRemove(false)} disabled={removing}>Cancel</button>
-              <button
-                onClick={handleRemove}
-                disabled={removing}
-                style={{
-                  border: 'none', borderRadius: 8,
-                  background: '#b91c1c', color: '#fff',
-                  padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                  opacity: removing ? 0.7 : 1,
-                }}
-              >
+              <button onClick={handleRemove} disabled={removing}
+                style={{ border: 'none', borderRadius: 8, background: '#b91c1c', color: '#fff', padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: removing ? 0.7 : 1 }}>
                 {removing ? 'Removing…' : 'Remove'}
               </button>
             </div>
@@ -556,6 +676,11 @@ export default function RoomDetailPage() {
   const [shortlistLoading, setShortlistLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
 
+  // Compare state
+  const [selectedForCompare, setSelectedForCompare] = useState<Set<string>>(new Set());
+  const [compareItems, setCompareItems]             = useState<ShortlistItem[]>([]);
+  const [showCompareModal, setShowCompareModal]     = useState(false);
+
   useEffect(() => {
     api.getProject(projectId).then((r) => {
       if (r.error || !r.data) { setNotFound(true); setLoading(false); return; }
@@ -576,6 +701,59 @@ export default function RoomDetailPage() {
 
   useEffect(() => { loadShortlist(); }, [loadShortlist]);
 
+  // ── SSE: real-time sync ────────────────────────────
+  useEffect(() => {
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+    const es = new EventSource(`${API_URL}/api/projects/${projectId}/events`, { withCredentials: true });
+    es.addEventListener('shortlist_updated', () => { loadShortlist(); });
+    return () => es.close();
+  }, [projectId, loadShortlist]);
+
+  // ── Compare handlers ────────────────────────────────
+
+  // Category of the first selected item (all selected items must match)
+  const selectedCategory = shortlistItems
+    .filter((i) => selectedForCompare.has(i.id))
+    .map((i) => i.product.category)
+    .find(Boolean) ?? null;
+
+  function toggleSelectForCompare(id: string) {
+    const item = shortlistItems.find((i) => i.id === id);
+    if (!item) return;
+    setSelectedForCompare((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        if (next.size >= 4) return prev;
+        // Enforce same-category
+        if (selectedCategory && item.product.category && item.product.category !== selectedCategory) return prev;
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function handleMultiCompare() {
+    const selected = shortlistItems.filter((i) => selectedForCompare.has(i.id));
+    if (selected.length < 2) return;
+    setCompareItems(selected);
+    setShowCompareModal(true);
+  }
+
+  function handleCompareFinalists() {
+    const finalists = shortlistItems.filter((i) => i.isPinned);
+    if (finalists.length < 2) return;
+    setCompareItems(finalists);
+    setShowCompareModal(true);
+  }
+
+  function clearCompareModal() {
+    setShowCompareModal(false);
+    setCompareItems([]);
+    setSelectedForCompare(new Set());
+  }
+
   if (loading) {
     return (
       <div style={{ padding: '60px 44px', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-muted)', fontSize: 13.5 }}>
@@ -591,11 +769,7 @@ export default function RoomDetailPage() {
     return (
       <div style={{ padding: '60px 44px', textAlign: 'center' }}>
         <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Room not found</div>
-        <button
-          className="btn-ghost"
-          onClick={() => router.push(`/projects/${projectId}/rooms`)}
-          style={{ fontSize: 13 }}
-        >
+        <button className="btn-ghost" onClick={() => router.push(`/projects/${projectId}/rooms`)} style={{ fontSize: 13 }}>
           ← Back to Rooms
         </button>
       </div>
@@ -606,9 +780,9 @@ export default function RoomDetailPage() {
   const hasDims = room.lengthFt != null || room.widthFt != null || room.heightFt != null;
   const req     = room.clientRequirements;
 
-  const pinnedItems = shortlistItems.filter((i) => i.isPinned);
+  const pinnedItems   = shortlistItems.filter((i) => i.isPinned);
   const unpinnedItems = shortlistItems.filter((i) => !i.isPinned);
-  const sortedItems = [...pinnedItems, ...unpinnedItems];
+  const sortedItems   = [...pinnedItems, ...unpinnedItems];
 
   const statusCounts = shortlistItems.reduce<Record<string, number>>((acc, i) => {
     acc[i.status] = (acc[i.status] || 0) + 1;
@@ -616,7 +790,7 @@ export default function RoomDetailPage() {
   }, {});
 
   return (
-    <div style={{ padding: '40px 44px 80px', maxWidth: 760 }}>
+    <div style={{ padding: '40px 44px 120px', maxWidth: 760 }}>
 
       {/* Breadcrumb */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 20 }}>
@@ -633,17 +807,9 @@ export default function RoomDetailPage() {
           {room.name}
         </h1>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 13, color: 'var(--text-muted)', fontWeight: 500 }}>
-          {room.areaSqft != null && (
-            <span>{room.areaSqft} sq ft</span>
-          )}
-          {hasDims && (
-            <span>
-              {[room.lengthFt, room.widthFt, room.heightFt].filter(Boolean).join(' × ')} ft
-            </span>
-          )}
-          {budget && (
-            <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{budget}</span>
-          )}
+          {room.areaSqft != null && <span>{room.areaSqft} sq ft</span>}
+          {hasDims && <span>{[room.lengthFt, room.widthFt, room.heightFt].filter(Boolean).join(' × ')} ft</span>}
+          {budget && <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{budget}</span>}
         </div>
       </div>
 
@@ -653,17 +819,7 @@ export default function RoomDetailPage() {
           <SectionTitle>Furniture Needed</SectionTitle>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {room.categoryNeeds.map((cat) => (
-              <span
-                key={cat}
-                style={{
-                  border: '1px solid #111',
-                  background: '#111',
-                  color: '#fff',
-                  borderRadius: 999,
-                  padding: '4px 12px',
-                  fontSize: 12, fontWeight: 600,
-                }}
-              >
+              <span key={cat} style={{ border: '1px solid #111', background: '#111', color: '#fff', borderRadius: 999, padding: '4px 12px', fontSize: 12, fontWeight: 600 }}>
                 {cat}
               </span>
             ))}
@@ -682,18 +838,11 @@ export default function RoomDetailPage() {
             {req.functionalConstraints && <DetailRow label="Functional constraints" value={req.functionalConstraints} />}
             {req.inspirationLinks?.length ? (
               <div>
-                <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
-                  Inspiration links
-                </div>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Inspiration links</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {req.inspirationLinks.map((link, i) => (
-                    <a
-                      key={i}
-                      href={link}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ fontSize: 13, color: '#a8710a', textDecoration: 'none', fontWeight: 500, wordBreak: 'break-all', display: 'flex', alignItems: 'center', gap: 6 }}
-                    >
+                    <a key={i} href={link} target="_blank" rel="noreferrer"
+                      style={{ fontSize: 13, color: '#a8710a', textDecoration: 'none', fontWeight: 500, wordBreak: 'break-all', display: 'flex', alignItems: 'center', gap: 6 }}>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                         <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
                         <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
@@ -712,9 +861,7 @@ export default function RoomDetailPage() {
       {room.notes && (
         <div className="card" style={{ padding: '20px 22px', marginBottom: 16 }}>
           <SectionTitle>Designer Notes</SectionTitle>
-          <p style={{ margin: 0, fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-            {room.notes}
-          </p>
+          <p style={{ margin: 0, fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{room.notes}</p>
         </div>
       )}
 
@@ -724,19 +871,12 @@ export default function RoomDetailPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <SectionTitle style={{ margin: 0 }}>Shortlist</SectionTitle>
             {shortlistItems.length > 0 && (
-              <span style={{
-                background: 'var(--bg-input)', border: '1px solid var(--border)',
-                borderRadius: 999, padding: '2px 8px', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600,
-              }}>
+              <span style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 999, padding: '2px 8px', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>
                 {shortlistItems.length}
               </span>
             )}
           </div>
-          <button
-            className="btn-primary"
-            onClick={() => setShowAddModal(true)}
-            style={{ fontSize: 12, padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 6 }}
-          >
+          <button className="btn-primary" onClick={() => setShowAddModal(true)} style={{ fontSize: 12, padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 6 }}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
               <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
             </svg>
@@ -746,19 +886,43 @@ export default function RoomDetailPage() {
 
         {/* Status summary */}
         {shortlistItems.length > 0 && (
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
             {Object.entries(statusCounts).map(([status, count]) => {
               const s = STATUS_STYLES[status] ?? STATUS_STYLES.suggested;
               return (
-                <span key={status} style={{
-                  background: s.bg, border: `1px solid ${s.border}`,
-                  borderRadius: 999, padding: '3px 10px',
-                  fontSize: 11, color: s.color, fontWeight: 600,
-                }}>
+                <span key={status} style={{ background: s.bg, border: `1px solid ${s.border}`, borderRadius: 999, padding: '3px 10px', fontSize: 11, color: s.color, fontWeight: 600 }}>
                   {count} {s.label}
                 </span>
               );
             })}
+          </div>
+        )}
+
+        {/* Compare hint + Compare Finalists */}
+        {shortlistItems.length >= 2 && selectedForCompare.size === 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+              Tick the circle on 2–4 products to compare them side by side.
+            </span>
+            {pinnedItems.length >= 2 && (
+              <button
+                onClick={handleCompareFinalists}
+                style={{
+                  background: 'none', border: '1px solid var(--gold)', borderRadius: 7,
+                  padding: '4px 10px', fontSize: 11.5, fontWeight: 600,
+                  color: 'var(--gold)', cursor: 'pointer', whiteSpace: 'nowrap',
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  transition: 'background 0.12s',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(var(--gold-rgb, 180,130,20), 0.08)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                </svg>
+                Compare Finalists ({pinnedItems.length})
+              </button>
+            )}
           </div>
         )}
 
@@ -768,32 +932,33 @@ export default function RoomDetailPage() {
             Loading shortlist…
           </div>
         ) : shortlistItems.length === 0 ? (
-          <div style={{
-            border: '1.5px dashed var(--border-strong)',
-            borderRadius: 10, padding: '32px 20px',
-            textAlign: 'center', color: 'var(--text-muted)',
-          }}>
+          <div style={{ border: '1.5px dashed var(--border-strong)', borderRadius: 10, padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ marginBottom: 10, opacity: 0.4 }}>
               <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
             </svg>
-            <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>
-              No items shortlisted yet
-            </div>
-            <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
-              Click &ldquo;Add from Catalog&rdquo; to shortlist products for this room.
-            </div>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>No items shortlisted yet</div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Click &ldquo;Add from Catalog&rdquo; to shortlist products for this room.</div>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {sortedItems.map((item) => (
-              <ShortlistItemCard
-                key={item.id}
-                item={item}
-                projectId={projectId}
-                onUpdated={loadShortlist}
-                onRemoved={loadShortlist}
-              />
-            ))}
+            {sortedItems.map((item) => {
+              const categoryMismatch = selectedCategory !== null
+                && item.product.category != null
+                && item.product.category !== selectedCategory;
+              const compareDisabled = (!selectedForCompare.has(item.id) && selectedForCompare.size >= 4) || categoryMismatch;
+              return (
+                <ShortlistItemCard
+                  key={item.id}
+                  item={item}
+                  projectId={projectId}
+                  onUpdated={loadShortlist}
+                  onRemoved={loadShortlist}
+                  isSelectedForCompare={selectedForCompare.has(item.id)}
+                  onToggleCompare={() => toggleSelectForCompare(item.id)}
+                  compareDisabled={compareDisabled}
+                />
+              );
+            })}
           </div>
         )}
       </div>
@@ -807,6 +972,40 @@ export default function RoomDetailPage() {
           onClose={() => setShowAddModal(false)}
         />
       )}
+
+      {/* Comparison modal */}
+      {showCompareModal && compareItems.length >= 2 && (
+        <ComparisonModal items={compareItems} onClose={clearCompareModal} />
+      )}
+
+      {/* ── Fixed compare bar (multi-select mode) ─────── */}
+      {selectedForCompare.size >= 2 && (
+        <div style={{
+          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 100, background: '#111', color: '#fff',
+          borderRadius: 14, padding: '12px 20px',
+          display: 'flex', alignItems: 'center', gap: 14,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+          whiteSpace: 'nowrap',
+        }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>
+            {selectedForCompare.size} product{selectedForCompare.size !== 1 ? 's' : ''} selected
+            {selectedForCompare.size === 4 && <span style={{ fontSize: 11, opacity: 0.6, marginLeft: 6 }}>(max)</span>}
+          </span>
+          <button
+            onClick={handleMultiCompare}
+            style={{ background: 'var(--gold)', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+          >
+            Compare →
+          </button>
+          <button
+            onClick={() => setSelectedForCompare(new Set())}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: 500, padding: 0 }}
+          >
+            Clear
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -815,11 +1014,7 @@ export default function RoomDetailPage() {
 
 function SectionTitle({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
-    <div style={{
-      fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)',
-      textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12,
-      ...style,
-    }}>
+    <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12, ...style }}>
       {children}
     </div>
   );
@@ -828,12 +1023,8 @@ function SectionTitle({ children, style }: { children: React.ReactNode; style?: 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 13.5, color: 'var(--text-primary)', fontWeight: 500 }}>
-        {value}
-      </div>
+      <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 13.5, color: 'var(--text-primary)', fontWeight: 500 }}>{value}</div>
     </div>
   );
 }

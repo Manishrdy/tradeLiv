@@ -3,7 +3,12 @@ import { z } from 'zod';
 import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { writeAuditLog } from '../services/auditLog';
-import { extractProductFromUrl, ExtractionResult } from '../services/catalogExtractor';
+import {
+  extractProductFromUrl,
+  ExtractionResult,
+  ExtractionError,
+  batchLimiter,
+} from '../services/catalogExtractor';
 import logger from '../config/logger';
 
 const router = Router();
@@ -18,6 +23,7 @@ const dimensionsSchema = z.object({
   depth: z.number().positive().optional(),
   weight: z.number().positive().optional(),
   unit: z.enum(['cm', 'in', 'ft']).optional(),
+  raw: z.string().max(500).optional(),
 }).optional();
 
 const productCreateSchema = z.object({
@@ -25,6 +31,7 @@ const productCreateSchema = z.object({
   sourceUrl: z.string().url('Invalid URL').max(2000),
   brandName: z.string().max(200).optional(),
   price: z.number().positive().optional(),
+  currency: z.string().length(3).optional(),
   imageUrl: z.string().url('Invalid image URL').max(2000).optional().or(z.literal('')),
   productUrl: z.string().url('Invalid product URL').max(2000).optional().or(z.literal('')),
   dimensions: dimensionsSchema,
@@ -32,6 +39,7 @@ const productCreateSchema = z.object({
   finishes: z.array(z.string().max(100)).max(20).optional().default([]),
   leadTime: z.string().max(100).optional(),
   category: z.string().max(100).optional(),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 const productUpdateSchema = z.object({
@@ -39,6 +47,7 @@ const productUpdateSchema = z.object({
   sourceUrl: z.string().url('Invalid URL').max(2000).optional(),
   brandName: z.string().max(200).nullable().optional(),
   price: z.number().positive().nullable().optional(),
+  currency: z.string().length(3).nullable().optional(),
   imageUrl: z.string().url('Invalid image URL').max(2000).nullable().optional().or(z.literal('')),
   productUrl: z.string().url('Invalid product URL').max(2000).nullable().optional().or(z.literal('')),
   dimensions: dimensionsSchema.nullable(),
@@ -46,6 +55,7 @@ const productUpdateSchema = z.object({
   finishes: z.array(z.string().max(100)).max(20).optional(),
   leadTime: z.string().max(100).nullable().optional(),
   category: z.string().max(100).nullable().optional(),
+  metadata: z.record(z.unknown()).nullable().optional(),
 });
 
 /* ─── Rate limiters (30s per designer, in-memory) ───── */
@@ -83,8 +93,6 @@ function serializeProduct(p: any) {
 }
 
 async function validateImageUrl(url: string): Promise<boolean> {
-  // HEAD first (cheap). Many CDN providers block HEAD with 403 but serve GET fine — so 403
-  // on HEAD is NOT treated as invalid. Only 404/410 are definitive "gone" responses.
   try {
     const headCtrl = new AbortController();
     const headTimeout = setTimeout(() => headCtrl.abort(), 5_000);
@@ -94,7 +102,6 @@ async function validateImageUrl(url: string): Promise<boolean> {
     if (headRes.status === 404 || headRes.status === 410) return false;
     if (headRes.ok) return true;
 
-    // 403 on HEAD = CDN blocked the method. Probe with GET+Range to confirm resource exists.
     if (headRes.status === 403) {
       try {
         const getCtrl = new AbortController();
@@ -107,17 +114,58 @@ async function validateImageUrl(url: string): Promise<boolean> {
         clearTimeout(getTimeout);
         return getRes.status !== 404 && getRes.status !== 410;
       } catch {
-        // GET probe failed — don't penalise; assume valid
         return true;
       }
     }
 
-    // Any other status (5xx, etc.) — assume valid to avoid false positives
     return true;
   } catch {
-    // Network errors, timeouts — don't penalise
     return true;
   }
+}
+
+/* ─── Error code mapping for extraction errors ──────── */
+
+function extractionErrorResponse(err: any, sourceUrl: string) {
+  if (err instanceof ExtractionError) {
+    const statusMap: Record<string, number> = {
+      BOT_BLOCKED: 422,
+      NOT_PRODUCT_PAGE: 422,
+      PARSE_FAILED: 422,
+      NETWORK_ERROR: 502,
+      NO_PRODUCTS: 422,
+      UNKNOWN: 500,
+    };
+
+    const hintMap: Record<string, string> = {
+      BOT_BLOCKED: 'This site blocked our request. Try a different URL or add the product manually.',
+      NOT_PRODUCT_PAGE: 'This doesn\'t appear to be a product page. Navigate to the specific product and try again.',
+      PARSE_FAILED: 'Failed to extract product details. Try a different URL or add the product manually.',
+      NETWORK_ERROR: 'Could not reach this website. Check the URL and try again.',
+      NO_PRODUCTS: 'No products found on this page. Make sure the URL points to a product page.',
+      UNKNOWN: 'An unexpected error occurred. Please try again.',
+    };
+
+    return {
+      status: statusMap[err.code] ?? 422,
+      body: {
+        error: err.message,
+        errorCode: err.code,
+        hint: hintMap[err.code],
+      },
+    };
+  }
+
+  const message = err?.message?.includes('parse')
+    || err?.message?.includes('extract')
+    || err?.message?.includes('No products')
+    ? err.message
+    : 'Failed to extract product details. Please try a different URL or add the product manually.';
+
+  return {
+    status: 422,
+    body: { error: message, errorCode: 'UNKNOWN' as const },
+  };
 }
 
 /* ─── GET /api/catalog/products ─────────────────────── */
@@ -169,6 +217,7 @@ router.get('/products', async (req: AuthRequest, res: Response) => {
           material: true,
           finishes: true,
           leadTime: true,
+          metadata: true,
           createdAt: true,
           _count: { select: { shortlistItems: true } },
         },
@@ -258,6 +307,7 @@ router.post('/products', async (req: AuthRequest, res: Response) => {
         finishes: data.finishes ?? [],
         leadTime: data.leadTime || null,
         category: data.category || null,
+        metadata: data.metadata ? (data.metadata as any) : undefined,
       },
     });
 
@@ -307,10 +357,13 @@ router.put('/products/:id', async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const { dimensions, ...rest } = parsed.data;
+    const { dimensions, metadata, ...rest } = parsed.data;
     const updateData: any = { ...rest };
     if (dimensions !== undefined) {
       updateData.dimensions = dimensions === null ? null : dimensions;
+    }
+    if (metadata !== undefined) {
+      updateData.metadata = metadata === null ? null : metadata;
     }
 
     const product = await prisma.product.update({
@@ -367,6 +420,49 @@ router.put('/products/:id/deactivate', async (req: AuthRequest, res: Response) =
   }
 });
 
+/* ─── DELETE /api/catalog/products/:id ──────────────── */
+
+router.delete('/products/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const existing = await prisma.product.findFirst({
+      where: { id: req.params.id, designerId: req.user!.id },
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: 'Product not found.' });
+      return;
+    }
+
+    const [shortlistCount, cartCount] = await Promise.all([
+      prisma.shortlistItem.count({ where: { productId: req.params.id } }),
+      prisma.cartItem.count({ where: { productId: req.params.id } }),
+    ]);
+    const inUse = shortlistCount + cartCount;
+    if (inUse > 0) {
+      res.status(409).json({
+        error: `This product is used in ${inUse} shortlist/cart item${inUse !== 1 ? 's' : ''} and cannot be deleted. Deactivate it instead to hide it from your catalog.`,
+      });
+      return;
+    }
+
+    await prisma.product.delete({ where: { id: req.params.id } });
+
+    writeAuditLog({
+      actorType: 'designer',
+      actorId: req.user!.id,
+      action: 'product_deleted',
+      entityType: 'product',
+      entityId: req.params.id,
+      payload: { productName: existing.productName },
+    });
+
+    res.json({ message: 'Product deleted.' });
+  } catch (err) {
+    logger.error('catalog route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
 /* ─── PUT /api/catalog/products/:id/reactivate ──────── */
 
 router.put('/products/:id/reactivate', async (req: AuthRequest, res: Response) => {
@@ -410,6 +506,7 @@ router.post('/extract', async (req: AuthRequest, res: Response) => {
   if (!rateCheck.allowed) {
     res.status(429).json({
       error: `Please wait ${rateCheck.retryAfter}s before extracting again.`,
+      errorCode: 'RATE_LIMITED',
       retryAfter: rateCheck.retryAfter,
     });
     return;
@@ -428,7 +525,6 @@ router.post('/extract', async (req: AuthRequest, res: Response) => {
     }
   } catch (err) {
     logger.error('catalog extract duplicate check error', { err });
-    // Non-fatal — proceed with extraction if duplicate check fails
   }
 
   // Stamp rate limit before calling Claude (prevents hammering on slow responses)
@@ -439,12 +535,8 @@ router.post('/extract', async (req: AuthRequest, res: Response) => {
     res.json(result);
   } catch (err: any) {
     logger.error('catalog extract error', { err, sourceUrl: parsed.data.sourceUrl });
-    const message = err?.message?.includes('parse')
-      || err?.message?.includes('extract')
-      || err?.message?.includes('No products')
-      ? err.message
-      : 'Failed to extract product details. Please try a different URL or add the product manually.';
-    res.status(422).json({ error: message });
+    const errRes = extractionErrorResponse(err, parsed.data.sourceUrl);
+    res.status(errRes.status).json(errRes.body);
   }
 });
 
@@ -467,35 +559,41 @@ router.post('/extract/batch', async (req: AuthRequest, res: Response) => {
   if (!rateCheck.allowed) {
     res.status(429).json({
       error: `Please wait ${rateCheck.retryAfter}s before extracting again.`,
+      errorCode: 'RATE_LIMITED',
       retryAfter: rateCheck.retryAfter,
     });
     return;
   }
   batchExtractRateLimit.set(designerId, Date.now());
 
+  // Use concurrency limiter (max 2 parallel extractions) to avoid API rate limits
   const results = await Promise.allSettled(
-    parsed.data.urls.map(async (url) => {
-      // Duplicate check per URL
-      const duplicate = await prisma.product.findFirst({
-        where: { designerId, sourceUrl: url },
-        select: { id: true, productName: true, brandName: true, imageUrl: true, isActive: true },
-      });
-      if (duplicate) {
-        return { url, type: 'duplicate' as const, duplicateProduct: duplicate };
-      }
-      const result = await extractProductFromUrl(url);
-      return { url, ...result };
-    })
+    parsed.data.urls.map((url) =>
+      batchLimiter(async () => {
+        // Duplicate check per URL
+        const duplicate = await prisma.product.findFirst({
+          where: { designerId, sourceUrl: url },
+          select: { id: true, productName: true, brandName: true, imageUrl: true, isActive: true },
+        });
+        if (duplicate) {
+          return { url, type: 'duplicate' as const, duplicateProduct: duplicate };
+        }
+        const result = await extractProductFromUrl(url);
+        return { url, ...result };
+      }),
+    ),
   );
 
   res.json({
     results: results.map((r, i) => {
       if (r.status === 'fulfilled') return r.value;
-      const msg = (r.reason as any)?.message;
+      const err = r.reason;
+      const errRes = extractionErrorResponse(err, parsed.data.urls[i]);
       return {
         url: parsed.data.urls[i],
         type: 'error' as const,
-        error: msg || 'Extraction failed. Try adding this product manually.',
+        error: errRes.body.error,
+        errorCode: errRes.body.errorCode,
       };
     }),
   });

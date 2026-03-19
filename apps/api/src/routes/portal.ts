@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '@furnlo/db';
 import { writeAuditLog } from '../services/auditLog';
+import { emitProjectEvent } from '../services/projectEvents';
 import logger from '../config/logger';
 
 const router = Router();
@@ -82,6 +83,7 @@ router.get('/:portalToken', async (req: Request, res: Response) => {
                 sharedNotes: true,
                 clientNotes: true,
                 fitAssessment: true,
+                isPinned: true,
                 // designerNotes intentionally omitted
                 product: {
                   select: {
@@ -94,6 +96,8 @@ router.get('/:portalToken', async (req: Request, res: Response) => {
                     dimensions: true,
                     material: true,
                     finishes: true,
+                    leadTime: true,
+                    category: true,
                   },
                 },
               },
@@ -165,11 +169,17 @@ router.put('/:portalToken/shortlist/:itemId', async (req: Request, res: Response
       return;
     }
 
+    // Sync status ↔ isPinned: client approve = pin, reject = unpin
+    const isPinnedSync = status === 'approved' ? true
+      : status === 'rejected' ? false
+      : undefined;
+
     const updated = await prisma.shortlistItem.update({
       where: { id: req.params.itemId },
       data: {
         ...(clientNotes !== undefined && { clientNotes }),
         ...(status !== undefined && { status }),
+        ...(isPinnedSync !== undefined && { isPinned: isPinnedSync }),
       },
       select: {
         id: true,
@@ -178,6 +188,7 @@ router.put('/:portalToken/shortlist/:itemId', async (req: Request, res: Response
         clientNotes: true,
         sharedNotes: true,
         fitAssessment: true,
+        isPinned: true,
         selectedVariant: true,
       },
     });
@@ -192,6 +203,8 @@ router.put('/:portalToken/shortlist/:itemId', async (req: Request, res: Response
         payload: { itemId: item.id, productName: item.product.productName, from: item.status, to: status },
       });
     }
+
+    emitProjectEvent(item.projectId, 'shortlist_updated', { itemId: item.id });
 
     res.json(updated);
   } catch (err) {

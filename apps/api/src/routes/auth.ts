@@ -65,7 +65,7 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
     const designer = await prisma.designer.create({
-      data: { fullName, email, passwordHash, businessName, phone, status: 'pending_review' },
+      data: { fullName, email, passwordHash, businessName, phone, status: 'approved' },
     });
 
     writeAuditLog({
@@ -76,10 +76,11 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
       entityId: designer.id,
     });
 
+    const token = signToken({ id: designer.id, role: 'designer' });
+    res.cookie(SESSION_COOKIE, token, cookieOptions());
     res.status(201).json({
-      pending: true,
-      message: 'Your application has been submitted for review.',
-      user: { id: designer.id, fullName: designer.fullName, email: designer.email },
+      role: 'designer',
+      user: { id: designer.id, fullName: designer.fullName, email: designer.email, status: designer.status },
     });
   } catch (err) {
     logger.error('auth route error', { err, path: req.path, method: req.method });
@@ -107,14 +108,6 @@ router.post('/login', async (req: Request, res: Response) => {
     const valid = await bcrypt.compare(password, designer.passwordHash);
     if (!valid) {
       res.status(401).json({ error: 'Invalid email or password.' });
-      return;
-    }
-
-    if (designer.status === 'pending_review') {
-      res.status(403).json({
-        error: "Your account is under review. You'll receive access once approved.",
-        code: 'PENDING_REVIEW',
-      });
       return;
     }
 

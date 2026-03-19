@@ -63,6 +63,9 @@ export default function ProductDetailPage() {
   const [error, setError] = useState('');
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   // Re-extract state
   const [reExtracting, setReExtracting] = useState(false);
@@ -220,6 +223,19 @@ export default function ProductDetailPage() {
     setEditing(false);
   }
 
+  async function handleDelete() {
+    setDeleting(true);
+    setDeleteError('');
+    const result = await api.deleteProduct(id);
+    setDeleting(false);
+    if (result.error) {
+      setDeleteError(result.error);
+      setConfirmDelete(false);
+      return;
+    }
+    router.push('/catalog');
+  }
+
   async function handleToggleActive() {
     setDeactivating(true);
     const result = product?.isActive
@@ -342,9 +358,32 @@ export default function ProductDetailPage() {
             >
               {product.isActive ? 'Deactivate' : 'Reactivate'}
             </button>
+            <button
+              onClick={() => { setDeleteError(''); setConfirmDelete(true); }}
+              style={{
+                border: '1px solid rgba(180,30,30,0.20)',
+                borderRadius: 8, background: 'transparent',
+                color: '#b91c1c',
+                padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 7, transition: 'all 0.12s',
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6M14 11v6" />
+                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+              </svg>
+              Delete
+            </button>
           </div>
         )}
       </div>
+
+      {/* ── Delete error ─────────────────────────────────── */}
+      {deleteError && (
+        <div className="error-box" style={{ marginBottom: 16 }}>{deleteError}</div>
+      )}
 
       {/* ── Re-extract feedback ──────────────────────────── */}
       {reExtractError && (
@@ -434,6 +473,53 @@ export default function ProductDetailPage() {
                 disabled={deactivating}
               >
                 {deactivating ? 'Processing…' : product.isActive ? 'Deactivate' : 'Reactivate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirm delete dialog ────────────────────────── */}
+      {confirmDelete && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 200,
+          background: 'rgba(0,0,0,0.4)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div className="card" style={{ width: 420, padding: '28px', position: 'relative' }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>
+              Delete this product?
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.55, marginBottom: 22 }}>
+              <strong style={{ color: 'var(--text-primary)' }}>{product.productName}</strong> will be permanently removed from your catalog. This cannot be undone.
+              {((product._count?.shortlistItems ?? 0) > 0 || (product._count?.cartItems ?? 0) > 0) && (
+                <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 7, background: 'rgba(180,30,30,0.06)', border: '1px solid rgba(180,30,30,0.15)', color: '#b91c1c', fontSize: 12.5 }}>
+                  This product is currently in {product._count?.shortlistItems ?? 0} shortlist and {product._count?.cartItems ?? 0} cart item(s). Deletion will be blocked — deactivate instead.
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="btn-ghost" onClick={() => setConfirmDelete(false)} disabled={deleting}>
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                style={{
+                  border: '1px solid rgba(180,30,30,0.3)', borderRadius: 8,
+                  background: 'rgba(180,30,30,0.08)', color: '#b91c1c',
+                  padding: '8px 18px', fontSize: 13, fontWeight: 600, cursor: deleting ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 7,
+                }}
+              >
+                {deleting ? (
+                  <>
+                    <svg className="anim-rotate" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 12a9 9 0 11-6.219-8.56" />
+                    </svg>
+                    Deleting…
+                  </>
+                ) : 'Delete permanently'}
               </button>
             </div>
           </div>
@@ -646,10 +732,6 @@ export default function ProductDetailPage() {
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>In shortlists</span>
                 <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>{product._count?.shortlistItems ?? 0}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>In carts</span>
-                <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>{product._count?.cartItems ?? 0}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Added</span>

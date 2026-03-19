@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 
-type Phase = 1 | 2 | 'success';
+type Phase = 1 | 2;
 
 const DESIGNER_SPECS = ['Residential', 'Commercial', 'Hospitality', 'Retail', 'Healthcare', 'Luxury Villas', 'Offices', 'Show Homes'];
 
@@ -48,7 +49,7 @@ function EyeIcon({ open }: { open: boolean }) {
 }
 
 function StepIndicator({ phase }: { phase: Phase }) {
-  const step = phase === 'success' ? 2 : (phase as number);
+  const step = phase as number;
   return (
     <div style={{ marginBottom: 44 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -77,6 +78,7 @@ function StepIndicator({ phase }: { phase: Phase }) {
 }
 
 export default function SignupPage() {
+  const router = useRouter();
   const [phase,   setPhase]   = useState<Phase>(1);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
@@ -122,7 +124,7 @@ export default function SignupPage() {
     const result = await api.signupDesigner({ fullName, email, password, businessName, phone });
     setLoading(false);
     if (result.error) { setError(result.error); return; }
-    setPhase('success');
+    router.push('/dashboard');
   }
 
   const pwStrength = Math.min(4, Math.floor(password.length / 3));
@@ -138,99 +140,6 @@ export default function SignupPage() {
     justifyContent: 'center',
     padding: '48px 24px',
   };
-
-  /* ── Success / Under Review ──────────────────────── */
-  if (phase === 'success') {
-    return (
-      <div style={pageStyle}>
-        <div className="anim-scale-in" style={{ width: '100%', maxWidth: 400, textAlign: 'center' }}>
-          <div style={{ marginBottom: 48, textAlign: 'left' }}>
-            <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.04em', color: '#0F0F0F' }}>Tradeliv</span>
-          </div>
-
-          {/* Icon */}
-          <div style={{
-            width: 56, height: 56, borderRadius: '50%',
-            background: '#fdf5e6', border: '1.5px solid #e8d5b0',
-            margin: '0 auto 24px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a8710a" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 6v6l4 2" />
-            </svg>
-          </div>
-
-          <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#B0ADA8', marginBottom: 10 }}>
-            Application Received
-          </div>
-
-          <h2 style={{ fontSize: 34, fontWeight: 300, letterSpacing: '-0.05em', color: '#0F0F0F', marginBottom: 14 }}>
-            Under review.
-          </h2>
-
-          <p style={{ fontSize: 14, color: '#8C8984', letterSpacing: '-0.01em', lineHeight: 1.7, marginBottom: 36, maxWidth: 320, margin: '0 auto 36px' }}>
-            Thanks, {fullName.split(' ')[0]}. Your application is being reviewed by our team.
-            You&apos;ll receive an email once your account is approved.
-          </p>
-
-          {/* What happens next */}
-          <div style={{
-            background: '#fff', border: '1.5px solid #E4E1DC', borderRadius: 14,
-            padding: '4px 0', marginBottom: 32, textAlign: 'left',
-          }}>
-            {[
-              { done: true,  label: 'Application submitted', sub: 'Your details have been received' },
-              { done: false, label: 'Under review',          sub: 'Our team verifies trade credentials' },
-              { done: false, label: 'Account activated',     sub: 'You\'ll get an email to sign in' },
-            ].map((step, i, arr) => (
-              <div key={i} style={{
-                display: 'flex', alignItems: 'flex-start', gap: 14,
-                padding: '14px 18px',
-                borderBottom: i < arr.length - 1 ? '1px solid #F0EDE8' : 'none',
-              }}>
-                <div style={{
-                  width: 22, height: 22, borderRadius: '50%', flexShrink: 0, marginTop: 1,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: step.done ? '#0F0F0F' : 'transparent',
-                  border: `1.5px solid ${step.done ? '#0F0F0F' : '#E4E1DC'}`,
-                }}>
-                  {step.done
-                    ? <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2.5 6l2.5 2.5 5-5" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" /></svg>
-                    : <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#E4E1DC' }} />
-                  }
-                </div>
-                <div>
-                  <div style={{ fontSize: 13, color: step.done ? '#0F0F0F' : '#B0ADA8', fontWeight: 600, letterSpacing: '-0.01em' }}>
-                    {step.label}
-                  </div>
-                  <div style={{ fontSize: 12, color: '#B0ADA8', marginTop: 2 }}>
-                    {step.sub}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <Link
-            href="/login"
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: '100%', padding: '12px 0',
-              border: '1.5px solid #E4E1DC', borderRadius: 10,
-              textDecoration: 'none',
-              fontSize: 14, fontWeight: 500, color: '#6B6B6B',
-              letterSpacing: '-0.01em', fontFamily: 'inherit',
-              transition: 'border-color 0.14s, color 0.14s',
-            }}
-            onMouseEnter={(e) => { const el = e.currentTarget as HTMLAnchorElement; el.style.borderColor = '#0F0F0F'; el.style.color = '#0F0F0F'; }}
-            onMouseLeave={(e) => { const el = e.currentTarget as HTMLAnchorElement; el.style.borderColor = '#E4E1DC'; el.style.color = '#6B6B6B'; }}
-          >
-            Back to sign in
-          </Link>
-        </div>
-      </div>
-    );
-  }
 
   /* ── Phase 1 ─────────────────────────────────────── */
   if (phase === 1) {

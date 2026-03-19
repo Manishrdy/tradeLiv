@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, ProductPayload, ExtractedProduct, DuplicateProduct } from '@/lib/api';
+import { api, ProductPayload, ExtractedProduct, DuplicateProduct, ProductMetadata } from '@/lib/api';
 
 const EXTRACT_STEPS = [
   'Visiting page…',
@@ -22,6 +22,7 @@ interface BatchFormState {
   productName: string;
   brandName: string;
   price: string;
+  currency: string;
   imageUrl: string;
   productUrl: string;
   category: string;
@@ -32,7 +33,9 @@ interface BatchFormState {
   dimLength: string;
   dimWidth: string;
   dimHeight: string;
+  dimDepth: string;
   dimUnit: 'in' | 'cm' | 'ft';
+  metadata?: ProductMetadata;
   isDuplicate: boolean;
   duplicateProductId?: string;
   extractError?: string;
@@ -50,6 +53,7 @@ function extractedToBatchForm(data: ExtractedProduct, url: string): BatchFormSta
     productName: data.productName ?? '',
     brandName: data.brandName ?? '',
     price: data.price != null ? String(data.price) : '',
+    currency: data.currency ?? 'USD',
     imageUrl: data.imageUrl ?? '',
     productUrl: data.productUrl ?? '',
     category: data.category ?? '',
@@ -60,13 +64,108 @@ function extractedToBatchForm(data: ExtractedProduct, url: string): BatchFormSta
     dimLength: data.dimensions?.length != null ? String(data.dimensions.length) : '',
     dimWidth: data.dimensions?.width != null ? String(data.dimensions.width) : '',
     dimHeight: data.dimensions?.height != null ? String(data.dimensions.height) : '',
+    dimDepth: data.dimensions?.depth != null ? String(data.dimensions.depth) : '',
     dimUnit: (data.dimensions?.unit as 'in' | 'cm' | 'ft') ?? 'in',
+    metadata: data.metadata,
     isDuplicate: false,
     saving: false,
     saved: false,
     skipped: false,
     error: '',
   };
+}
+
+/* ─── MetadataSummary ────────────────────────────────── */
+
+const METADATA_LABELS: Record<string, string> = {
+  description: 'Description',
+  keyFeatures: 'Key Features',
+  assembly: 'Assembly',
+  careInstructions: 'Care Instructions',
+  warranty: 'Warranty',
+  weightCapacity: 'Weight Capacity',
+  style: 'Style',
+  collection: 'Collection',
+  sku: 'SKU',
+  availableColors: 'Available Colors',
+  seatHeight: 'Seat Height',
+  armHeight: 'Arm Height',
+  seatDepth: 'Seat Depth',
+  legMaterial: 'Leg Material',
+  cushionType: 'Cushion Type',
+  fabricType: 'Fabric Type',
+};
+
+function MetadataSummary({ metadata }: { metadata: ProductMetadata }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const entries = Object.entries(metadata).filter(
+    ([, v]) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0),
+  );
+  if (entries.length === 0) return null;
+
+  // Show first 3 entries in collapsed, all when expanded
+  const visible = expanded ? entries : entries.slice(0, 3);
+  const hasMore = entries.length > 3;
+
+  return (
+    <div style={{
+      marginBottom: 14,
+      padding: '12px 14px',
+      borderRadius: 10,
+      background: 'rgba(50,80,190,0.04)',
+      border: '1px solid rgba(50,80,190,0.12)',
+    }}>
+      <div
+        onClick={() => hasMore && setExpanded(!expanded)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 7, marginBottom: visible.length > 0 ? 10 : 0,
+          cursor: hasMore ? 'pointer' : 'default', userSelect: 'none',
+        }}
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#3850be" strokeWidth="2" strokeLinecap="round">
+          <circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" />
+        </svg>
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: '#3850be', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+          AI-Extracted Details
+        </span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+          {entries.length} field{entries.length !== 1 ? 's' : ''}
+        </span>
+        {hasMore && (
+          <svg
+            width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#3850be" strokeWidth="2.5" strokeLinecap="round"
+            style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        )}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {visible.map(([key, value]) => (
+          <div key={key} style={{ display: 'flex', gap: 8, fontSize: 12, lineHeight: 1.45 }}>
+            <span style={{ fontWeight: 600, color: 'var(--text-secondary)', minWidth: 110, flexShrink: 0 }}>
+              {METADATA_LABELS[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}
+            </span>
+            <span style={{ color: 'var(--text-primary)' }}>
+              {Array.isArray(value) ? value.join(', ') : String(value)}
+            </span>
+          </div>
+        ))}
+      </div>
+      {hasMore && !expanded && (
+        <button
+          onClick={() => setExpanded(true)}
+          style={{
+            marginTop: 6, background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 11.5, fontWeight: 600, color: '#3850be', padding: 0,
+          }}
+        >
+          Show {entries.length - 3} more…
+        </button>
+      )}
+    </div>
+  );
 }
 
 /* ─── BatchProductCard ──────────────────────────────── */
@@ -315,7 +414,7 @@ function BatchProductCard({
       </div>
 
       {/* Row 4: Dimensions + Lead Time */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 80px 1fr', gap: 10, marginBottom: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 70px 1fr', gap: 10, marginBottom: 10 }}>
         <div>
           <label className="form-label">Length</label>
           <input className="input-field" type="number" min="0" step="0.1" placeholder="0" value={form.dimLength} onChange={(e) => onUpdate({ dimLength: e.target.value })} disabled={disabled} />
@@ -327,6 +426,10 @@ function BatchProductCard({
         <div>
           <label className="form-label">Height</label>
           <input className="input-field" type="number" min="0" step="0.1" placeholder="0" value={form.dimHeight} onChange={(e) => onUpdate({ dimHeight: e.target.value })} disabled={disabled} />
+        </div>
+        <div>
+          <label className="form-label">Depth</label>
+          <input className="input-field" type="number" min="0" step="0.1" placeholder="0" value={form.dimDepth} onChange={(e) => onUpdate({ dimDepth: e.target.value })} disabled={disabled} />
         </div>
         <div>
           <label className="form-label">Unit</label>
@@ -399,6 +502,11 @@ function BatchProductCard({
           </div>
         )}
       </div>
+
+      {/* AI-extracted metadata summary */}
+      {form.metadata && Object.keys(form.metadata).length > 0 && (
+        <MetadataSummary metadata={form.metadata} />
+      )}
 
       {/* Error */}
       {form.error && <div className="error-box" style={{ marginBottom: 12 }}>{form.error}</div>}
@@ -501,7 +609,10 @@ export default function NewProductPage() {
   const [dimLength, setDimLength] = useState('');
   const [dimWidth, setDimWidth] = useState('');
   const [dimHeight, setDimHeight] = useState('');
+  const [dimDepth, setDimDepth] = useState('');
   const [dimUnit, setDimUnit] = useState<'in' | 'cm' | 'ft'>('in');
+  const [currency, setCurrency] = useState('USD');
+  const [singleMetadata, setSingleMetadata] = useState<ProductMetadata | undefined>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -531,6 +642,7 @@ export default function NewProductPage() {
     setProductName(data.productName ?? '');
     setBrandName(data.brandName ?? '');
     setPrice(data.price != null ? String(data.price) : '');
+    setCurrency(data.currency ?? 'USD');
     setImageUrl(data.imageUrl ?? '');
     setProductUrl(data.productUrl ?? '');
     setCategory(data.category ?? '');
@@ -541,8 +653,10 @@ export default function NewProductPage() {
       setDimLength(data.dimensions.length != null ? String(data.dimensions.length) : '');
       setDimWidth(data.dimensions.width != null ? String(data.dimensions.width) : '');
       setDimHeight(data.dimensions.height != null ? String(data.dimensions.height) : '');
+      setDimDepth(data.dimensions.depth != null ? String(data.dimensions.depth) : '');
       if (data.dimensions.unit) setDimUnit(data.dimensions.unit as 'in' | 'cm' | 'ft');
     }
+    setSingleMetadata(data.metadata);
     setExtracted(true);
     setCollectionProducts(null);
     setCollectionSearch('');
@@ -637,10 +751,10 @@ export default function NewProductPage() {
           sourceUrl: item.url,
           productName: item.duplicateProduct.productName,
           brandName: item.duplicateProduct.brandName ?? '',
-          price: '', imageUrl: item.duplicateProduct.imageUrl ?? '',
+          price: '', currency: 'USD', imageUrl: item.duplicateProduct.imageUrl ?? '',
           productUrl: '', category: '', material: '', leadTime: '',
           finishes: [], finishInput: '',
-          dimLength: '', dimWidth: '', dimHeight: '', dimUnit: 'in' as const,
+          dimLength: '', dimWidth: '', dimHeight: '', dimDepth: '', dimUnit: 'in' as const,
           isDuplicate: true,
           duplicateProductId: item.duplicateProduct.id,
           saving: false, saved: false, skipped: false, error: '',
@@ -651,9 +765,9 @@ export default function NewProductPage() {
         return {
           tempId: Math.random().toString(36).slice(2),
           sourceUrl: item.url,
-          productName: '', brandName: '', price: '', imageUrl: '', productUrl: '',
+          productName: '', brandName: '', price: '', currency: 'USD', imageUrl: '', productUrl: '',
           category: '', material: '', leadTime: '', finishes: [], finishInput: '',
-          dimLength: '', dimWidth: '', dimHeight: '', dimUnit: 'in' as const,
+          dimLength: '', dimWidth: '', dimHeight: '', dimDepth: '', dimUnit: 'in' as const,
           isDuplicate: false,
           extractError: item.error || 'Could not extract product details.',
           saving: false, saved: false, skipped: false, error: '',
@@ -683,11 +797,12 @@ export default function NewProductPage() {
 
     updateBatchForm(tempId, { saving: true, error: '' });
 
-    const dimensions = (form.dimLength || form.dimWidth || form.dimHeight)
+    const dimensions = (form.dimLength || form.dimWidth || form.dimHeight || form.dimDepth)
       ? {
           length: form.dimLength ? parseFloat(form.dimLength) : undefined,
           width: form.dimWidth ? parseFloat(form.dimWidth) : undefined,
           height: form.dimHeight ? parseFloat(form.dimHeight) : undefined,
+          depth: form.dimDepth ? parseFloat(form.dimDepth) : undefined,
           unit: form.dimUnit,
         }
       : undefined;
@@ -697,6 +812,7 @@ export default function NewProductPage() {
       sourceUrl: form.sourceUrl.trim(),
       brandName: form.brandName.trim() || undefined,
       price: form.price ? parseFloat(form.price) : undefined,
+      currency: form.currency || undefined,
       imageUrl: form.imageUrl.trim() || undefined,
       productUrl: form.productUrl.trim() || undefined,
       category: form.category.trim() || undefined,
@@ -704,6 +820,7 @@ export default function NewProductPage() {
       leadTime: form.leadTime.trim() || undefined,
       finishes: form.finishes.length > 0 ? form.finishes : undefined,
       dimensions,
+      metadata: form.metadata && Object.keys(form.metadata).length > 0 ? form.metadata : undefined,
     };
 
     const result = await api.createProduct(payload);
@@ -755,17 +872,19 @@ export default function NewProductPage() {
     setError('');
     setImageUrlWarning(false);
 
-    const dimensions = (dimLength || dimWidth || dimHeight)
-      ? { length: dimLength ? parseFloat(dimLength) : undefined, width: dimWidth ? parseFloat(dimWidth) : undefined, height: dimHeight ? parseFloat(dimHeight) : undefined, unit: dimUnit }
+    const dimensions = (dimLength || dimWidth || dimHeight || dimDepth)
+      ? { length: dimLength ? parseFloat(dimLength) : undefined, width: dimWidth ? parseFloat(dimWidth) : undefined, height: dimHeight ? parseFloat(dimHeight) : undefined, depth: dimDepth ? parseFloat(dimDepth) : undefined, unit: dimUnit }
       : undefined;
 
     const payload: ProductPayload = {
       productName: productName.trim(), sourceUrl: sourceUrl.trim(),
       brandName: brandName.trim() || undefined, price: price ? parseFloat(price) : undefined,
+      currency: currency || undefined,
       imageUrl: imageUrl.trim() || undefined, productUrl: productUrl.trim() || undefined,
       category: category.trim() || undefined, material: material.trim() || undefined,
       leadTime: leadTime.trim() || undefined,
       finishes: finishes.length > 0 ? finishes : undefined, dimensions,
+      metadata: singleMetadata && Object.keys(singleMetadata).length > 0 ? singleMetadata : undefined,
     };
 
     const result = await api.createProduct(payload);
@@ -1138,10 +1257,11 @@ export default function NewProductPage() {
             <Field label="Product Page URL" optional><input className="input-field" type="url" placeholder="https://vendor.com/product" value={productUrl} onChange={(e) => setProductUrl(e.target.value)} /></Field>
 
             <SectionHeading>Dimensions <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10.5, opacity: 0.7 }}>(optional)</span></SectionHeading>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 90px', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 90px', gap: 12 }}>
               <Field label="Length"><input className="input-field" type="number" placeholder="0" min="0" step="0.1" value={dimLength} onChange={(e) => setDimLength(e.target.value)} /></Field>
               <Field label="Width"><input className="input-field" type="number" placeholder="0" min="0" step="0.1" value={dimWidth} onChange={(e) => setDimWidth(e.target.value)} /></Field>
               <Field label="Height"><input className="input-field" type="number" placeholder="0" min="0" step="0.1" value={dimHeight} onChange={(e) => setDimHeight(e.target.value)} /></Field>
+              <Field label="Depth"><input className="input-field" type="number" placeholder="0" min="0" step="0.1" value={dimDepth} onChange={(e) => setDimDepth(e.target.value)} /></Field>
               <Field label="Unit"><select className="select-field" value={dimUnit} onChange={(e) => setDimUnit(e.target.value as 'in' | 'cm' | 'ft')}><option value="in">in</option><option value="cm">cm</option><option value="ft">ft</option></select></Field>
             </div>
 
@@ -1161,6 +1281,14 @@ export default function NewProductPage() {
             )}
 
             <Field label="Lead Time" optional><input className="input-field" type="text" placeholder="e.g. 4-6 weeks" value={leadTime} onChange={(e) => setLeadTime(e.target.value)} /></Field>
+
+            {/* AI-extracted metadata summary */}
+            {singleMetadata && Object.keys(singleMetadata).length > 0 && (
+              <>
+                <SectionHeading>AI-Extracted Details</SectionHeading>
+                <MetadataSummary metadata={singleMetadata} />
+              </>
+            )}
 
             {error && <div className="error-box" style={{ marginBottom: 20 }}>{error}</div>}
 

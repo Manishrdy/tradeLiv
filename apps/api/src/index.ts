@@ -14,6 +14,7 @@ import projectsRouter from './routes/projects';
 import catalogRouter from './routes/catalog';
 import ordersRouter from './routes/orders';
 import adminRouter from './routes/admin';
+import { addProjectListener } from './services/projectEvents';
 
 const app = express();
 const PORT = process.env.API_PORT ?? 4000;
@@ -57,6 +58,36 @@ app.use('/api/projects', projectsRouter);
 app.use('/api/catalog', catalogRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/admin', adminRouter);
+
+/* ─── SSE: real-time project events ───────────────── */
+app.get('/api/projects/:projectId/events', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+  res.write(':\n\n'); // SSE comment to establish connection
+  addProjectListener(req.params.projectId, res);
+});
+
+/* ─── SSE: portal events (public, by portalToken) ── */
+app.get('/api/portal/:portalToken/events', async (req, res) => {
+  // Resolve portalToken → projectId
+  const { prisma } = await import('@furnlo/db');
+  const project = await prisma.project.findUnique({
+    where: { portalToken: req.params.portalToken },
+    select: { id: true },
+  });
+  if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+  res.write(':\n\n');
+  addProjectListener(project.id, res);
+});
 
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   logger.error(err.message, { stack: err.stack });

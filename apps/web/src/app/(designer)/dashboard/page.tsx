@@ -141,17 +141,26 @@ export default function DashboardPage() {
           const liveValues = [stats.activeProjects, stats.totalClients, stats.totalShortlisted, stats.totalOrders];
           const liveValue = liveValues[i];
           const liveSub = liveValue === 0 ? s.sub : `${liveValue} total`;
-          return { ...s, value: String(liveValue ?? 0), sub: liveSub };
-        }).map((s) => (
-          <Link key={s.label} href={s.href} style={{ textDecoration: 'none' }}>
+          // Orders module not yet available — render as non-interactive
+          const disabled = s.label === 'Orders';
+          return { ...s, value: String(liveValue ?? 0), sub: liveSub, disabled };
+        }).map((s) => {
+          const cardContent = (
             <div
               className="card"
-              style={{ padding: '20px 22px', cursor: 'pointer', transition: 'transform 0.15s, box-shadow 0.15s' }}
+              style={{
+                padding: '20px 22px',
+                cursor: s.disabled ? 'default' : 'pointer',
+                transition: 'transform 0.15s, box-shadow 0.15s',
+                opacity: s.disabled ? 0.5 : 1,
+              }}
               onMouseEnter={(e) => {
+                if (s.disabled) return;
                 (e.currentTarget as HTMLDivElement).style.transform = 'translateY(-2px)';
                 (e.currentTarget as HTMLDivElement).style.boxShadow = 'var(--shadow-md)';
               }}
               onMouseLeave={(e) => {
+                if (s.disabled) return;
                 (e.currentTarget as HTMLDivElement).style.transform = 'translateY(0)';
                 (e.currentTarget as HTMLDivElement).style.boxShadow = '';
               }}
@@ -171,8 +180,11 @@ export default function DashboardPage() {
               <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 2 }}>{s.label}</div>
               <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{s.sub}</div>
             </div>
-          </Link>
-        ))}
+          );
+          return s.disabled
+            ? <div key={s.label}>{cardContent}</div>
+            : <Link key={s.label} href={s.href} style={{ textDecoration: 'none' }}>{cardContent}</Link>;
+        })}
       </div>
 
       {/* ── Get started ─────────────────────────────────── */}

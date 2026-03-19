@@ -43,9 +43,8 @@ export interface SignupDesignerPayload {
 }
 
 export interface SignupResponse {
-  pending: boolean;
-  message: string;
-  user: { id: string; fullName: string; email: string };
+  role: string;
+  user: { id: string; fullName: string; email: string; status: string };
 }
 
 export interface LoginPayload {
@@ -236,6 +235,27 @@ export interface ProductDimensions {
   depth?: number;
   weight?: number;
   unit?: 'cm' | 'in' | 'ft';
+  raw?: string;
+}
+
+export interface ProductMetadata {
+  description?: string;
+  keyFeatures?: string[];
+  assembly?: string;
+  careInstructions?: string;
+  warranty?: string;
+  weightCapacity?: string;
+  style?: string;
+  collection?: string;
+  sku?: string;
+  availableColors?: string[];
+  seatHeight?: string;
+  armHeight?: string;
+  seatDepth?: string;
+  legMaterial?: string;
+  cushionType?: string;
+  fabricType?: string;
+  [key: string]: unknown;
 }
 
 export interface Product {
@@ -245,6 +265,7 @@ export interface Product {
   sourceUrl: string;
   brandName: string | null;
   price: number | null;
+  currency: string | null;
   imageUrl: string | null;
   productUrl: string | null;
   dimensions: ProductDimensions | null;
@@ -252,6 +273,7 @@ export interface Product {
   finishes: string[];
   leadTime: string | null;
   category: string | null;
+  metadata: ProductMetadata | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -289,6 +311,7 @@ export interface ProductPayload {
   sourceUrl: string;
   brandName?: string;
   price?: number;
+  currency?: string;
   imageUrl?: string;
   productUrl?: string;
   dimensions?: ProductDimensions;
@@ -296,12 +319,14 @@ export interface ProductPayload {
   finishes?: string[];
   leadTime?: string;
   category?: string;
+  metadata?: ProductMetadata;
 }
 
 export interface ExtractedProduct {
   productName: string;
   brandName?: string;
   price?: number;
+  currency?: string;
   imageUrl?: string;
   productUrl?: string;
   dimensions?: ProductDimensions;
@@ -309,6 +334,7 @@ export interface ExtractedProduct {
   finishes?: string[];
   leadTime?: string;
   category?: string;
+  metadata?: ProductMetadata;
 }
 
 export interface DuplicateProduct {
@@ -344,6 +370,7 @@ export interface ProductUpdatePayload {
   sourceUrl?: string;
   brandName?: string | null;
   price?: number | null;
+  currency?: string | null;
   imageUrl?: string | null;
   productUrl?: string | null;
   dimensions?: ProductDimensions | null;
@@ -351,6 +378,7 @@ export interface ProductUpdatePayload {
   finishes?: string[];
   leadTime?: string | null;
   category?: string | null;
+  metadata?: ProductMetadata | null;
 }
 
 /* ─── Shortlist types ──────────────────────────────── */
@@ -423,6 +451,8 @@ export interface PortalProduct {
   dimensions: Record<string, unknown> | null;
   material: string | null;
   finishes?: string[];
+  leadTime?: string | null;
+  category?: string | null;
 }
 
 export interface PortalShortlistItem {
@@ -433,6 +463,7 @@ export interface PortalShortlistItem {
   sharedNotes: string | null;
   clientNotes: string | null;
   fitAssessment: string | null;
+  isPinned: boolean;
   product: PortalProduct;
 }
 
@@ -600,6 +631,9 @@ export const api = {
 
   reactivateProduct: (id: string) =>
     request<Product>(`/api/catalog/products/${id}/reactivate`, { method: 'PUT' }),
+
+  deleteProduct: (id: string) =>
+    request<{ message: string }>(`/api/catalog/products/${id}`, { method: 'DELETE' }),
 
   extractProduct: (sourceUrl: string) =>
     request<ExtractionResult>('/api/catalog/extract', { method: 'POST', body: JSON.stringify({ sourceUrl }) }),
