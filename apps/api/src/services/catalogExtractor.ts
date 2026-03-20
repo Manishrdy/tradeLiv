@@ -197,18 +197,36 @@ Respond with ONLY a valid JSON object. No markdown, no explanation, no extra tex
 
 REQUIRED — always include these four fields:
 - productName: the product name. Use og:title or JSON-LD name. Strip " | Brand" or " - Site Name" suffixes from titles.
-- price: number only (e.g. 1299.00). Use the current/sale price if shown. null if no price found anywhere.
+- price: number only (e.g. 1299.00). PRICE PRIORITY ORDER:
+  1. selected_variant_price (if present — this is the EXACT price for the URL's selected variant, always use this first)
+  2. JSON-LD price or itemprop_price
+  3. og:price or product:price:amount meta tags
+  IMPORTANT: og:price and meta tag prices often show the LOWEST variant price, not the selected variant. Always prefer selected_variant_price when available.
 - imageUrl: the main product image as a full https:// URL. Prefer og:image, then JSON-LD image, then twitter:image. CDN URLs with query params (e.g. ?w=800&fmt=webp) are valid — include them exactly. null only if truly no image signal exists.
 - category: ALWAYS infer the furniture category, even if not explicit. Use the product name and breadcrumbs. Must be exactly one of: Sofa, Dining Table, Bed, Desk, Storage, Lighting, Armchair, Side Table, Bookshelf, Mirror, Rug, Wardrobe, TV Unit, Coffee Table, Console Table, Bar Stool, Ottoman, Bench, Dresser, Nightstand, Chair, Table, Outdoor, Accessories
 
 CRITICAL — dimensions are essential for interior design. Extract them aggressively:
+- ALWAYS scan the full page text for the literal word "Dimensions" or "Overall Dimensions" 
+  before falling back to other dim_* signals. If found, extract values from that line/block first.
 - dimensions: { length, width, height, depth, weight, unit, raw }
   - unit must be "in", "cm", or "ft"
-  - "raw" is the original dimension text from the page (e.g. "68.5 x 85 x 54")
-  - Look in: body_text, spec_sections, embedded_dimensions, dim_* signals, JSON-LD, and any "x" pattern with numbers
-  - For triplet values like "68.5 x 85 x 54", interpret as width x depth x height (W x D x H) unless labelled otherwise
-  - NEVER skip dimensions if any numbers with "x" separators or labelled measurements exist in the signals
-  - If you see dim_* signals or spec_sections, these contain dimension data — always parse them into the dimensions object
+  - "raw" is the original dimension text from the page (e.g. "22" Width x 5" Depth x 22" Height")
+  - DIMENSION SIGNAL PRIORITY ORDER:
+    0. explicit_dimensions_label — If the page contains the word "Dimensions" (or "Dimension") followed by a colon or line break and a measurement string 
+      (e.g. "Dimensions: 90" Width x 100" Depth x 42" Height"), treat this as the authoritative source. Extract width, depth, and height directly from this labeled text. This overrides all other dimension signals.
+      Examples of matching patterns:
+        - "Dimensions: 90" W x 100" D x 42" H"
+        - "Dimensions\n90" Width x 100" Depth x 42" Height"
+        - "Overall Dimensions: 90W x 100D x 42H inches"
+        - "Dimensions: 90 x 100 x 42 in (W x D x H)"
+    1. dim_labelled signals (e.g. "22" Width x 5" Depth x 22" Height") — most reliable, pre-parsed from page
+    2. dim_label signals (e.g. "Width: 22", "Height: 34") — individual labelled measurements
+    3. dim_WxDxH / dim_overall signals — structured W×D×H patterns
+    4. shopify_body_text or spec_sections — dimension text from product details
+    5. dim_LxWxH — plain triplet patterns (less reliable — could be variant names like "22 x 22")
+  - IMPORTANT: Do NOT confuse variant/size names (e.g. "22 x 22" in a pillow size option) with physical product dimensions. Variant titles describe size options, not measurements. Only use dim_* signals and body_text/spec_sections for actual dimensions.
+  - For labelled dimensions (Width/Depth/Height/Diameter), map them directly to the correct fields
+  - NEVER skip dimensions if dim_label, dim_labelled, or spec_sections contain measurement data
 
 OPTIONAL — include only when clearly present in the signals:
 - brandName: manufacturer or brand name
@@ -271,11 +289,11 @@ For a COLLECTION/CATEGORY page (multiple products visible) respond:
 }
 
 Rules:
-- price: numeric only, no currency symbols or commas. Use sale/current price. null if absent.
+- price: numeric only, no currency symbols or commas. ALWAYS prefer selected_variant_price over meta tag prices. Meta tags often show the lowest variant price, not the selected one. null if absent.
 - currency: infer from domain (.co.uk → GBP, .de → EUR) or currency symbols ($ → USD, £ → GBP, € → EUR). Default "USD" if US site.
 - imageUrl: must start with https://. Include CDN query params as-is. Never fabricate a URL.
 - category: always infer from product name or breadcrumbs. Never leave this null.
-- dimensions: THIS IS THE MOST IMPORTANT OPTIONAL FIELD. Extract ALL dimension data from every signal source. Check dim_* lines, spec_sections, embedded_dimensions, body_text. Common formats: "68.5 x 85 x 54", "84"W x 38"D x 34"H", "Width: 84", tables with dimension rows. Always include "raw" with the original text. If ANY numbers separated by "x" exist, capture them as dimensions.
+- dimensions: THIS IS THE MOST IMPORTANT OPTIONAL FIELD. Use dim_labelled and dim_label signals FIRST — these are the most reliable. Do NOT confuse variant size names (like "22 x 22" in variant titles) with actual product dimensions. Only use properly labelled measurements. Always include "raw" with the original text.
 - metadata: extract ALL useful details. This data helps interior designers make informed decisions. Be thorough.
 - Output ONLY the JSON object.`;
 
@@ -439,8 +457,9 @@ function extractDimensionsFromText(text: string): string[] {
   }
 
   // Pattern 3: L x W x H plain — e.g. 84 x 38 x 34 in / 84 x 38 x 34 inches / 84 x 38 x 34"
+  // Require at least one number to be > 1 and a unit marker or quote to avoid false positives
   const lwhPlain =
-    /(\d+(?:\.\d+)?)\s*[x×X]\s*(\d+(?:\.\d+)?)\s*[x×X]\s*(\d+(?:\.\d+)?)\s*(?:["″]|in(?:ches)?|cm|mm|ft)?/g;
+    /(\d+(?:\.\d+)?)\s*["″]?\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]?\s*[x×X]\s*(\d+(?:\.\d+)?)\s*(?:["″]|in(?:ches)?|cm|mm|ft)/g;
   for (const m of text.matchAll(lwhPlain)) {
     const key = `${m[1]}x${m[2]}x${m[3]}`;
     if (!lines.some((l) => l.includes(key) || l.includes(`${m[1]}W`))) {
@@ -448,11 +467,18 @@ function extractDimensionsFromText(text: string): string[] {
     }
   }
 
-  // Pattern 4: Individual dimension labels — e.g. Width: 84", Height: 34 inches
+  // Pattern 4: Individual dimension labels — e.g. Width: 84", Height: 34 inches, Width 22"
   const labelPattern =
-    /(?:overall\s+)?(?:width|length|height|depth|seat\s*height|seat\s*depth|arm\s*height|diameter)\s*[:=]\s*(\d+(?:\.\d+)?)\s*(?:["″]|in(?:ches)?|cm|mm|ft)?/gi;
+    /(?:overall\s+)?(?:width|length|height|depth|seat\s*height|seat\s*depth|arm\s*height|diameter)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(?:["″]|in(?:ches)?|cm|mm|ft)?/gi;
   for (const m of text.matchAll(labelPattern)) {
     lines.push(`dim_label: ${m[0].trim()}`);
+  }
+
+  // Pattern 4b: Labelled dimensions with " prefix — e.g. 22" Width x 5" Depth x 22" Height
+  const labelAfterNum =
+    /(\d+(?:\.\d+)?)\s*["″]?\s*(?:width|length|height|depth|diameter)\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]?\s*(?:width|length|height|depth|diameter)(?:\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]?\s*(?:width|length|height|depth|diameter))?/gi;
+  for (const m of text.matchAll(labelAfterNum)) {
+    lines.push(`dim_labelled: ${m[0].trim()}`);
   }
 
   // Pattern 5: Weight — e.g. 85 lbs, Weight: 120 pounds
@@ -484,11 +510,13 @@ function extractDimensionsFromText(text: string): string[] {
   }
 
   // Pattern 9: Two-value dimensions — e.g. "68.5 x 85" (common for tables, rugs)
+  // Only match when followed by a unit indicator to avoid matching variant names
   const twoDim =
-    /(\d+(?:\.\d+)?)\s*["″]?\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]?\s*(?:in(?:ches)?|cm|ft)?/g;
+    /(\d+(?:\.\d+)?)\s*["″]\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]\s*(?:in(?:ches)?|cm|ft)?/g;
   for (const m of text.matchAll(twoDim)) {
-    // Only include if we haven't captured these numbers in a 3-value pattern
     const n1 = m[1], n2 = m[2];
+    // Skip if both numbers are the same (likely a size name like "22 x 22") unless they have unit markers
+    if (n1 === n2 && !m[0].includes('in') && !m[0].includes('cm')) continue;
     if (!lines.some((l) => l.includes(n1) && l.includes(n2))) {
       lines.push(`dim_2d: ${n1} x ${n2}`);
     }
@@ -504,41 +532,108 @@ function extractDimensionsFromText(text: string): string[] {
   return lines;
 }
 
+/* ─── Extract variant ID from URL ────────────────────── */
+
+function extractVariantId(url: string): string | null {
+  try {
+    const u = new URL(url);
+    return u.searchParams.get('variant');
+  } catch {
+    return null;
+  }
+}
+
 /* ─── Extract embedded product JSON from script tags ── */
 
-function extractEmbeddedProductJson(html: string): string[] {
+function extractEmbeddedProductJson(html: string, url: string): string[] {
   const lines: string[] = [];
+  const variantId = extractVariantId(url);
 
-  // Shopify product JSON — common pattern: var meta = {"product":...}
-  // or window.ShopifyAnalytics.meta.product
-  const shopifyPatterns = [
-    /var\s+meta\s*=\s*(\{[\s\S]*?"product"[\s\S]*?\});/,
-    /"product"\s*:\s*(\{[\s\S]*?"variants"[\s\S]*?\})\s*[,;}\]]/,
+  // ── Shopify-style embedded product data ───────────────
+  // Sites embed product JSON in many patterns — try them all
+  const shopifyPatterns: Array<{ re: RegExp; extract: (m: RegExpMatchArray) => any }> = [
+    // var meta = {"product": {...}}
+    { re: /var\s+meta\s*=\s*(\{[\s\S]*?"product"[\s\S]*?\});/, extract: (m) => { const d = JSON.parse(m[1]); return d.product ?? d; } },
+    // window.customerHub.activeProduct = {...}  (Arhaus, etc.)
+    { re: /customerHub\.activeProduct\s*=\s*(\{[\s\S]*?"variants"[\s\S]*?\});/, extract: (m) => JSON.parse(m[1]) },
+    // window.customerHub = {..., activeProduct: {...}}
+    { re: /window\.customerHub\s*=\s*(\{[\s\S]*?"activeProduct"[\s\S]*?\});/, extract: (m) => { const d = JSON.parse(m[1]); return d.activeProduct ?? d; } },
+    // "product": {..., "variants": [...]}  (generic Shopify)
+    { re: /"product"\s*:\s*(\{[\s\S]*?"variants"\s*:\s*\[[\s\S]*?\][\s\S]*?\})\s*[,;}\]]/, extract: (m) => JSON.parse(m[1]) },
+    // productView or productData assignments
+    { re: /(?:productView|productData|__product)\s*=\s*(\{[\s\S]*?"variants"[\s\S]*?\});/, extract: (m) => JSON.parse(m[1]) },
   ];
 
-  for (const pattern of shopifyPatterns) {
-    const match = html.match(pattern);
-    if (match) {
-      try {
-        const data = JSON.parse(match[1]);
-        const product = data.product ?? data;
-        // Look for dimension-bearing fields in variants or product body
-        if (product.body_html) {
-          const dimFromBody = extractDimensionsFromText(product.body_html);
-          lines.push(...dimFromBody.map((d) => `shopify_${d}`));
+  let foundProduct = false;
+
+  for (const { re, extract } of shopifyPatterns) {
+    if (foundProduct) break;
+    const match = html.match(re);
+    if (!match) continue;
+
+    try {
+      const product = extract(match);
+      if (!product) continue;
+      foundProduct = true;
+
+      // Extract dimensions from product body_html / description
+      const bodyHtml = product.body_html ?? product.description_html ?? product.descriptionHtml ?? '';
+      if (bodyHtml) {
+        const dimFromBody = extractDimensionsFromText(bodyHtml);
+        lines.push(...dimFromBody.map((d) => `shopify_${d}`));
+        // Also extract clean text from body for dimension labels
+        const bodyText = bodyHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        if (bodyText.length > 20 && bodyText.length < 3000) {
+          lines.push(`shopify_body_text: ${bodyText.slice(0, 1500)}`);
         }
-        if (product.variants && Array.isArray(product.variants)) {
-          for (const v of product.variants.slice(0, 5)) {
-            // Shopify stores dimensions in variant options or metafields
-            if (v.option1) lines.push(`variant_option: ${v.option1}`);
-            if (v.weight) lines.push(`variant_weight: ${v.weight}${v.weight_unit ?? 'g'}`);
+      }
+
+      // Extract variant-specific data
+      if (product.variants && Array.isArray(product.variants)) {
+        // If URL has a variant ID, find the matching variant for accurate price
+        if (variantId) {
+          const selectedVariant = product.variants.find(
+            (v: any) => String(v.id) === variantId || String(v.id).endsWith(variantId),
+          );
+          if (selectedVariant) {
+            const vPrice = selectedVariant.price ?? selectedVariant.priceV2?.amount;
+            const vTitle = selectedVariant.title ?? selectedVariant.name ?? '';
+            // Shopify sometimes stores price in cents
+            const priceNum = typeof vPrice === 'string' ? parseFloat(vPrice) : Number(vPrice);
+            const normalizedPrice = priceNum > 10000 ? priceNum / 100 : priceNum; // cents → dollars
+            lines.push(`selected_variant_price: ${normalizedPrice}`);
+            lines.push(`selected_variant_title: ${vTitle}`);
+            if (selectedVariant.sku) lines.push(`selected_variant_sku: ${selectedVariant.sku}`);
           }
         }
-      } catch { /* ignore parse failures */ }
-    }
+
+        // Also log first few variant options for AI context
+        for (const v of product.variants.slice(0, 8)) {
+          const vPrice = v.price ?? v.priceV2?.amount;
+          const priceNum = typeof vPrice === 'string' ? parseFloat(vPrice) : Number(vPrice);
+          const normalizedPrice = priceNum > 10000 ? priceNum / 100 : priceNum;
+          const title = v.title ?? v.name ?? v.option1 ?? '';
+          lines.push(`variant: ${title} | $${normalizedPrice}`);
+          if (v.weight) lines.push(`variant_weight: ${v.weight}${v.weight_unit ?? 'g'}`);
+        }
+      }
+
+      // Extract product-level dimensions/specs if present
+      if (product.dimensions) {
+        lines.push(`shopify_dimensions: ${typeof product.dimensions === 'object' ? JSON.stringify(product.dimensions) : product.dimensions}`);
+      }
+      if (product.metafields && Array.isArray(product.metafields)) {
+        for (const mf of product.metafields) {
+          const key = mf.key ?? mf.namespace ?? '';
+          if (/dimension|spec|size|weight|width|height|depth/i.test(key)) {
+            lines.push(`shopify_metafield_${key}: ${mf.value}`);
+          }
+        }
+      }
+    } catch { /* ignore parse failures */ }
   }
 
-  // Next.js / React hydration data — __NEXT_DATA__, __INITIAL_STATE__, etc.
+  // ── Next.js / React hydration data ────────────────────
   const hydrationPatterns = [
     /<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i,
     /window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\});/,
@@ -550,7 +645,6 @@ function extractEmbeddedProductJson(html: string): string[] {
     if (match) {
       try {
         const data = JSON.parse(match[1]);
-        // Deep-search for dimension/specification data
         const dimText = extractDimensionFieldsFromJson(data);
         if (dimText) lines.push(`embedded_dimensions: ${dimText}`);
       } catch { /* ignore parse failures */ }
@@ -808,7 +902,7 @@ function extractSignals(html: string, url: string): string {
   lines.push(...dimLines);
 
   // ── Embedded product JSON (Shopify, Next.js, etc.) ────
-  const embeddedLines = extractEmbeddedProductJson(html);
+  const embeddedLines = extractEmbeddedProductJson(html, url);
   if (embeddedLines.length > 0) {
     lines.push(...embeddedLines);
   }
@@ -862,7 +956,7 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
         messages: [
           {
             role: 'user',
-            content: `Extract product data from these page signals. DIMENSIONS ARE CRITICAL — look at ALL dim_* lines, spec_sections, embedded_dimensions, and body_text for measurements. Any numbers separated by "x" (e.g. "68.5 x 85 x 54") are dimensions. Never leave dimensions empty if measurement data exists anywhere in the signals.\n\n${signals}`,
+            content: `Extract product data from these page signals.\n\nPRICE: If "selected_variant_price" is present, use that — it's the exact price for the URL's variant. Do NOT use og:price or meta tag prices when selected_variant_price exists.\n\nDIMENSIONS: Use dim_labelled and dim_label signals first. Do NOT confuse variant titles (like "22 x 22") with actual product dimensions. Only labelled measurements (Width/Depth/Height) are real dimensions.\n\n${signals}`,
           },
         ],
       });
