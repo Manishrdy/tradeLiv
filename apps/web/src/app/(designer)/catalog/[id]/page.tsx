@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, Product, ProductUpdatePayload, ProductDimensions, ExtractedProduct } from '@/lib/api';
+import { api, Product, ProductUpdatePayload, ProductDimensions, ProductMetadata, ExtractedProduct } from '@/lib/api';
 
 const EXTRACT_STEPS = [
   'Visiting page…',
@@ -41,6 +41,102 @@ function formatPrice(price: number | null) {
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/* ─── Metadata labels & display ──────────────────────── */
+
+const METADATA_LABELS: Record<string, string> = {
+  description: 'Description',
+  keyFeatures: 'Key Features',
+  assembly: 'Assembly',
+  careInstructions: 'Care Instructions',
+  warranty: 'Warranty',
+  weightCapacity: 'Weight Capacity',
+  style: 'Style',
+  collection: 'Collection',
+  sku: 'SKU',
+  availableColors: 'Available Colors',
+  seatHeight: 'Seat Height',
+  armHeight: 'Arm Height',
+  seatDepth: 'Seat Depth',
+  legMaterial: 'Leg Material',
+  cushionType: 'Cushion Type',
+  fabricType: 'Fabric Type',
+};
+
+// Fields that are shown inline in the product detail grid — skip in the accordion
+const INLINE_METADATA_KEYS = new Set(['description', 'style', 'collection']);
+
+function MetadataSummary({ metadata }: { metadata: ProductMetadata }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const entries = Object.entries(metadata).filter(
+    ([k, v]) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0) && !INLINE_METADATA_KEYS.has(k),
+  );
+  if (entries.length === 0) return null;
+
+  const visible = expanded ? entries : entries.slice(0, 3);
+  const hasMore = entries.length > 3;
+
+  return (
+    <div style={{
+      marginTop: 20, paddingTop: 18, borderTop: '1px solid var(--border)',
+    }}>
+      <div style={{
+        padding: '12px 14px', borderRadius: 10,
+        background: 'rgba(50,80,190,0.04)', border: '1px solid rgba(50,80,190,0.12)',
+      }}>
+        <div
+          onClick={() => hasMore && setExpanded(!expanded)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 7, marginBottom: visible.length > 0 ? 10 : 0,
+            cursor: hasMore ? 'pointer' : 'default', userSelect: 'none',
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#3850be" strokeWidth="2" strokeLinecap="round">
+            <circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" />
+          </svg>
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: '#3850be', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+            AI-Extracted Details
+          </span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+            {entries.length} field{entries.length !== 1 ? 's' : ''}
+          </span>
+          {hasMore && (
+            <svg
+              width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#3850be" strokeWidth="2.5" strokeLinecap="round"
+              style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          )}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {visible.map(([key, value]) => (
+            <div key={key} style={{ display: 'flex', gap: 8, fontSize: 12, lineHeight: 1.45 }}>
+              <span style={{ fontWeight: 600, color: 'var(--text-secondary)', minWidth: 120, flexShrink: 0 }}>
+                {METADATA_LABELS[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}
+              </span>
+              <span style={{ color: 'var(--text-primary)' }}>
+                {Array.isArray(value) ? value.join(', ') : String(value)}
+              </span>
+            </div>
+          ))}
+        </div>
+        {hasMore && !expanded && (
+          <button
+            onClick={() => setExpanded(true)}
+            style={{
+              marginTop: 6, background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 11.5, fontWeight: 600, color: '#3850be', padding: 0,
+            }}
+          >
+            Show {entries.length - 3} more…
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function formatDimensions(dim?: ProductDimensions | null) {
@@ -89,6 +185,8 @@ export default function ProductDetailPage() {
   const [dimWidth, setDimWidth] = useState('');
   const [dimHeight, setDimHeight] = useState('');
   const [dimUnit, setDimUnit] = useState<'in' | 'cm' | 'ft'>('in');
+  const [description, setDescription] = useState('');
+  const [editMetadata, setEditMetadata] = useState<ProductMetadata | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -123,6 +221,9 @@ export default function ProductDetailPage() {
     setDimWidth(dim?.width != null ? String(dim.width) : '');
     setDimHeight(dim?.height != null ? String(dim.height) : '');
     setDimUnit((dim?.unit as 'in' | 'cm' | 'ft') ?? 'in');
+    const md = p.metadata as ProductMetadata | null;
+    setDescription((md?.description as string) ?? '');
+    setEditMetadata(md);
   }
 
   function applyReExtract(data: ExtractedProduct) {
@@ -132,7 +233,6 @@ export default function ProductDetailPage() {
     setImageUrl(data.imageUrl ?? '');
     setProductUrl(data.productUrl ?? '');
     setCategory(data.category ?? '');
-    setMaterial(data.material ?? '');
     setLeadTime(data.leadTime ?? '');
     setFinishes(data.finishes ?? []);
     if (data.dimensions) {
@@ -141,6 +241,21 @@ export default function ProductDetailPage() {
       setDimHeight(data.dimensions.height != null ? String(data.dimensions.height) : '');
       if (data.dimensions.unit) setDimUnit(data.dimensions.unit as 'in' | 'cm' | 'ft');
     }
+
+    // Carry metadata from re-extraction
+    const md = data.metadata as ProductMetadata | undefined;
+    setEditMetadata(md ?? null);
+    setDescription((md?.description as string) ?? '');
+
+    // Auto-fill material from metadata if extraction didn't provide a top-level one
+    const mat = data.material ?? (md?.legMaterial as string) ?? '';
+    setMaterial(mat);
+
+    // Auto-fill finishes from availableColors if no finishes were extracted
+    if ((!data.finishes || data.finishes.length === 0) && md?.availableColors && Array.isArray(md.availableColors) && md.availableColors.length > 0) {
+      setFinishes(md.availableColors as string[]);
+    }
+
     setReExtractPreview(null);
     setEditing(true);
   }
@@ -200,6 +315,11 @@ export default function ProductDetailPage() {
         }
       : null;
 
+    // Merge description back into metadata for persistence
+    const mergedMetadata: ProductMetadata | null = editMetadata || description.trim()
+      ? { ...(editMetadata ?? {}), ...(description.trim() ? { description: description.trim() } : {}) }
+      : null;
+
     const payload: ProductUpdatePayload = {
       productName: productName.trim(),
       sourceUrl: sourceUrl.trim(),
@@ -212,6 +332,7 @@ export default function ProductDetailPage() {
       leadTime: leadTime.trim() || null,
       finishes,
       dimensions,
+      metadata: mergedMetadata,
     };
 
     const result = await api.updateProduct(id, payload);
@@ -272,6 +393,7 @@ export default function ProductDetailPage() {
   }
 
   const dimStr = formatDimensions(product.dimensions as ProductDimensions | null);
+  const meta = product.metadata as ProductMetadata | null;
 
   return (
     <div style={{ padding: '40px 44px', maxWidth: 960 }}>
@@ -558,6 +680,16 @@ export default function ProductDetailPage() {
                     <input className="input-field" type="text" value={material} onChange={(e) => setMaterial(e.target.value)} />
                   </Field>
                 </div>
+                <Field label="Description" optional>
+                  <textarea
+                    className="input-field"
+                    rows={3}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Product description…"
+                    style={{ resize: 'vertical', minHeight: 60 }}
+                  />
+                </Field>
 
                 <SectionHeading>Media & links</SectionHeading>
                 <Field label="Image URL" optional>
@@ -633,6 +765,8 @@ export default function ProductDetailPage() {
                   { label: 'Material', value: product.material || '—' },
                   { label: 'Lead time', value: product.leadTime || '—' },
                   { label: 'Dimensions', value: dimStr || '—' },
+                  { label: 'Style', value: (meta?.style as string) || '—' },
+                  { label: 'Collection', value: (meta?.collection as string) || '—' },
                   { label: 'Shortlisted', value: `${product._count?.shortlistItems ?? 0} time${(product._count?.shortlistItems ?? 0) !== 1 ? 's' : ''}` },
                 ].map((row) => (
                   <div key={row.label}>
@@ -641,6 +775,14 @@ export default function ProductDetailPage() {
                   </div>
                 ))}
               </div>
+
+              {/* Description from metadata */}
+              {meta?.description && (
+                <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>Description</div>
+                  <div style={{ fontSize: 13.5, color: 'var(--text-primary)', lineHeight: 1.6 }}>{meta.description as string}</div>
+                </div>
+              )}
 
               {/* Finishes */}
               {product.finishes.length > 0 && (
@@ -652,6 +794,11 @@ export default function ProductDetailPage() {
                     ))}
                   </div>
                 </div>
+              )}
+
+              {/* AI-extracted metadata accordion */}
+              {meta && Object.keys(meta).length > 0 && (
+                <MetadataSummary metadata={meta} />
               )}
 
               {/* Source URL */}

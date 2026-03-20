@@ -201,10 +201,18 @@ REQUIRED — always include these four fields:
 - imageUrl: the main product image as a full https:// URL. Prefer og:image, then JSON-LD image, then twitter:image. CDN URLs with query params (e.g. ?w=800&fmt=webp) are valid — include them exactly. null only if truly no image signal exists.
 - category: ALWAYS infer the furniture category, even if not explicit. Use the product name and breadcrumbs. Must be exactly one of: Sofa, Dining Table, Bed, Desk, Storage, Lighting, Armchair, Side Table, Bookshelf, Mirror, Rug, Wardrobe, TV Unit, Coffee Table, Console Table, Bar Stool, Ottoman, Bench, Dresser, Nightstand, Chair, Table, Outdoor, Accessories
 
+CRITICAL — dimensions are essential for interior design. Extract them aggressively:
+- dimensions: { length, width, height, depth, weight, unit, raw }
+  - unit must be "in", "cm", or "ft"
+  - "raw" is the original dimension text from the page (e.g. "68.5 x 85 x 54")
+  - Look in: body_text, spec_sections, embedded_dimensions, dim_* signals, JSON-LD, and any "x" pattern with numbers
+  - For triplet values like "68.5 x 85 x 54", interpret as width x depth x height (W x D x H) unless labelled otherwise
+  - NEVER skip dimensions if any numbers with "x" separators or labelled measurements exist in the signals
+  - If you see dim_* signals or spec_sections, these contain dimension data — always parse them into the dimensions object
+
 OPTIONAL — include only when clearly present in the signals:
 - brandName: manufacturer or brand name
 - currency: three-letter ISO code (e.g. "USD", "GBP", "EUR"). Infer from site domain, currency symbol, or priceCurrency.
-- dimensions: { length, width, height, depth, weight, unit, raw } — unit must be "in", "cm", or "ft". "raw" is the original dimension text from page.
 - material: primary material (e.g. "Solid Walnut", "Bouclé Fabric")
 - finishes: array of finish/color option strings
 - leadTime: delivery lead time string (e.g. "4–6 weeks")
@@ -267,7 +275,7 @@ Rules:
 - currency: infer from domain (.co.uk → GBP, .de → EUR) or currency symbols ($ → USD, £ → GBP, € → EUR). Default "USD" if US site.
 - imageUrl: must start with https://. Include CDN query params as-is. Never fabricate a URL.
 - category: always infer from product name or breadcrumbs. Never leave this null.
-- dimensions: AGGRESSIVELY extract ALL dimension data. Check body text for patterns like 84"W x 38"D x 34"H, seat height, arm height, etc. Always include "raw" with the original text.
+- dimensions: THIS IS THE MOST IMPORTANT OPTIONAL FIELD. Extract ALL dimension data from every signal source. Check dim_* lines, spec_sections, embedded_dimensions, body_text. Common formats: "68.5 x 85 x 54", "84"W x 38"D x 34"H", "Width: 84", tables with dimension rows. Always include "raw" with the original text. If ANY numbers separated by "x" exist, capture them as dimensions.
 - metadata: extract ALL useful details. This data helps interior designers make informed decisions. Be thorough.
 - Output ONLY the JSON object.`;
 
@@ -416,7 +424,7 @@ function extractDimensionsFromText(text: string): string[] {
 
   // Pattern 1: W x D x H with unit markers — e.g. 84"W x 38"D x 34"H
   const wdhQuote =
-    /(\d+(?:\.\d+)?)\s*["″'']\s*[Ww]\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″'']\s*[Dd]\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″'']\s*[Hh]/g;
+    /(\d+(?:[.\-\/]\d+)?)\s*["″'']\s*[Ww]\s*[x×X]\s*(\d+(?:[.\-\/]\d+)?)\s*["″'']\s*[Dd]\s*[x×X]\s*(\d+(?:[.\-\/]\d+)?)\s*["″'']\s*[Hh]/g;
   for (const m of text.matchAll(wdhQuote)) {
     lines.push(`dim_WxDxH: ${m[1]}W x ${m[2]}D x ${m[3]}H in`);
   }
@@ -466,7 +474,162 @@ function extractDimensionsFromText(text: string): string[] {
     lines.push(`dim_WxD: ${m[1]}W x ${m[2]}D`);
   }
 
+  // Pattern 8: Dimensions with "Overall" prefix — e.g. "Overall 68.5"w x 85"d x 54"h"
+  const overallPattern =
+    /overall\s*(?:dimensions?\s*)?[:=]?\s*(\d+(?:\.\d+)?)\s*["″]?\s*[Ww]?\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]?\s*[Dd]?\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]?\s*[Hh]?/gi;
+  for (const m of text.matchAll(overallPattern)) {
+    if (!lines.some((l) => l.includes(`${m[1]}`) && l.includes(`${m[2]}`))) {
+      lines.push(`dim_overall: ${m[1]}W x ${m[2]}D x ${m[3]}H`);
+    }
+  }
+
+  // Pattern 9: Two-value dimensions — e.g. "68.5 x 85" (common for tables, rugs)
+  const twoDim =
+    /(\d+(?:\.\d+)?)\s*["″]?\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]?\s*(?:in(?:ches)?|cm|ft)?/g;
+  for (const m of text.matchAll(twoDim)) {
+    // Only include if we haven't captured these numbers in a 3-value pattern
+    const n1 = m[1], n2 = m[2];
+    if (!lines.some((l) => l.includes(n1) && l.includes(n2))) {
+      lines.push(`dim_2d: ${n1} x ${n2}`);
+    }
+  }
+
+  // Pattern 10: Fraction dimensions — e.g. 68-1/2" or 68 1/2"
+  const fractionDim =
+    /(\d+)[\s-](\d+\/\d+)\s*["″]?\s*[x×X]\s*(\d+)(?:[\s-](\d+\/\d+))?\s*["″]?\s*(?:[x×X]\s*(\d+)(?:[\s-](\d+\/\d+))?\s*["″]?)?/g;
+  for (const m of text.matchAll(fractionDim)) {
+    lines.push(`dim_fraction: ${m[0].trim()}`);
+  }
+
   return lines;
+}
+
+/* ─── Extract embedded product JSON from script tags ── */
+
+function extractEmbeddedProductJson(html: string): string[] {
+  const lines: string[] = [];
+
+  // Shopify product JSON — common pattern: var meta = {"product":...}
+  // or window.ShopifyAnalytics.meta.product
+  const shopifyPatterns = [
+    /var\s+meta\s*=\s*(\{[\s\S]*?"product"[\s\S]*?\});/,
+    /"product"\s*:\s*(\{[\s\S]*?"variants"[\s\S]*?\})\s*[,;}\]]/,
+  ];
+
+  for (const pattern of shopifyPatterns) {
+    const match = html.match(pattern);
+    if (match) {
+      try {
+        const data = JSON.parse(match[1]);
+        const product = data.product ?? data;
+        // Look for dimension-bearing fields in variants or product body
+        if (product.body_html) {
+          const dimFromBody = extractDimensionsFromText(product.body_html);
+          lines.push(...dimFromBody.map((d) => `shopify_${d}`));
+        }
+        if (product.variants && Array.isArray(product.variants)) {
+          for (const v of product.variants.slice(0, 5)) {
+            // Shopify stores dimensions in variant options or metafields
+            if (v.option1) lines.push(`variant_option: ${v.option1}`);
+            if (v.weight) lines.push(`variant_weight: ${v.weight}${v.weight_unit ?? 'g'}`);
+          }
+        }
+      } catch { /* ignore parse failures */ }
+    }
+  }
+
+  // Next.js / React hydration data — __NEXT_DATA__, __INITIAL_STATE__, etc.
+  const hydrationPatterns = [
+    /<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i,
+    /window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\});/,
+    /window\.__PRELOADED_STATE__\s*=\s*(\{[\s\S]*?\});/,
+  ];
+
+  for (const pattern of hydrationPatterns) {
+    const match = html.match(pattern);
+    if (match) {
+      try {
+        const data = JSON.parse(match[1]);
+        // Deep-search for dimension/specification data
+        const dimText = extractDimensionFieldsFromJson(data);
+        if (dimText) lines.push(`embedded_dimensions: ${dimText}`);
+      } catch { /* ignore parse failures */ }
+    }
+  }
+
+  return lines;
+}
+
+/** Recursively search JSON for dimension-related fields */
+function extractDimensionFieldsFromJson(obj: any, depth = 0): string {
+  if (depth > 8 || !obj) return '';
+  const results: string[] = [];
+  const dimKeys = /dimension|width|height|depth|length|weight|size|spec|measurement/i;
+
+  if (typeof obj === 'object' && !Array.isArray(obj)) {
+    for (const [key, val] of Object.entries(obj)) {
+      if (dimKeys.test(key)) {
+        if (typeof val === 'string' || typeof val === 'number') {
+          results.push(`${key}: ${val}`);
+        } else if (typeof val === 'object' && val !== null) {
+          results.push(`${key}: ${JSON.stringify(val).slice(0, 300)}`);
+        }
+      } else if (typeof val === 'object' && val !== null) {
+        const nested = extractDimensionFieldsFromJson(val, depth + 1);
+        if (nested) results.push(nested);
+      }
+    }
+  } else if (Array.isArray(obj)) {
+    for (const item of obj.slice(0, 10)) {
+      const nested = extractDimensionFieldsFromJson(item, depth + 1);
+      if (nested) results.push(nested);
+    }
+  }
+
+  return results.join('; ').slice(0, 1000);
+}
+
+/* ─── Extract dimension/spec sections from HTML ─────── */
+
+function extractSpecSections(html: string): string {
+  const sections: string[] = [];
+
+  // Look for sections with dimension/spec-related class names or IDs
+  const sectionPattern =
+    /<(?:div|section|table|dl|details)[^>]*(?:class|id|data-[\w-]*)=["'][^"']*(?:dimension|specification|spec|detail|measurement|product-info|product-detail|accordion)[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|section|table|dl|details)>/gi;
+
+  let match: RegExpExecArray | null;
+  while ((match = sectionPattern.exec(html)) !== null) {
+    // Strip HTML tags but preserve structure
+    const text = match[1]
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&#\d+;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (text.length > 20 && text.length < 2000) {
+      sections.push(text);
+    }
+  }
+
+  // Also look for table rows with dimension labels
+  const rowPattern =
+    /<t[dh][^>]*>[^<]*(?:width|height|depth|length|dimension|weight|diameter|overall)[^<]*<\/t[dh]>\s*<t[dh][^>]*>([^<]*)<\/t[dh]>/gi;
+  while ((match = rowPattern.exec(html)) !== null) {
+    sections.push(`spec_row: ${match[0].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()}`);
+  }
+
+  // Look for definition list patterns (dt/dd)
+  const dlPattern =
+    /<dt[^>]*>[^<]*(?:width|height|depth|length|dimension|weight|diameter|overall)[^<]*<\/dt>\s*<dd[^>]*>([^<]*)<\/dd>/gi;
+  while ((match = dlPattern.exec(html)) !== null) {
+    sections.push(`spec_def: ${match[0].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()}`);
+  }
+
+  return sections.join('\n').slice(0, 3000);
 }
 
 /* ─── Body text extraction for AI analysis ──────────── */
@@ -489,8 +652,8 @@ function extractBodyText(html: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Cap at 8000 chars to keep token usage reasonable
-  if (text.length > 8000) text = text.slice(0, 8000);
+  // Cap at 12000 chars to capture dimension/spec data further down the page
+  if (text.length > 12000) text = text.slice(0, 12000);
   return text;
 }
 
@@ -644,6 +807,18 @@ function extractSignals(html: string, url: string): string {
   const dimLines = extractDimensionsFromText(html);
   lines.push(...dimLines);
 
+  // ── Embedded product JSON (Shopify, Next.js, etc.) ────
+  const embeddedLines = extractEmbeddedProductJson(html);
+  if (embeddedLines.length > 0) {
+    lines.push(...embeddedLines);
+  }
+
+  // ── Dimension/spec sections from HTML structure ───────
+  const specSections = extractSpecSections(html);
+  if (specSections.length > 0) {
+    lines.push(`\nspec_sections:\n${specSections}`);
+  }
+
   // ── Body text for AI analysis ─────────────────────────
   const bodyText = extractBodyText(html);
   if (bodyText.length > 200) {
@@ -687,7 +862,7 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
         messages: [
           {
             role: 'user',
-            content: `Extract product data from these page signals. Be THOROUGH with dimensions and metadata — extract every detail useful for interior designers.\n\n${signals}`,
+            content: `Extract product data from these page signals. DIMENSIONS ARE CRITICAL — look at ALL dim_* lines, spec_sections, embedded_dimensions, and body_text for measurements. Any numbers separated by "x" (e.g. "68.5 x 85 x 54") are dimensions. Never leave dimensions empty if measurement data exists anywhere in the signals.\n\n${signals}`,
           },
         ],
       });
@@ -726,7 +901,7 @@ async function extractWithWebSearch(sourceUrl: string): Promise<ExtractionResult
   const messages: Anthropic.MessageParam[] = [
     {
       role: 'user',
-      content: `Search for the product at this URL and extract its full details:\n${sourceUrl}\n\nI need: name, price, currency, main image URL, furniture category, dimensions (be aggressive — find ALL measurements), and metadata (description, key features, materials, assembly, care instructions, warranty, style, etc.).\n\nReturn ONLY the JSON object as specified.`,
+      content: `Search for the product at this URL and extract its full details:\n${sourceUrl}\n\nI need: name, price, currency, main image URL, furniture category, and metadata (description, key features, materials, assembly, care instructions, warranty, style, etc.).\n\nDIMENSIONS ARE THE MOST IMPORTANT DATA — find the product's width, depth, height measurements. Almost every furniture product page has dimensions (e.g. "68.5 x 85 x 54" or "68.5"W x 85"D x 54"H"). Search thoroughly for these. Include them in the dimensions object with numeric values and unit.\n\nReturn ONLY the JSON object as specified.`,
     },
   ];
 
