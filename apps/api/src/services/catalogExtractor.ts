@@ -6,7 +6,7 @@ const client = new Anthropic({ apiKey: config.claudeApiKey });
 
 /* ─── Models ─────────────────────────────────────────── */
 
-const MODEL_FAST = 'claude-haiku-4-5-20251001';   // Direct extraction (no tools)
+const MODEL_FAST = 'claude-sonnet-4-6';            // Direct extraction (no tools)
 const MODEL_SEARCH = 'claude-sonnet-4-6';          // Web search fallback
 
 /* ─── Constants ─────────────────────────────────────── */
@@ -690,7 +690,7 @@ function extractSpecSections(html: string): string {
 
   // Look for sections with dimension/spec-related class names or IDs
   const sectionPattern =
-    /<(?:div|section|table|dl|details)[^>]*(?:class|id|data-[\w-]*)=["'][^"']*(?:dimension|specification|spec|detail|measurement|product-info|product-detail|accordion)[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|section|table|dl|details)>/gi;
+    /<(?:div|section|table|dl|details)[^>]*(?:class|id|data-[\w-]*)=["'][^"']*(?:dimension|specification|spec|detail|measurement|product-info|product-detail|product-description|product-details-content|tab-content|accordion-content|accordion|pdp-details|product-specs|product-features)[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|section|table|dl|details)>/gi;
 
   let match: RegExpExecArray | null;
   while ((match = sectionPattern.exec(html)) !== null) {
@@ -746,8 +746,9 @@ function extractBodyText(html: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Cap at 12000 chars to capture dimension/spec data further down the page
-  if (text.length > 12000) text = text.slice(0, 12000);
+  // Cap at 20000 chars to capture dimension/spec data further down the page
+  // (furniture sites often place dimensions in accordion tabs well below the fold)
+  if (text.length > 20000) text = text.slice(0, 20000);
   return text;
 }
 
@@ -901,6 +902,42 @@ function extractSignals(html: string, url: string): string {
   const dimLines = extractDimensionsFromText(html);
   lines.push(...dimLines);
 
+  // ── Targeted dimension keyword search (full page, all domains) ────
+  // Strip HTML once, then search for ALL common dimension/spec headings used
+  // across furniture sites globally (Arhaus, Pottery Barn, West Elm, RH, IKEA,
+  // Crate & Barrel, Wayfair, CB2, Article, custom sites, etc.).
+  // This populates the explicit_dimensions_label signal referenced at priority 0
+  // in the system prompt, ensuring the AI always sees labeled dimension text.
+  const strippedFullHtml = html.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&#\d+;/g, ' ').replace(/\s+/g, ' ');
+
+  const dimensionKeywordPatterns: RegExp[] = [
+    // "Dimensions", "Overall Dimensions", "Product Dimensions"
+    /(?:overall|product|item|furniture|exterior|interior|frame)?\s*dimensions?\s*[:.]?\s*(.{10,500})/gi,
+    // "Measurements", "Product Measurements"
+    /(?:overall|product)?\s*measurements?\s*[:.]?\s*(.{10,500})/gi,
+    // "Specifications" / "Product Specs"
+    /(?:product\s+)?(?:specifications?|specs)\s*[:.]?\s*(.{10,500})/gi,
+    // "Size & Fit", "Size Details", "Size Guide", "Product Size"
+    /(?:product\s+)?size(?:\s*(?:&|and)\s*fit|\s+details?|\s+guide)?\s*[:.]?\s*(.{10,500})/gi,
+    // "Width:", "Height:", "Depth:" as standalone section headers
+    /(?:overall\s+)?(?:width|height|depth|length)\s*[:]\s*(.{5,200})/gi,
+  ];
+
+  const seenDimLabels = new Set<string>();
+  for (const pattern of dimensionKeywordPatterns) {
+    let dimLabelMatch: RegExpExecArray | null;
+    while ((dimLabelMatch = pattern.exec(strippedFullHtml)) !== null) {
+      const captured = dimLabelMatch[0].trim().slice(0, 500);
+      // Skip generic matches that are just the keyword in navigation/links
+      if (captured.length < 15) continue;
+      // Deduplicate near-identical matches
+      const key = captured.slice(0, 60);
+      if (seenDimLabels.has(key)) continue;
+      seenDimLabels.add(key);
+      lines.push(`explicit_dimensions_label: ${captured}`);
+    }
+  }
+
   // ── Embedded product JSON (Shopify, Next.js, etc.) ────
   const embeddedLines = extractEmbeddedProductJson(html, url);
   if (embeddedLines.length > 0) {
@@ -922,6 +959,227 @@ function extractSignals(html: string, url: string): string {
   return lines.join('\n');
 }
 
+/* ─── Parse structured dimensions from raw text via regex ── */
+
+function parseDimensionsFromText(text: string): ExtractedProductData['dimensions'] | null {
+  // Normalize unicode quotes and whitespace
+  const t = text
+    .replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"')
+    .replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'")
+    .replace(/\s+/g, ' ');
+
+  // Pattern 1: n" Width/W x n" Depth/D x n" Height/H  (labeled with quotes)
+  // e.g. 90" Width x 100" Depth x 42" Height
+  const labeledQuote =
+    /(\d+(?:\.\d+)?)\s*["″']\s*(?:width|w)\s*x\s*(\d+(?:\.\d+)?)\s*["″']\s*(?:depth|d)\s*x\s*(\d+(?:\.\d+)?)\s*["″']\s*(?:height|h)/i;
+  let m = t.match(labeledQuote);
+  if (m) {
+    return {
+      width: Number(m[1]), depth: Number(m[2]), height: Number(m[3]),
+      unit: 'in', raw: m[0].trim(),
+    };
+  }
+
+  // Pattern 1b: Width x Depth x Height with labels AFTER numbers but no quotes
+  // e.g. 90 Width x 100 Depth x 42 Height
+  const labeledNoQuote =
+    /(\d+(?:\.\d+)?)\s*(?:width|w)\s*x\s*(\d+(?:\.\d+)?)\s*(?:depth|d)\s*x\s*(\d+(?:\.\d+)?)\s*(?:height|h)/i;
+  m = t.match(labeledNoQuote);
+  if (m) {
+    return {
+      width: Number(m[1]), depth: Number(m[2]), height: Number(m[3]),
+      unit: 'in', raw: m[0].trim(),
+    };
+  }
+
+  // Pattern 2: n"W x n"D x n"H  (short labels)
+  // e.g. 90"W x 100"D x 42"H
+  const shortLabel =
+    /(\d+(?:\.\d+)?)\s*["″']?\s*[Ww]\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″']?\s*[Dd]\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″']?\s*[Hh]/;
+  m = t.match(shortLabel);
+  if (m) {
+    return {
+      width: Number(m[1]), depth: Number(m[2]), height: Number(m[3]),
+      unit: 'in', raw: m[0].trim(),
+    };
+  }
+
+  // Pattern 3: Overall/Dimensions: n x n x n (with unit after)
+  // e.g. "Dimensions: 90 x 100 x 42 in" or "Overall: 90 x 100 x 42 inches"
+  const overallTriple =
+    /(?:overall|dimensions?)\s*[:.]?\s*(\d+(?:\.\d+)?)\s*["″]?\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]?\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]?\s*(?:in(?:ches)?|cm|ft)?/i;
+  m = t.match(overallTriple);
+  if (m) {
+    const unit = /cm/i.test(m[0]) ? 'cm' as const : /ft/i.test(m[0]) ? 'ft' as const : 'in' as const;
+    return {
+      width: Number(m[1]), depth: Number(m[2]), height: Number(m[3]),
+      unit, raw: m[0].trim(),
+    };
+  }
+
+  // Pattern 4: Plain n" x n" x n" (3 numbers with quotes separated by x)
+  // e.g. 90" x 100" x 42"
+  const plainQuoteTriple =
+    /(\d+(?:\.\d+)?)\s*["″]\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]/;
+  m = t.match(plainQuoteTriple);
+  if (m) {
+    return {
+      width: Number(m[1]), depth: Number(m[2]), height: Number(m[3]),
+      unit: 'in', raw: m[0].trim(),
+    };
+  }
+
+  // Pattern 5: Plain n x n x n followed by unit (no quotes)
+  // e.g. 90 x 100 x 42 in   or   90 x 100 x 42 inches
+  // Require unit to avoid false positives on random "a x b x c" text
+  const plainTripleWithUnit =
+    /(\d{2,3}(?:\.\d+)?)\s*[x×X]\s*(\d{2,3}(?:\.\d+)?)\s*[x×X]\s*(\d{2,3}(?:\.\d+)?)\s*(?:in(?:ches)?|cm|ft|mm)/i;
+  m = t.match(plainTripleWithUnit);
+  if (m) {
+    const unit = /cm/i.test(m[0]) ? 'cm' as const : /ft/i.test(m[0]) ? 'ft' as const : 'in' as const;
+    return {
+      width: Number(m[1]), depth: Number(m[2]), height: Number(m[3]),
+      unit, raw: m[0].trim(),
+    };
+  }
+
+  // Pattern 6: Individual labeled lines — Width: n", Depth: n", Height: n"
+  // Use word boundaries (\b) to avoid "h" in "Width" matching the height pattern
+  const wMatch = t.match(/\bwidth\s*[:=]\s*(\d+(?:\.\d+)?)\s*["″]?/i);
+  const dMatch = t.match(/\bdepth\s*[:=]\s*(\d+(?:\.\d+)?)\s*["″]?/i);
+  const hMatch = t.match(/\bheight\s*[:=]\s*(\d+(?:\.\d+)?)\s*["″]?/i);
+  if (wMatch && hMatch) {
+    const dims: ExtractedProductData['dimensions'] = {
+      width: Number(wMatch[1]),
+      height: Number(hMatch[1]),
+      unit: 'in',
+      raw: [wMatch[0], dMatch?.[0], hMatch[0]].filter(Boolean).join(', '),
+    };
+    if (dMatch) dims.depth = Number(dMatch[1]);
+    return dims;
+  }
+
+  return null;
+}
+
+/* ─── Dimension enrichment via web search ────────────── */
+
+async function enrichDimensionsViaSearch(
+  sourceUrl: string,
+  product?: ExtractedProductData,
+): Promise<ExtractedProductData['dimensions'] | null> {
+  const productName = product?.productName ?? '';
+  const brandName = product?.brandName ?? '';
+  const searchHint = [brandName, productName].filter(Boolean).join(' ');
+
+  // Use a very specific search query + strict output instructions.
+  // Many furniture sites render dimensions via JS so the product page itself
+  // may not have them — but searching for "{product} dimensions" often surfaces
+  // specs from Google Shopping, review sites, or cached product pages.
+  const messages: Anthropic.MessageParam[] = [
+    {
+      role: 'user',
+      content: [
+        `Search for: "${searchHint} dimensions specifications"`,
+        `Also try the product URL directly: ${sourceUrl}`,
+        '',
+        'I need the furniture product\'s physical dimensions — width, depth (or length), and height.',
+        'Look for patterns like "90\\" Width x 100\\" Depth x 42\\" Height" or "W x D x H" or a specifications table.',
+        '',
+        'When you find the dimensions, respond with ONLY this JSON (no other text):',
+        '{"width": 90, "depth": 100, "height": 42, "unit": "in", "raw": "90\\" Width x 100\\" Depth x 42\\" Height"}',
+        '',
+        'IMPORTANT: If the search results mention ANY numbers that look like furniture dimensions',
+        '(typically 2-3 numbers between 10-120, near words like width/depth/height/W/D/H),',
+        'extract them. Do NOT say not_found if you see dimension-like numbers.',
+      ].join('\n'),
+    },
+  ];
+
+  // Max 2 turns to avoid rate limits (web search uses many input tokens)
+  const MAX_TURNS = 2;
+
+  for (let turn = 0; turn < MAX_TURNS; turn++) {
+    const response = await client.messages.create({
+      model: MODEL_SEARCH,
+      max_tokens: 1024,
+      messages,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }] as any,
+    });
+
+    const { stop_reason, content } = response;
+    const blockTypes = content.map((b) => b.type);
+    logger.info('Dimension enrichment turn', { url: sourceUrl, turn, stop_reason, blockTypes });
+
+    // Collect ALL text from the AI's response blocks
+    const allAiText = content
+      .filter((b) => b.type === 'text')
+      .map((b) => (b as any).text ?? '')
+      .join('\n');
+
+    if (allAiText.length > 0) {
+      logger.info('Dimension enrichment AI text', {
+        url: sourceUrl,
+        turn,
+        preview: allAiText.slice(0, 600),
+      });
+
+      // 1) Try regex on the AI's prose (it often quotes dimensions even when saying not_found)
+      const dimsFromText = parseDimensionsFromText(allAiText);
+      if (dimsFromText) {
+        logger.info('Dimensions found via regex in AI response', { url: sourceUrl, dims: dimsFromText });
+        return dimsFromText;
+      }
+
+      // 2) Try JSON parse
+      const parsed = tryParseJson(allAiText);
+      if (parsed && !parsed.not_found) {
+        const dims: ExtractedProductData['dimensions'] = {};
+        if (parsed.width != null && !isNaN(Number(parsed.width))) dims.width = Number(parsed.width);
+        if (parsed.height != null && !isNaN(Number(parsed.height))) dims.height = Number(parsed.height);
+        if (parsed.depth != null && !isNaN(Number(parsed.depth))) dims.depth = Number(parsed.depth);
+        if (parsed.length != null && !isNaN(Number(parsed.length))) dims.length = Number(parsed.length);
+        if (['in', 'cm', 'ft'].includes(parsed.unit)) dims.unit = parsed.unit;
+        if (parsed.raw && typeof parsed.raw === 'string') dims.raw = parsed.raw;
+        if (Object.keys(dims).length >= 2) {
+          logger.info('Dimension enrichment via AI JSON', { url: sourceUrl, dims });
+          return dims;
+        }
+      }
+    }
+
+    // Continue if the model wants to use more tools
+    if (stop_reason === 'tool_use') {
+      messages.push({ role: 'assistant', content: content as any });
+      const toolUseBlocks = content.filter((b) => b.type === 'tool_use') as any[];
+      messages.push({
+        role: 'user',
+        content: toolUseBlocks.map((b) => ({
+          type: 'tool_result' as const,
+          tool_use_id: b.id,
+          content: '',
+        })) as any,
+      });
+      continue;
+    }
+
+    // On first turn end, try a more targeted search
+    if (stop_reason === 'end_turn' && turn < MAX_TURNS - 1) {
+      messages.push({ role: 'assistant', content: content as any });
+      messages.push({
+        role: 'user',
+        content: `The dimensions must exist. Please search for "${searchHint} width height depth inches" and look for any measurement numbers. Extract them as JSON.`,
+      });
+      continue;
+    }
+
+    break;
+  }
+
+  logger.warn('Dimension enrichment: could not find dimensions', { url: sourceUrl });
+  return null;
+}
+
 /* ─── Main extractor ─────────────────────────────────── */
 
 export async function extractProductFromUrl(sourceUrl: string): Promise<ExtractionResult> {
@@ -941,11 +1199,20 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
     // Pre-infer category from signals for the deterministic fast path
     const preCategory = inferCategoryFromText(signals);
 
+    const signalLines = signals.split('\n');
+    const dimSignals = signalLines.filter(l => /^dim_|^shopify_dim|^spec_|^explicit_dim|^embedded_dim/i.test(l));
+
     logger.info('Page signals extracted', {
       url: sourceUrl,
-      signalCount: signals.split('\n').length,
+      signalCount: signalLines.length,
       htmlBytes: html.length,
       preCategory,
+    });
+
+    logger.info('Dimension signals', {
+      url: sourceUrl,
+      count: dimSignals.length,
+      signals: dimSignals.slice(0, 15),
     });
 
     try {
@@ -956,7 +1223,7 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
         messages: [
           {
             role: 'user',
-            content: `Extract product data from these page signals.\n\nPRICE: If "selected_variant_price" is present, use that — it's the exact price for the URL's variant. Do NOT use og:price or meta tag prices when selected_variant_price exists.\n\nDIMENSIONS: Use dim_labelled and dim_label signals first. Do NOT confuse variant titles (like "22 x 22") with actual product dimensions. Only labelled measurements (Width/Depth/Height) are real dimensions.\n\n${signals}`,
+            content: `Extract product data from these page signals.\n\nPRICE: If "selected_variant_price" is present, use that — it's the exact price for the URL's variant. Do NOT use og:price or meta tag prices when selected_variant_price exists.\n\nDIMENSIONS (HIGHEST PRIORITY): Look for "explicit_dimensions_label" signals FIRST — these contain the raw text near a "Dimensions" heading on the page and are the MOST AUTHORITATIVE source. Parse width, depth, height, and unit values from that text. Then use dim_labelled and dim_label signals. Do NOT confuse variant titles (like "22 x 22") with actual product dimensions. Only labelled measurements (Width/Depth/Height) are real dimensions. NEVER return a product without dimensions if ANY dimension signal (explicit_dimensions_label, dim_label, dim_labelled, dim_WxDxH, spec_sections with measurements) exists in the signals below.\n\n${signals}`,
           },
         ],
       });
@@ -967,6 +1234,25 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
         if (parsed) {
           logger.info('Direct extraction succeeded', { url: sourceUrl });
           const result = buildResult(parsed, sourceUrl, preCategory);
+
+          // Check if dimensions are missing — if so, enrich via web search
+          const product = result.type === 'single' ? result.product : result.products?.[0];
+          const hasDims = product?.dimensions && (product.dimensions.width || product.dimensions.height || product.dimensions.depth);
+          if (!hasDims) {
+            logger.info('Dimensions missing from direct extraction — enriching via web search', { url: sourceUrl });
+            try {
+              const enriched = await enrichDimensionsViaSearch(sourceUrl, product);
+              if (enriched && result.type === 'single' && result.product) {
+                result.product.dimensions = enriched;
+                logger.info('Dimensions enriched via web search', { url: sourceUrl, dims: enriched });
+              } else if (enriched && result.type === 'multiple' && result.products?.[0]) {
+                result.products[0].dimensions = enriched;
+              }
+            } catch (err: any) {
+              logger.warn('Dimension enrichment failed', { url: sourceUrl, err: err?.message });
+            }
+          }
+
           setCachedResult(sourceUrl, result);
           return result;
         }
@@ -1097,30 +1383,47 @@ function tryParseJsonFromBlocks(blocks: any[]): any | null {
 function buildResult(parsed: any, sourceUrl: string, preCategory?: string | null): ExtractionResult {
   if (Array.isArray(parsed)) {
     if (parsed.length === 0) throw new ExtractionError('No products found on this page.', 'NO_PRODUCTS');
-    if (parsed.length === 1)
-      return { type: 'single', product: normalizeProduct(parsed[0], sourceUrl, preCategory) };
-    return {
+    if (parsed.length === 1) {
+      const result: ExtractionResult = { type: 'single', product: normalizeProduct(parsed[0], sourceUrl, preCategory) };
+      console.log('\n═══ EXTRACTED PRODUCT JSON ═══');
+      console.log(JSON.stringify(result, null, 2));
+      console.log('═══════════════════════════════\n');
+      return result;
+    }
+    const multiResult: ExtractionResult = {
       type: 'multiple',
       totalFound: parsed.length,
       products: parsed.map((p) => normalizeProduct(p, sourceUrl, preCategory)),
     };
+    console.log('\n═══ EXTRACTED PRODUCTS JSON ═══');
+    console.log(JSON.stringify(multiResult, null, 2));
+    console.log('════════════════════════════════\n');
+    return multiResult;
   }
 
   if (parsed.type === 'multiple' && Array.isArray(parsed.products)) {
     if (parsed.products.length === 0)
       throw new ExtractionError('No products found on this page.', 'NO_PRODUCTS');
-    return {
+    const multiResult: ExtractionResult = {
       type: 'multiple',
       totalFound: parsed.totalFound ?? parsed.products.length,
       products: parsed.products.map((p: any) => normalizeProduct(p, sourceUrl, preCategory)),
     };
+    console.log('\n═══ EXTRACTED PRODUCTS JSON ═══');
+    console.log(JSON.stringify(multiResult, null, 2));
+    console.log('════════════════════════════════\n');
+    return multiResult;
   }
 
   const productData = parsed.product ?? parsed;
   if (!productData.productName || typeof productData.productName !== 'string') {
     throw new ExtractionError('Could not extract product name from this page.', 'PARSE_FAILED');
   }
-  return { type: 'single', product: normalizeProduct(productData, sourceUrl, preCategory) };
+  const singleResult: ExtractionResult = { type: 'single', product: normalizeProduct(productData, sourceUrl, preCategory) };
+  console.log('\n═══ EXTRACTED PRODUCT JSON ═══');
+  console.log(JSON.stringify(singleResult, null, 2));
+  console.log('═══════════════════════════════\n');
+  return singleResult;
 }
 
 function normalizeProduct(

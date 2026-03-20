@@ -96,7 +96,15 @@ const METADATA_LABELS: Record<string, string> = {
   fabricType: 'Fabric Type',
 };
 
-function MetadataSummary({ metadata }: { metadata: ProductMetadata }) {
+function MetadataForm({
+  metadata,
+  onChange,
+  disabled,
+}: {
+  metadata: ProductMetadata;
+  onChange: (updated: ProductMetadata) => void;
+  disabled?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   const entries = Object.entries(metadata).filter(
@@ -104,14 +112,25 @@ function MetadataSummary({ metadata }: { metadata: ProductMetadata }) {
   );
   if (entries.length === 0) return null;
 
-  // Show first 3 entries in collapsed, all when expanded
-  const visible = expanded ? entries : entries.slice(0, 3);
-  const hasMore = entries.length > 3;
+  const visible = expanded ? entries : entries.slice(0, 4);
+  const hasMore = entries.length > 4;
+
+  function handleFieldChange(key: string, newValue: string) {
+    const original = metadata[key];
+    const updated = { ...metadata };
+    if (Array.isArray(original)) {
+      // For array fields, split by comma
+      updated[key] = newValue.split(',').map(s => s.trim()).filter(Boolean);
+    } else {
+      updated[key] = newValue;
+    }
+    onChange(updated);
+  }
 
   return (
     <div style={{
       marginBottom: 14,
-      padding: '12px 14px',
+      padding: '14px 16px',
       borderRadius: 10,
       background: 'rgba(50,80,190,0.04)',
       border: '1px solid rgba(50,80,190,0.12)',
@@ -119,7 +138,7 @@ function MetadataSummary({ metadata }: { metadata: ProductMetadata }) {
       <div
         onClick={() => hasMore && setExpanded(!expanded)}
         style={{
-          display: 'flex', alignItems: 'center', gap: 7, marginBottom: visible.length > 0 ? 10 : 0,
+          display: 'flex', alignItems: 'center', gap: 7, marginBottom: 12,
           cursor: hasMore ? 'pointer' : 'default', userSelect: 'none',
         }}
       >
@@ -127,7 +146,7 @@ function MetadataSummary({ metadata }: { metadata: ProductMetadata }) {
           <circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" />
         </svg>
         <span style={{ fontSize: 11.5, fontWeight: 700, color: '#3850be', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-          AI-Extracted Details
+          Product Details
         </span>
         <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
           {entries.length} field{entries.length !== 1 ? 's' : ''}
@@ -141,27 +160,47 @@ function MetadataSummary({ metadata }: { metadata: ProductMetadata }) {
           </svg>
         )}
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {visible.map(([key, value]) => (
-          <div key={key} style={{ display: 'flex', gap: 8, fontSize: 12, lineHeight: 1.45 }}>
-            <span style={{ fontWeight: 600, color: 'var(--text-secondary)', minWidth: 110, flexShrink: 0 }}>
-              {METADATA_LABELS[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}
-            </span>
-            <span style={{ color: 'var(--text-primary)' }}>
-              {Array.isArray(value) ? value.join(', ') : String(value)}
-            </span>
-          </div>
-        ))}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {visible.map(([key, value]) => {
+          const label = METADATA_LABELS[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+          const displayValue = Array.isArray(value) ? value.join(', ') : String(value ?? '');
+          const isLongText = key === 'description' || displayValue.length > 80;
+
+          return (
+            <div key={key}>
+              <label className="form-label" style={{ marginBottom: 4 }}>{label}</label>
+              {isLongText ? (
+                <textarea
+                  className="input-field"
+                  value={displayValue}
+                  onChange={(e) => handleFieldChange(key, e.target.value)}
+                  disabled={disabled}
+                  rows={2}
+                  style={{ resize: 'vertical', minHeight: 42 }}
+                />
+              ) : (
+                <input
+                  className="input-field"
+                  type="text"
+                  value={displayValue}
+                  onChange={(e) => handleFieldChange(key, e.target.value)}
+                  disabled={disabled}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
       {hasMore && !expanded && (
         <button
           onClick={() => setExpanded(true)}
+          type="button"
           style={{
-            marginTop: 6, background: 'none', border: 'none', cursor: 'pointer',
+            marginTop: 8, background: 'none', border: 'none', cursor: 'pointer',
             fontSize: 11.5, fontWeight: 600, color: '#3850be', padding: 0,
           }}
         >
-          Show {entries.length - 3} more…
+          Show {entries.length - 4} more fields…
         </button>
       )}
     </div>
@@ -413,22 +452,22 @@ function BatchProductCard({
         </div>
       </div>
 
-      {/* Row 4: Dimensions + Lead Time */}
+      {/* Row 4: Dimensions (required) + Lead Time */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 70px 1fr', gap: 10, marginBottom: 10 }}>
         <div>
           <label className="form-label">Length</label>
           <input className="input-field" type="number" min="0" step="0.1" placeholder="0" value={form.dimLength} onChange={(e) => onUpdate({ dimLength: e.target.value })} disabled={disabled} />
         </div>
         <div>
-          <label className="form-label">Width</label>
+          <label className="form-label">Width *</label>
           <input className="input-field" type="number" min="0" step="0.1" placeholder="0" value={form.dimWidth} onChange={(e) => onUpdate({ dimWidth: e.target.value })} disabled={disabled} />
         </div>
         <div>
-          <label className="form-label">Height</label>
+          <label className="form-label">Height *</label>
           <input className="input-field" type="number" min="0" step="0.1" placeholder="0" value={form.dimHeight} onChange={(e) => onUpdate({ dimHeight: e.target.value })} disabled={disabled} />
         </div>
         <div>
-          <label className="form-label">Depth</label>
+          <label className="form-label">Depth *</label>
           <input className="input-field" type="number" min="0" step="0.1" placeholder="0" value={form.dimDepth} onChange={(e) => onUpdate({ dimDepth: e.target.value })} disabled={disabled} />
         </div>
         <div>
@@ -503,9 +542,13 @@ function BatchProductCard({
         )}
       </div>
 
-      {/* AI-extracted metadata summary */}
+      {/* AI-extracted metadata — editable */}
       {form.metadata && Object.keys(form.metadata).length > 0 && (
-        <MetadataSummary metadata={form.metadata} />
+        <MetadataForm
+          metadata={form.metadata}
+          onChange={(updated) => onUpdate({ metadata: updated })}
+          disabled={disabled}
+        />
       )}
 
       {/* Error */}
@@ -794,6 +837,8 @@ export default function NewProductPage() {
 
     if (!form.productName.trim()) { updateBatchForm(tempId, { error: 'Product name is required.' }); return; }
     if (!form.sourceUrl.trim()) { updateBatchForm(tempId, { error: 'Source URL is required.' }); return; }
+    const hasDims = [form.dimWidth, form.dimHeight, form.dimDepth].filter(v => v && parseFloat(v) > 0).length >= 2;
+    if (!hasDims) { updateBatchForm(tempId, { error: 'Dimensions are required — please enter at least 2 of Width, Height, or Depth.' }); return; }
 
     updateBatchForm(tempId, { saving: true, error: '' });
 
@@ -867,6 +912,8 @@ export default function NewProductPage() {
     e.preventDefault();
     if (!productName.trim()) { setError('Product name is required.'); return; }
     if (!sourceUrl.trim()) { setError('Source URL is required.'); return; }
+    const hasDims = [dimWidth, dimHeight, dimDepth].filter(v => v && parseFloat(v) > 0).length >= 2;
+    if (!hasDims) { setError('Dimensions are required — please enter at least 2 of Width, Height, or Depth.'); return; }
 
     setLoading(true);
     setError('');
@@ -1256,9 +1303,12 @@ export default function NewProductPage() {
             <Field label="Image URL" optional><input className="input-field" type="url" placeholder="https://images.vendor.com/product.jpg" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} /></Field>
             <Field label="Product Page URL" optional><input className="input-field" type="url" placeholder="https://vendor.com/product" value={productUrl} onChange={(e) => setProductUrl(e.target.value)} /></Field>
 
-            <SectionHeading>Dimensions <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10.5, opacity: 0.7 }}>(optional)</span></SectionHeading>
+            <SectionHeading>Dimensions *</SectionHeading>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10, marginTop: -8 }}>
+              At least 2 of Width, Height, or Depth required
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 90px', gap: 12 }}>
-              <Field label="Length"><input className="input-field" type="number" placeholder="0" min="0" step="0.1" value={dimLength} onChange={(e) => setDimLength(e.target.value)} /></Field>
+              <Field label="Length" optional><input className="input-field" type="number" placeholder="0" min="0" step="0.1" value={dimLength} onChange={(e) => setDimLength(e.target.value)} /></Field>
               <Field label="Width"><input className="input-field" type="number" placeholder="0" min="0" step="0.1" value={dimWidth} onChange={(e) => setDimWidth(e.target.value)} /></Field>
               <Field label="Height"><input className="input-field" type="number" placeholder="0" min="0" step="0.1" value={dimHeight} onChange={(e) => setDimHeight(e.target.value)} /></Field>
               <Field label="Depth"><input className="input-field" type="number" placeholder="0" min="0" step="0.1" value={dimDepth} onChange={(e) => setDimDepth(e.target.value)} /></Field>
@@ -1282,11 +1332,15 @@ export default function NewProductPage() {
 
             <Field label="Lead Time" optional><input className="input-field" type="text" placeholder="e.g. 4-6 weeks" value={leadTime} onChange={(e) => setLeadTime(e.target.value)} /></Field>
 
-            {/* AI-extracted metadata summary */}
+            {/* AI-extracted metadata — editable */}
             {singleMetadata && Object.keys(singleMetadata).length > 0 && (
               <>
-                <SectionHeading>AI-Extracted Details</SectionHeading>
-                <MetadataSummary metadata={singleMetadata} />
+                <SectionHeading>Product Details</SectionHeading>
+                <MetadataForm
+                  metadata={singleMetadata}
+                  onChange={(updated) => setSingleMetadata(updated)}
+                  disabled={loading}
+                />
               </>
             )}
 

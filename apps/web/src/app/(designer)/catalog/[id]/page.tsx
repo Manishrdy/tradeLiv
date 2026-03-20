@@ -67,29 +67,53 @@ const METADATA_LABELS: Record<string, string> = {
 // Fields that are shown inline in the product detail grid — skip in the accordion
 const INLINE_METADATA_KEYS = new Set(['description', 'style', 'collection']);
 
-function MetadataSummary({ metadata }: { metadata: ProductMetadata }) {
+function MetadataForm({
+  metadata,
+  onChange,
+  disabled,
+  excludeKeys,
+}: {
+  metadata: ProductMetadata;
+  onChange?: (updated: ProductMetadata) => void;
+  disabled?: boolean;
+  excludeKeys?: Set<string>;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   const entries = Object.entries(metadata).filter(
-    ([k, v]) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0) && !INLINE_METADATA_KEYS.has(k),
+    ([k, v]) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0) && !(excludeKeys?.has(k)),
   );
   if (entries.length === 0) return null;
 
-  const visible = expanded ? entries : entries.slice(0, 3);
-  const hasMore = entries.length > 3;
+  const visible = expanded ? entries : entries.slice(0, 4);
+  const hasMore = entries.length > 4;
+  const readOnly = !onChange;
+
+  function handleFieldChange(key: string, newValue: string) {
+    if (!onChange) return;
+    const original = metadata[key];
+    const updated = { ...metadata };
+    if (Array.isArray(original)) {
+      updated[key] = newValue.split(',').map(s => s.trim()).filter(Boolean);
+    } else {
+      updated[key] = newValue;
+    }
+    onChange(updated);
+  }
 
   return (
     <div style={{
-      marginTop: 20, paddingTop: 18, borderTop: '1px solid var(--border)',
+      marginTop: readOnly ? 20 : 0, paddingTop: readOnly ? 18 : 0,
+      borderTop: readOnly ? '1px solid var(--border)' : 'none',
     }}>
       <div style={{
-        padding: '12px 14px', borderRadius: 10,
+        padding: '14px 16px', borderRadius: 10,
         background: 'rgba(50,80,190,0.04)', border: '1px solid rgba(50,80,190,0.12)',
       }}>
         <div
           onClick={() => hasMore && setExpanded(!expanded)}
           style={{
-            display: 'flex', alignItems: 'center', gap: 7, marginBottom: visible.length > 0 ? 10 : 0,
+            display: 'flex', alignItems: 'center', gap: 7, marginBottom: 12,
             cursor: hasMore ? 'pointer' : 'default', userSelect: 'none',
           }}
         >
@@ -97,7 +121,7 @@ function MetadataSummary({ metadata }: { metadata: ProductMetadata }) {
             <circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" />
           </svg>
           <span style={{ fontSize: 11.5, fontWeight: 700, color: '#3850be', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-            AI-Extracted Details
+            Product Details
           </span>
           <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
             {entries.length} field{entries.length !== 1 ? 's' : ''}
@@ -111,27 +135,58 @@ function MetadataSummary({ metadata }: { metadata: ProductMetadata }) {
             </svg>
           )}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {visible.map(([key, value]) => (
-            <div key={key} style={{ display: 'flex', gap: 8, fontSize: 12, lineHeight: 1.45 }}>
-              <span style={{ fontWeight: 600, color: 'var(--text-secondary)', minWidth: 120, flexShrink: 0 }}>
-                {METADATA_LABELS[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}
-              </span>
-              <span style={{ color: 'var(--text-primary)' }}>
-                {Array.isArray(value) ? value.join(', ') : String(value)}
-              </span>
-            </div>
-          ))}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: readOnly ? 6 : 10 }}>
+          {visible.map(([key, value]) => {
+            const label = METADATA_LABELS[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+            const displayValue = Array.isArray(value) ? value.join(', ') : String(value ?? '');
+
+            if (readOnly) {
+              return (
+                <div key={key} style={{ display: 'flex', gap: 8, fontSize: 12, lineHeight: 1.45 }}>
+                  <span style={{ fontWeight: 600, color: 'var(--text-secondary)', minWidth: 120, flexShrink: 0 }}>
+                    {label}
+                  </span>
+                  <span style={{ color: 'var(--text-primary)' }}>{displayValue}</span>
+                </div>
+              );
+            }
+
+            const isLongText = key === 'description' || displayValue.length > 80;
+            return (
+              <div key={key}>
+                <label className="form-label" style={{ marginBottom: 4 }}>{label}</label>
+                {isLongText ? (
+                  <textarea
+                    className="input-field"
+                    value={displayValue}
+                    onChange={(e) => handleFieldChange(key, e.target.value)}
+                    disabled={disabled}
+                    rows={2}
+                    style={{ resize: 'vertical', minHeight: 42 }}
+                  />
+                ) : (
+                  <input
+                    className="input-field"
+                    type="text"
+                    value={displayValue}
+                    onChange={(e) => handleFieldChange(key, e.target.value)}
+                    disabled={disabled}
+                  />
+                )}
+              </div>
+            );
+          })}
         </div>
         {hasMore && !expanded && (
           <button
             onClick={() => setExpanded(true)}
+            type="button"
             style={{
-              marginTop: 6, background: 'none', border: 'none', cursor: 'pointer',
+              marginTop: 8, background: 'none', border: 'none', cursor: 'pointer',
               fontSize: 11.5, fontWeight: 600, color: '#3850be', padding: 0,
             }}
           >
-            Show {entries.length - 3} more…
+            Show {entries.length - 4} more fields…
           </button>
         )}
       </div>
@@ -302,6 +357,9 @@ export default function ProductDetailPage() {
     e.preventDefault();
     if (!productName.trim()) { setError('Product name is required.'); return; }
     if (!sourceUrl.trim()) { setError('Source URL is required.'); return; }
+    const hasDims = [dimWidth, dimHeight].filter(v => v && parseFloat(v) > 0).length >= 2
+      || ([dimWidth, dimHeight, dimLength].filter(v => v && parseFloat(v) > 0).length >= 2);
+    if (!hasDims) { setError('Dimensions are required — please enter at least 2 of Width, Height, or Length.'); return; }
 
     setSaving(true);
     setError('');
@@ -699,7 +757,10 @@ export default function ProductDetailPage() {
                   <input className="input-field" type="url" value={productUrl} onChange={(e) => setProductUrl(e.target.value)} />
                 </Field>
 
-                <SectionHeading>Dimensions</SectionHeading>
+                <SectionHeading>Dimensions *</SectionHeading>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10, marginTop: -8 }}>
+                  At least 2 of Width, Height, or Length required
+                </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 90px', gap: 12 }}>
                   <Field label="Length"><input className="input-field" type="number" min="0" step="0.1" value={dimLength} onChange={(e) => setDimLength(e.target.value)} /></Field>
                   <Field label="Width"><input className="input-field" type="number" min="0" step="0.1" value={dimWidth} onChange={(e) => setDimWidth(e.target.value)} /></Field>
@@ -740,6 +801,18 @@ export default function ProductDetailPage() {
                 <Field label="Lead Time" optional>
                   <input className="input-field" type="text" value={leadTime} onChange={(e) => setLeadTime(e.target.value)} />
                 </Field>
+
+                {/* Editable metadata */}
+                {editMetadata && Object.keys(editMetadata).length > 0 && (
+                  <>
+                    <SectionHeading>Product Details</SectionHeading>
+                    <MetadataForm
+                      metadata={editMetadata}
+                      onChange={(updated) => setEditMetadata(updated)}
+                      disabled={saving}
+                    />
+                  </>
+                )}
 
                 {error && <div className="error-box" style={{ marginBottom: 16 }}>{error}</div>}
 
@@ -796,9 +869,9 @@ export default function ProductDetailPage() {
                 </div>
               )}
 
-              {/* AI-extracted metadata accordion */}
+              {/* AI-extracted metadata (read-only in view mode) */}
               {meta && Object.keys(meta).length > 0 && (
-                <MetadataSummary metadata={meta} />
+                <MetadataForm metadata={meta} excludeKeys={INLINE_METADATA_KEYS} />
               )}
 
               {/* Source URL */}
