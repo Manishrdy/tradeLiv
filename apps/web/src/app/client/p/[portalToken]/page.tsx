@@ -61,14 +61,39 @@ function ComparisonModal({
     { label: 'Style',      get: (i) => (i.product.metadata?.style as string) ?? null },
     { label: 'Material',   get: (i) => i.product.material ?? null },
     { label: 'Dimensions', get: (i) => formatDimensions(i.product.dimensions) },
-    { label: 'Finishes',   get: (i) => i.product.finishes?.join(', ') || null },
+    {
+      label: 'Finishes',
+      get: (i) => {
+        const fins = i.product.finishes?.length
+          ? i.product.finishes
+          : (i.product.metadata?.availableColors as string[] | undefined)?.length
+            ? (i.product.metadata!.availableColors as string[])
+            : null;
+        return fins ? fins.join(', ') : null;
+      },
+    },
+    {
+      label: 'Colors',
+      get: (i) => {
+        const colors = i.product.metadata?.availableColors as string[] | undefined;
+        return colors?.length ? colors.join(', ') : null;
+      },
+    },
+    {
+      label: 'Sizes',
+      get: (i) => {
+        const sizes = i.product.metadata?.availableSizes as string[] | undefined;
+        return sizes?.length ? sizes.join(', ') : null;
+      },
+    },
     {
       label: 'Key Features',
       get: (i) => {
         const features = i.product.metadata?.keyFeatures as string[] | undefined;
-        return features?.length
+        const filtered = features?.filter(f => !/\bavailable in\b/i.test(f));
+        return filtered?.length
           ? <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, lineHeight: 1.6 }}>
-              {features.map((f, idx) => <li key={idx}>{f}</li>)}
+              {filtered.map((f, idx) => <li key={idx}>{f}</li>)}
             </ul>
           : null;
       },

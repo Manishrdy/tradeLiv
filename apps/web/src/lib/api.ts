@@ -249,6 +249,7 @@ export interface ProductMetadata {
   collection?: string;
   sku?: string;
   availableColors?: string[];
+  availableSizes?: string[];
   seatHeight?: string;
   armHeight?: string;
   seatDepth?: string;
@@ -656,8 +657,8 @@ export const api = {
   deleteProduct: (id: string) =>
     request<{ message: string }>(`/api/catalog/products/${id}`, { method: 'DELETE' }),
 
-  extractProduct: (sourceUrl: string) =>
-    request<ExtractionResult>('/api/catalog/extract', { method: 'POST', body: JSON.stringify({ sourceUrl }) }),
+  extractProduct: (sourceUrl: string, reextract?: boolean) =>
+    request<ExtractionResult>('/api/catalog/extract', { method: 'POST', body: JSON.stringify({ sourceUrl, reextract }) }),
 
   extractProductsBatch: (urls: string[]) =>
     request<BatchExtractionResult>('/api/catalog/extract/batch', { method: 'POST', body: JSON.stringify({ urls }) }),

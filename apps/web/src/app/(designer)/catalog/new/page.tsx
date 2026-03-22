@@ -88,6 +88,7 @@ const METADATA_LABELS: Record<string, string> = {
   collection: 'Collection',
   sku: 'SKU',
   availableColors: 'Available Colors',
+  availableSizes: 'Available Sizes',
   seatHeight: 'Seat Height',
   armHeight: 'Arm Height',
   seatDepth: 'Seat Depth',

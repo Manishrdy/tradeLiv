@@ -65,21 +65,55 @@ function ComparisonModal({
     { label: 'Dimensions',     render: (i) => formatDimensions(i.product.dimensions) || dash },
     {
       label: 'Finishes',
-      render: (i) => i.product.finishes?.length
-        ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {i.product.finishes.map((f) => (
-              <span key={f} className="tag-chip" style={{ fontSize: 11 }}>{f}</span>
-            ))}
-          </div>
-        : dash,
+      render: (i) => {
+        const fins = i.product.finishes?.length
+          ? i.product.finishes
+          : (i.product.metadata?.availableColors as string[] | undefined)?.length
+            ? (i.product.metadata.availableColors as string[])
+            : null;
+        return fins
+          ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {fins.map((f) => (
+                <span key={f} className="tag-chip" style={{ fontSize: 11 }}>{f}</span>
+              ))}
+            </div>
+          : dash;
+      },
+    },
+    {
+      label: 'Colors',
+      render: (i) => {
+        const colors = i.product.metadata?.availableColors as string[] | undefined;
+        return colors?.length
+          ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {colors.map((c) => (
+                <span key={c} className="tag-chip" style={{ fontSize: 11 }}>{c}</span>
+              ))}
+            </div>
+          : dash;
+      },
+    },
+    {
+      label: 'Sizes',
+      render: (i) => {
+        const sizes = i.product.metadata?.availableSizes as string[] | undefined;
+        return sizes?.length
+          ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {sizes.map((s) => (
+                <span key={s} className="tag-chip" style={{ fontSize: 11 }}>{s}</span>
+              ))}
+            </div>
+          : dash;
+      },
     },
     {
       label: 'Key Features',
       render: (i) => {
         const features = i.product.metadata?.keyFeatures as string[] | undefined;
-        return features?.length
+        const filtered = features?.filter(f => !/\bavailable in\b/i.test(f));
+        return filtered?.length
           ? <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, lineHeight: 1.6 }}>
-              {features.map((f, idx) => <li key={idx}>{f}</li>)}
+              {filtered.map((f, idx) => <li key={idx}>{f}</li>)}
             </ul>
           : dash;
       },

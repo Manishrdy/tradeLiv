@@ -491,6 +491,7 @@ router.put('/products/:id/reactivate', async (req: AuthRequest, res: Response) =
 
 const extractSchema = z.object({
   sourceUrl: z.string().url('Invalid URL'),
+  reextract: z.boolean().optional(),
 });
 
 router.post('/extract', async (req: AuthRequest, res: Response) => {
@@ -512,19 +513,21 @@ router.post('/extract', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // URL duplicate check — if this exact URL already exists in the designer's catalog
-  try {
-    const duplicate = await prisma.product.findFirst({
-      where: { designerId, sourceUrl: parsed.data.sourceUrl },
-      select: { id: true, productName: true, brandName: true, imageUrl: true, isActive: true },
-    });
+  // URL duplicate check — skip when re-extracting an existing product
+  if (!parsed.data.reextract) {
+    try {
+      const duplicate = await prisma.product.findFirst({
+        where: { designerId, sourceUrl: parsed.data.sourceUrl },
+        select: { id: true, productName: true, brandName: true, imageUrl: true, isActive: true },
+      });
 
-    if (duplicate) {
-      res.json({ type: 'duplicate', duplicateProduct: duplicate });
-      return;
+      if (duplicate) {
+        res.json({ type: 'duplicate', duplicateProduct: duplicate });
+        return;
+      }
+    } catch (err) {
+      logger.error('catalog extract duplicate check error', { err });
     }
-  } catch (err) {
-    logger.error('catalog extract duplicate check error', { err });
   }
 
   // Stamp rate limit before calling Claude (prevents hammering on slow responses)

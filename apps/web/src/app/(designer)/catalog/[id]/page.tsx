@@ -56,6 +56,7 @@ const METADATA_LABELS: Record<string, string> = {
   collection: 'Collection',
   sku: 'SKU',
   availableColors: 'Available Colors',
+  availableSizes: 'Available Sizes',
   seatHeight: 'Seat Height',
   armHeight: 'Arm Height',
   seatDepth: 'Seat Depth',
@@ -321,7 +322,7 @@ export default function ProductDetailPage() {
     setReExtractError('');
     setReExtractPreview(null);
 
-    const result = await api.extractProduct(product.sourceUrl);
+    const result = await api.extractProduct(product.sourceUrl, true);
     setReExtracting(false);
 
     if (result.error) {
@@ -330,12 +331,6 @@ export default function ProductDetailPage() {
     }
 
     const data = result.data!;
-
-    if (data.type === 'duplicate') {
-      // This product IS the duplicate — just show success with current data
-      setReExtractError('This URL is already saved as this product.');
-      return;
-    }
 
     if (data.type === 'multiple') {
       setReExtractError('Multiple products found at this URL. Use the catalog page to add individual products.');

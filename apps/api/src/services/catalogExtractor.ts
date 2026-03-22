@@ -56,6 +56,10 @@ export interface ExtractedProductData {
   finishes?: string[];
   leadTime?: string;
   category?: string;
+  options?: Array<{
+    name: string;       // e.g. "Color", "Size", "Fabric", "Wood Finish"
+    values: string[];   // e.g. ["Sand", "Cocoa", "Ebony"]
+  }>;
   metadata?: {
     description?: string;
     keyFeatures?: string[];
@@ -66,7 +70,6 @@ export interface ExtractedProductData {
     style?: string;
     collection?: string;
     sku?: string;
-    availableColors?: string[];
     seatHeight?: string;
     armHeight?: string;
     seatDepth?: string;
@@ -237,9 +240,27 @@ OPTIONAL — include only when clearly present in the signals:
 - leadTime: delivery lead time string (e.g. "4–6 weeks")
 - productUrl: canonical product page URL
 
+CRITICAL — options: Extract ALL customizable product options/variants as a generic array.
+Each option has a "name" (the category label) and "values" (array of available choices).
+Different sites label these differently — normalize them:
+  - Color/Colorway/Shade/Finish Color → name: "Color"
+  - Size/Bed Size/Dimensions Option → name: "Size"
+  - Fabric/Upholstery/Material Option → name: "Fabric"
+  - Wood Finish/Frame Finish → name: "Wood Finish"
+  - Configuration/Orientation/Sectional Layout → name: "Configuration"
+  - Cushion/Fill Type → name: "Cushion"
+  - Any other selectable option → use a clear, short name
+Only include options that have 2+ values. Do NOT include options that are just a single default value.
+Example:
+"options": [
+  { "name": "Color", "values": ["Sand", "Cocoa", "Ebony"] },
+  { "name": "Size", "values": ["Queen", "King", "California King"] },
+  { "name": "Fabric", "values": ["Georges Snow", "Linen Cream"] }
+]
+
 IMPORTANT — metadata: Extract ALL useful product details from the page text into a "metadata" object:
 - description: product description (2-3 sentences max)
-- keyFeatures: array of key feature strings
+- keyFeatures: array of key feature strings. IMPORTANT: Do NOT include availability info here (colors, finishes, sizes, "Available in..."). Those belong in finishes, options, availableColors, or availableSizes fields.
 - assembly: assembly requirements (e.g. "Minimal assembly required", "No assembly")
 - careInstructions: care/maintenance info
 - warranty: warranty details
@@ -247,7 +268,8 @@ IMPORTANT — metadata: Extract ALL useful product details from the page text in
 - style: design style (e.g. "Mid-Century Modern", "Scandinavian")
 - collection: product collection name
 - sku: SKU or product code
-- availableColors: array of color options
+- availableColors: array of available color/finish names (e.g. ["Chestnut", "Honey", "Walnut"]). Extract from variant options, swatches, or product description. This is CRITICAL for comparison.
+- availableSizes: array of available size names (e.g. ["Queen", "King", "California King"]). Extract from variant options or product description.
 - seatHeight: seat height measurement
 - armHeight: arm height measurement
 - seatDepth: seat depth measurement
@@ -268,6 +290,10 @@ For a SINGLE PRODUCT page respond:
     "brandName": "Article",
     "productUrl": "https://example.com/products/sven-sofa",
     "dimensions": { "width": 84, "depth": 38, "height": 34, "unit": "in", "raw": "84\\"W x 38\\"D x 34\\"H" },
+    "options": [
+      { "name": "Color", "values": ["Charme Tan", "Charme Chocolat", "Birch Ivory"] },
+      { "name": "Size", "values": ["3-Seater", "2-Seater"] }
+    ],
     "metadata": {
       "description": "Mid-century modern sofa with Italian tanned leather and solid wood frame.",
       "keyFeatures": ["Kiln-dried hardwood frame", "High-resilience foam cushions", "Italian tanned leather"],
@@ -376,7 +402,13 @@ async function fetchPageHtml(url: string): Promise<string | null> {
 
 /* ─── Headless browser fetch (browserless sidecar) ──── */
 
-async function fetchRenderedHtml(url: string): Promise<string | null> {
+interface BrowserExtraction {
+  productText: string;     // Text from the product content area
+  dimensionText: string;   // Text specifically near dimension/spec sections
+  fullBodyText: string;    // Full page innerText (stripped of nav/footer)
+}
+
+async function fetchRenderedContent(url: string): Promise<BrowserExtraction | null> {
   const wsEndpoint = config.browserWsEndpoint;
   if (!wsEndpoint) {
     logger.info('Browser WS endpoint not configured — skipping rendered fetch');
@@ -394,36 +426,82 @@ async function fetchRenderedHtml(url: string): Promise<string | null> {
 
     await page.goto(url, { waitUntil: 'networkidle0', timeout: 20_000 });
 
-    // Try clicking common "Dimensions" / "Specifications" tabs/accordions
+    // Click all buttons/tabs that might reveal dimension content
     try {
-      const dimTrigger = await page.$(
-        [
-          'button:has-text("Dimensions")',
-          'button:has-text("Specifications")',
-          'button:has-text("Specs")',
-          '[data-tab="dimensions"]',
-          '[data-tab="specifications"]',
-          '[aria-controls*="dimension"]',
-          '[aria-controls*="spec"]',
-        ].join(', '),
-      );
-      if (dimTrigger) {
-        await dimTrigger.click();
-        await page.waitForNetworkIdle({ timeout: 3_000 }).catch(() => {});
-      }
+      await page.evaluate(`(() => {
+        try {
+          var kw = /dimension|specification|spec|measurement|detail|size/i;
+          document.querySelectorAll('button, [role="tab"], summary, a[data-tab]').forEach(function(el) {
+            try { if (kw.test(el.innerText || '')) el.click(); } catch(e) {}
+          });
+        } catch(e) {}
+      })()`);
+      await new Promise((r) => setTimeout(r, 2000));
     } catch {
-      // Tab click is best-effort — continue regardless
+      // Best-effort — continue regardless
     }
 
-    const html = await page.content();
+    // Extract clean text content from the rendered page
+    const extraction: BrowserExtraction = await page.evaluate(`(() => {
+      try {
+        // Remove noise elements
+        var noiseSelectors = 'nav, header, footer, [role="navigation"], [role="banner"], script, style, noscript, svg, iframe';
+        document.querySelectorAll(noiseSelectors).forEach(function(el) { try { el.remove(); } catch(e) {} });
+
+        // Get full cleaned body text
+        var bodyText = (document.body.innerText || '').slice(0, 50000);
+
+        // Find dimension-specific text by searching for headings/labels containing keywords
+        var dimParts = [];
+        var kw = /dimension|specification|measurement|overall.size/i;
+        document.querySelectorAll('h1, h2, h3, h4, h5, h6, dt, th, label, summary, button, span, p, div').forEach(function(el) {
+          try {
+            var t = (el.innerText || '').trim();
+            if (t.length > 3 && t.length < 200 && kw.test(t)) {
+              var parent = el.closest('section, div, table, dl, details, article');
+              if (parent) {
+                var pt = (parent.innerText || '').trim();
+                if (pt.length > 10 && pt.length < 5000) dimParts.push(pt);
+              }
+            }
+          } catch(e) {}
+        });
+
+        // Get main product area text
+        var productText = '';
+        var pSels = ['main', '[role="main"]', 'article', '#product', '#main-content'];
+        for (var i = 0; i < pSels.length; i++) {
+          var el = document.querySelector(pSels[i]);
+          if (el && (el.innerText || '').length > 100) {
+            productText = (el.innerText || '').slice(0, 30000);
+            break;
+          }
+        }
+
+        var unique = dimParts.filter(function(v, i, a) { return a.indexOf(v) === i; });
+        return {
+          productText: productText,
+          dimensionText: unique.join('\\n---\\n').slice(0, 10000),
+          fullBodyText: bodyText
+        };
+      } catch(e) {
+        return { productText: '', dimensionText: '', fullBodyText: (document.body.innerText || '').slice(0, 50000) };
+      }
+    })()`) as BrowserExtraction;
+
     await page.close();
     browser.disconnect();
 
-    const trimmed = html.length > HTML_BODY_LIMIT ? html.slice(0, HTML_BODY_LIMIT) : html;
-    logger.info('Rendered HTML fetched via headless browser', { url, bytes: trimmed.length });
-    return trimmed;
+    logger.info('Rendered content extracted via headless browser', {
+      url,
+      productTextLen: extraction.productText.length,
+      dimensionTextLen: extraction.dimensionText.length,
+      fullBodyTextLen: extraction.fullBodyText.length,
+    });
+
+    return extraction;
   } catch (err: any) {
-    logger.warn('fetchRenderedHtml failed', { url, err: err?.message });
+    logger.warn('fetchRenderedContent failed', { url, err: err?.message });
     if (browser) {
       try { browser.disconnect(); } catch {}
     }
@@ -1370,24 +1448,36 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
             }
           }
 
-          // If still missing, try headless browser to get JS-rendered HTML
+          // If still missing, try headless browser to get JS-rendered content
           if (!hasDims) {
             logger.info('Dimensions missing — attempting headless browser fetch', { url: sourceUrl });
-            const renderedHtml = await fetchRenderedHtml(sourceUrl);
-            if (renderedHtml && renderedHtml.length > 500) {
-              const renderedSignals = extractSignals(renderedHtml, sourceUrl);
-              const browserDims = parseDimensionsFromSignals(renderedSignals);
-              if (browserDims) {
-                if (result.type === 'single' && result.product) {
-                  result.product.dimensions = browserDims;
-                } else if (result.type === 'multiple' && result.products?.[0]) {
-                  result.products[0].dimensions = browserDims;
+            const rendered = await fetchRenderedContent(sourceUrl);
+            if (rendered) {
+              logger.info('Browser-rendered content extracted', {
+                url: sourceUrl,
+                productTextLen: rendered.productText.length,
+                dimensionTextLen: rendered.dimensionText.length,
+                dimensionText: rendered.dimensionText,
+                fullBodyTextLen: rendered.fullBodyText.length,
+              });
+
+              // Try parsing dimensions from the targeted dimension text first, then product text, then full body
+              const textsToTry = [rendered.dimensionText, rendered.productText, rendered.fullBodyText].filter(Boolean);
+              for (const text of textsToTry) {
+                const browserDims = parseDimensionsFromText(text);
+                if (browserDims) {
+                  if (result.type === 'single' && result.product) {
+                    result.product.dimensions = browserDims;
+                  } else if (result.type === 'multiple' && result.products?.[0]) {
+                    result.products[0].dimensions = browserDims;
+                  }
+                  hasDims = true;
+                  logger.info('Dimensions recovered via headless browser', {
+                    url: sourceUrl,
+                    dims: browserDims,
+                  });
+                  break;
                 }
-                hasDims = true;
-                logger.info('Dimensions recovered via headless browser', {
-                  url: sourceUrl,
-                  dims: browserDims,
-                });
               }
             }
           }
@@ -1411,10 +1501,14 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
     });
 
     // Try headless browser before falling back to web search
-    const renderedHtml = await fetchRenderedHtml(sourceUrl);
-    if (renderedHtml && renderedHtml.length > 500) {
-      const signals = extractSignals(renderedHtml, sourceUrl);
-      const preCategory = inferCategoryFromText(signals);
+    const rendered = await fetchRenderedContent(sourceUrl);
+    if (rendered && rendered.productText.length > 100) {
+      logger.info('Browser-rendered content for bot-blocked page', {
+        url: sourceUrl,
+        productTextLen: rendered.productText.length,
+        dimensionTextLen: rendered.dimensionText.length,
+        dimensionText: rendered.dimensionText,
+      });
 
       try {
         const response = await client.messages.create({
@@ -1424,7 +1518,7 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
           messages: [
             {
               role: 'user',
-              content: `Extract product data from these page signals.\n\nPRICE: If "selected_variant_price" is present, use that — it's the exact price for the URL's variant. Do NOT use og:price or meta tag prices when selected_variant_price exists.\n\nDIMENSIONS (HIGHEST PRIORITY): Look for "explicit_dimensions_label" signals FIRST — these contain the raw text near a "Dimensions" heading on the page and are the MOST AUTHORITATIVE source. Parse width, depth, height, and unit values from that text. Then use dim_labelled and dim_label signals. Do NOT confuse variant titles (like "22 x 22") with actual product dimensions. Only labelled measurements (Width/Depth/Height) are real dimensions. NEVER return a product without dimensions if ANY dimension signal (explicit_dimensions_label, dim_label, dim_labelled, dim_WxDxH, spec_sections with measurements) exists in the signals below.\n\n${signals}`,
+              content: `Extract product data from this page content rendered by a headless browser.\n\nPRICE: Look for price patterns like "$1,234" or "Price: 1234".\n\nDIMENSIONS (HIGHEST PRIORITY):\nDimension-specific text found on the page:\n${rendered.dimensionText || '(none found)'}\n\nFull product area text:\n${rendered.productText.slice(0, 15_000)}`,
             },
           ],
         });
@@ -1434,15 +1528,19 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
           const parsed = tryParseJson(textBlock.text);
           if (parsed) {
             logger.info('Browser-rendered extraction succeeded', { url: sourceUrl });
-            const result = buildResult(parsed, sourceUrl, preCategory);
+            const result = buildResult(parsed, sourceUrl);
 
-            // Deterministic dimension fallback on rendered signals
+            // Deterministic dimension fallback from browser text
             const product = result.type === 'single' ? result.product : result.products?.[0];
             if (!hasPrimaryDimensions(product?.dimensions)) {
-              const dims = parseDimensionsFromSignals(signals);
-              if (dims) {
-                if (result.type === 'single' && result.product) result.product.dimensions = dims;
-                else if (result.type === 'multiple' && result.products?.[0]) result.products[0].dimensions = dims;
+              const textsToTry = [rendered.dimensionText, rendered.productText, rendered.fullBodyText].filter(Boolean);
+              for (const text of textsToTry) {
+                const dims = parseDimensionsFromText(text);
+                if (dims) {
+                  if (result.type === 'single' && result.product) result.product.dimensions = dims;
+                  else if (result.type === 'multiple' && result.products?.[0]) result.products[0].dimensions = dims;
+                  break;
+                }
               }
             }
 
@@ -1698,6 +1796,39 @@ function normalizeProduct(
     result.category = preCategory;
   }
 
+  // Options — generic product variants/customizations
+  if (Array.isArray(raw.options) && raw.options.length > 0) {
+    const opts: ExtractedProductData['options'] = [];
+    for (const opt of raw.options) {
+      if (opt && typeof opt.name === 'string' && Array.isArray(opt.values)) {
+        const values = opt.values.filter((v: unknown) => typeof v === 'string' && v.length > 0);
+        if (values.length >= 2) {
+          opts.push({ name: opt.name.trim(), values });
+        }
+      }
+    }
+    if (opts.length > 0) result.options = opts;
+  }
+
+  // Backward compat: if AI still returns availableColors/availableSizes in metadata, promote to options
+  if (!result.options) {
+    const autoOpts: ExtractedProductData['options'] = [];
+    const md = raw.metadata;
+    if (md) {
+      if (Array.isArray(md.availableColors) && md.availableColors.length >= 2) {
+        autoOpts.push({ name: 'Color', values: md.availableColors.filter((v: unknown) => typeof v === 'string') });
+      }
+      if (Array.isArray(md.availableSizes) && md.availableSizes.length >= 2) {
+        autoOpts.push({ name: 'Size', values: md.availableSizes.filter((v: unknown) => typeof v === 'string') });
+      }
+    }
+    // Also promote finishes if no color option exists
+    if (!autoOpts.some(o => o.name === 'Color') && Array.isArray(raw.finishes) && raw.finishes.length >= 2) {
+      autoOpts.push({ name: 'Color', values: raw.finishes.filter((f: unknown) => typeof f === 'string') });
+    }
+    if (autoOpts.length > 0) result.options = autoOpts;
+  }
+
   // Metadata — AI-analyzed product summary
   if (raw.metadata && typeof raw.metadata === 'object') {
     const md = raw.metadata;
@@ -1716,9 +1847,6 @@ function normalizeProduct(
     if (md.style && typeof md.style === 'string') metadata.style = md.style.trim();
     if (md.collection && typeof md.collection === 'string') metadata.collection = md.collection.trim();
     if (md.sku && typeof md.sku === 'string') metadata.sku = md.sku.trim();
-    if (Array.isArray(md.availableColors) && md.availableColors.length > 0) {
-      metadata.availableColors = md.availableColors.filter((c: unknown) => typeof c === 'string');
-    }
     if (md.seatHeight && typeof md.seatHeight === 'string') metadata.seatHeight = md.seatHeight.trim();
     if (md.armHeight && typeof md.armHeight === 'string') metadata.armHeight = md.armHeight.trim();
     if (md.seatDepth && typeof md.seatDepth === 'string') metadata.seatDepth = md.seatDepth.trim();
