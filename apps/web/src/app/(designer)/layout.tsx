@@ -1,16 +1,18 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthStore } from '@/lib/store/auth';
 import { api } from '@/lib/api';
 
+/* ── Nav items ─────────────────────────────────────── */
+
 const NAV = [
   {
     href: '/dashboard',
     label: 'Dashboard',
-    available: true,
+    shortcut: 'D',
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
@@ -21,7 +23,7 @@ const NAV = [
   {
     href: '/clients',
     label: 'Clients',
-    available: true,
+    shortcut: 'C',
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
@@ -34,7 +36,7 @@ const NAV = [
   {
     href: '/projects',
     label: 'Projects',
-    available: true,
+    shortcut: 'P',
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -44,7 +46,7 @@ const NAV = [
   {
     href: '/catalog',
     label: 'Catalog',
-    available: true,
+    shortcut: 'A',
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
@@ -56,7 +58,7 @@ const NAV = [
   {
     href: '/orders',
     label: 'Orders',
-    available: true,
+    shortcut: 'O',
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M9 11l3 3L22 4" />
@@ -67,7 +69,7 @@ const NAV = [
   {
     href: '/settings',
     label: 'Settings',
-    available: true,
+    shortcut: 'S',
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="3" />
@@ -77,11 +79,155 @@ const NAV = [
   },
 ];
 
+/* ── Breadcrumb mapping ────────────────────────────── */
+
+const BREADCRUMB_LABELS: Record<string, string> = {
+  dashboard: 'Dashboard',
+  clients: 'Clients',
+  projects: 'Projects',
+  catalog: 'Catalog',
+  orders: 'Orders',
+  settings: 'Settings',
+  new: 'New',
+  rooms: 'Rooms',
+  cart: 'Cart',
+};
+
+function buildBreadcrumbs(pathname: string) {
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments.length <= 1) return [];
+
+  const crumbs: { label: string; href: string }[] = [];
+  let path = '';
+  for (let i = 0; i < segments.length; i++) {
+    path += '/' + segments[i];
+    const seg = segments[i];
+    const label = BREADCRUMB_LABELS[seg] ?? (seg.length > 20 ? seg.slice(0, 8) + '…' : seg);
+    crumbs.push({ label, href: path });
+  }
+  return crumbs;
+}
+
+/* ── Logout confirmation modal ─────────────────────── */
+
+function LogoutModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    cancelRef.current?.focus();
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onCancel();
+    }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [onCancel]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Confirm sign out"
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(0,0,0,0.3)', backdropFilter: 'blur(2px)',
+      }}
+      onClick={onCancel}
+    >
+      <div
+        className="anim-scale-in"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff', borderRadius: 14, padding: '28px 28px 22px',
+          width: 340, boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: '50%', background: 'rgba(185,28,28,0.06)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#b91c1c" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          </div>
+          <div>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: '#0F0F0F', letterSpacing: '-0.02em', margin: 0 }}>Sign out?</h3>
+            <p style={{ fontSize: 13, color: '#8C8984', margin: '4px 0 0', letterSpacing: '-0.01em' }}>You&apos;ll need to sign in again to access your studio.</p>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+          <button
+            ref={cancelRef}
+            onClick={onCancel}
+            style={{
+              flex: 1, padding: '10px 0', borderRadius: 8,
+              border: '1.5px solid #E4E1DC', background: '#fff',
+              fontSize: 13.5, fontWeight: 600, color: '#6B6B6B',
+              cursor: 'pointer', fontFamily: 'inherit',
+              transition: 'border-color 0.14s, color 0.14s',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#0F0F0F'; e.currentTarget.style.color = '#0F0F0F'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E4E1DC'; e.currentTarget.style.color = '#6B6B6B'; }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            style={{
+              flex: 1, padding: '10px 0', borderRadius: 8,
+              border: 'none', background: '#b91c1c',
+              fontSize: 13.5, fontWeight: 600, color: '#fff',
+              cursor: 'pointer', fontFamily: 'inherit',
+              transition: 'background 0.14s',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#991b1b')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = '#b91c1c')}
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Keyboard shortcut hint badge ──────────────────── */
+
+function KbdBadge({ shortcut }: { shortcut: string }) {
+  return (
+    <kbd style={{
+      marginLeft: 'auto', fontSize: 9.5, fontWeight: 600,
+      color: '#C8C5BF', background: '#F5F4F1',
+      border: '1px solid #E8E5E0', borderRadius: 4,
+      padding: '1px 5px', fontFamily: 'inherit',
+      letterSpacing: '0.02em', lineHeight: '16px',
+    }}>
+      G {shortcut}
+    </kbd>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   Main Layout
+   ══════════════════════════════════════════════════════ */
+
+const SIDEBAR_FULL = 220;
+const SIDEBAR_COLLAPSED = 60;
+
 export default function DesignerLayout({ children }: { children: React.ReactNode }) {
   const router   = useRouter();
   const pathname = usePathname();
   const { user, setUser, clearAuth } = useAuthStore();
-  const [hydrated, setHydrated] = useState(false);
+  const [hydrated, setHydrated]       = useState(false);
+  const [collapsed, setCollapsed]     = useState(false);
+  const [mobileOpen, setMobileOpen]   = useState(false);
+  const [showLogout, setShowLogout]   = useState(false);
+  const [gPressed, setGPressed]       = useState(false);
+  const gTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const [avatarUrl, setAvatarUrl]     = useState<string | null>(null);
 
   useEffect(() => {
     setHydrated(true);
@@ -94,6 +240,46 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
       }
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Close mobile sidebar on route change
+  useEffect(() => { setMobileOpen(false); }, [pathname]);
+
+  /* ── Keyboard shortcuts: G then <key> ───────────── */
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      // Don't trigger inside inputs
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target as HTMLElement).isContentEditable) return;
+
+      // Toggle sidebar: Cmd/Ctrl + B
+      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+        e.preventDefault();
+        setCollapsed((c) => !c);
+        return;
+      }
+
+      const key = e.key.toUpperCase();
+
+      if (key === 'G' && !gPressed) {
+        setGPressed(true);
+        clearTimeout(gTimeout.current);
+        gTimeout.current = setTimeout(() => setGPressed(false), 800);
+        return;
+      }
+
+      if (gPressed) {
+        setGPressed(false);
+        clearTimeout(gTimeout.current);
+        const navItem = NAV.find((n) => n.shortcut === key);
+        if (navItem) {
+          e.preventDefault();
+          router.push(navItem.href);
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => { window.removeEventListener('keydown', handleKeyDown); clearTimeout(gTimeout.current); };
+  }, [gPressed, router]);
 
   if (!hydrated || !user) {
     return (
@@ -109,6 +295,7 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
   }
 
   async function handleSignOut() {
+    setShowLogout(false);
     await api.logout();
     clearAuth();
     router.replace('/login');
@@ -122,146 +309,421 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
     .slice(0, 2)
     .toUpperCase() ?? 'D';
 
-  return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-base)' }}>
+  const sidebarWidth = collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_FULL;
+  const breadcrumbs = buildBreadcrumbs(pathname);
 
-      {/* ── Sidebar ─────────────────────────────────────── */}
-      <aside style={{
-        width: 220,
-        flexShrink: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'var(--sidebar-bg)',
-        borderRight: '1px solid var(--sidebar-border)',
-        position: 'fixed',
-        top: 0, left: 0, bottom: 0,
-        zIndex: 40,
-      }}>
+  /* ── Avatar upload handler ────────────────────────── */
+  function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setAvatarUrl(url);
+    // TODO: Upload to server via api.uploadAvatar(file)
+  }
 
-        {/* Logo */}
-        <div style={{ padding: '22px 20px 18px' }}>
-          <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.04em', color: '#0F0F0F' }}>
-            Tradeliv
+  /* ── Sidebar content (shared between desktop & mobile) ── */
+  function renderSidebar(isMobile: boolean) {
+    const w = isMobile ? SIDEBAR_FULL : sidebarWidth;
+    const isCollapsed = !isMobile && collapsed;
+
+    return (
+      <aside
+        role="navigation"
+        aria-label="Main navigation"
+        style={{
+          width: w,
+          flexShrink: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          background: 'var(--sidebar-bg)',
+          borderRight: isMobile ? 'none' : '1px solid var(--sidebar-border)',
+          position: 'fixed',
+          top: 0, left: 0, bottom: 0,
+          zIndex: isMobile ? 52 : 40,
+          transition: isMobile ? 'none' : 'width 0.2s cubic-bezier(0.22,1,0.36,1)',
+          overflowX: 'hidden',
+        }}
+      >
+        {/* Logo + collapse toggle */}
+        <div style={{ padding: isCollapsed ? '22px 0 18px' : '22px 20px 18px', display: 'flex', alignItems: 'center', justifyContent: isCollapsed ? 'center' : 'space-between' }}>
+          <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.04em', color: '#0F0F0F', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+            {isCollapsed ? 'T' : 'Tradeliv'}
           </span>
+          {!isMobile && (
+            <button
+              onClick={() => setCollapsed((c) => !c)}
+              title={collapsed ? 'Expand sidebar (⌘B)' : 'Collapse sidebar (⌘B)'}
+              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: '#C8C5BF', padding: 4, borderRadius: 5,
+                display: isCollapsed ? 'none' : 'flex', alignItems: 'center',
+                transition: 'color 0.12s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = '#0F0F0F')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = '#C8C5BF')}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <line x1="9" y1="3" x2="9" y2="21" />
+              </svg>
+            </button>
+          )}
         </div>
 
         {/* Divider */}
-        <div style={{ height: 1, background: 'var(--sidebar-border)', margin: '0 12px 8px' }} />
+        <div style={{ height: 1, background: 'var(--sidebar-border)', margin: isCollapsed ? '0 8px 8px' : '0 12px 8px' }} />
 
         {/* Nav */}
-        <nav style={{ flex: 1, padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {NAV.map(({ href, label, icon, available }) => {
-            if (!available) {
-              return (
-                <span
-                  key={href}
-                  title="Coming soon"
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 9,
-                    padding: '8px 10px', borderRadius: 8,
-                    fontSize: 13, fontWeight: 500,
-                    color: 'var(--border-strong)',
-                    borderLeft: '2px solid transparent',
-                    cursor: 'default', letterSpacing: '-0.01em',
-                  }}
-                >
-                  <span style={{ flexShrink: 0, opacity: 0.4 }}>{icon}</span>
-                  {label}
-                </span>
-              );
-            }
+        <nav style={{ flex: 1, padding: isCollapsed ? '6px 6px' : '6px 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {NAV.map(({ href, label, icon, shortcut }) => {
             const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href));
             return (
               <Link
                 key={href}
                 href={href}
+                title={isCollapsed ? `${label} (G ${shortcut})` : undefined}
+                aria-current={active ? 'page' : undefined}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: 9,
-                  padding: '8px 10px',
+                  padding: isCollapsed ? '9px 0' : '8px 10px',
+                  justifyContent: isCollapsed ? 'center' : undefined,
                   borderRadius: 8,
                   fontSize: 13,
-                  fontWeight: active ? 600 : 500,
+                  fontWeight: active ? 700 : 500,
                   color: active ? 'var(--sidebar-text-active)' : 'var(--sidebar-text)',
                   background: active ? 'var(--sidebar-active-bg)' : 'transparent',
-                  borderLeft: active ? '2px solid var(--sidebar-active-border)' : '2px solid transparent',
+                  borderLeft: isCollapsed ? 'none' : (active ? '2.5px solid var(--sidebar-active-border)' : '2.5px solid transparent'),
                   textDecoration: 'none',
                   transition: 'all 0.12s ease',
                   letterSpacing: '-0.01em',
-                  paddingLeft: active ? 8 : 10,
+                  paddingLeft: isCollapsed ? undefined : (active ? 8 : 10),
+                  position: 'relative',
                 }}
                 onMouseEnter={(e) => {
                   if (!active) {
-                    (e.currentTarget as HTMLAnchorElement).style.background = 'var(--sidebar-hover-bg)';
-                    (e.currentTarget as HTMLAnchorElement).style.color = '#4A4A4A';
+                    e.currentTarget.style.background = 'var(--sidebar-hover-bg)';
+                    e.currentTarget.style.color = '#4A4A4A';
                   }
                 }}
                 onMouseLeave={(e) => {
                   if (!active) {
-                    (e.currentTarget as HTMLAnchorElement).style.background = 'transparent';
-                    (e.currentTarget as HTMLAnchorElement).style.color = 'var(--sidebar-text)';
+                    e.currentTarget.style.background = 'transparent';
+                    e.currentTarget.style.color = 'var(--sidebar-text)';
                   }
                 }}
               >
-                <span style={{ flexShrink: 0, opacity: active ? 1 : 0.65 }}>{icon}</span>
-                {label}
+                <span style={{ flexShrink: 0, opacity: active ? 1 : 0.65, display: 'flex', alignItems: 'center' }}>{icon}</span>
+                {!isCollapsed && (
+                  <>
+                    {label}
+                    <KbdBadge shortcut={shortcut} />
+                  </>
+                )}
+                {/* Active indicator dot for collapsed */}
+                {isCollapsed && active && (
+                  <div style={{
+                    position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
+                    width: 4, height: 4, borderRadius: '50%', background: '#0F0F0F',
+                  }} />
+                )}
               </Link>
             );
           })}
         </nav>
 
+        {/* Notification bell */}
+        <div style={{ padding: isCollapsed ? '0 6px' : '0 10px' }}>
+          <button
+            title="Notifications"
+            aria-label="Notifications"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 9,
+              width: '100%', padding: isCollapsed ? '9px 0' : '8px 10px',
+              justifyContent: isCollapsed ? 'center' : undefined,
+              borderRadius: 8, background: 'transparent', border: 'none',
+              cursor: 'pointer', fontFamily: 'inherit', fontSize: 13,
+              fontWeight: 500, color: 'var(--sidebar-text)',
+              transition: 'all 0.12s', letterSpacing: '-0.01em',
+              position: 'relative',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--sidebar-hover-bg)'; e.currentTarget.style.color = '#4A4A4A'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--sidebar-text)'; }}
+          >
+            <span style={{ flexShrink: 0, opacity: 0.65, display: 'flex', alignItems: 'center', position: 'relative' }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+              </svg>
+              {/* Badge dot */}
+              <span style={{
+                position: 'absolute', top: -1, right: -1,
+                width: 6, height: 6, borderRadius: '50%',
+                background: '#ef4444', border: '1.5px solid var(--sidebar-bg)',
+              }} />
+            </span>
+            {!isCollapsed && 'Notifications'}
+          </button>
+        </div>
+
         {/* User + sign out */}
-        <div style={{ padding: '8px 10px 14px' }}>
+        <div style={{ padding: isCollapsed ? '8px 6px 14px' : '8px 10px 14px' }}>
           <div style={{ height: 1, background: 'var(--sidebar-border)', marginBottom: 10 }} />
           <div style={{
             display: 'flex', alignItems: 'center', gap: 9,
-            padding: '8px 10px', borderRadius: 8,
+            padding: isCollapsed ? '8px 0' : '8px 10px',
+            justifyContent: isCollapsed ? 'center' : undefined,
+            borderRadius: 8,
           }}>
-            <div style={{
-              width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
-              background: '#F0EEE9',
-              border: '1px solid #E4E1DC',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 10, fontWeight: 700, color: '#4A4A4A',
-              letterSpacing: '0.02em',
-            }}>
-              {initials}
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: '#0F0F0F', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.01em' }}>
-                {firstName}
-              </div>
-              <div style={{ fontSize: 10.5, color: '#B0ADA8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>
-                {user?.email}
-              </div>
-            </div>
-            <button
-              onClick={handleSignOut}
-              title="Sign out"
+            {/* Avatar with upload */}
+            <label
+              title="Change profile photo"
               style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: '#C8C5BF', padding: 4, borderRadius: 5,
-                display: 'flex', alignItems: 'center', flexShrink: 0,
-                transition: 'color 0.12s',
+                width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
+                background: avatarUrl ? `url(${avatarUrl}) center/cover` : '#F0EEE9',
+                border: '1px solid #E4E1DC',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 10, fontWeight: 700, color: '#4A4A4A',
+                letterSpacing: '0.02em',
+                cursor: 'pointer', position: 'relative', overflow: 'hidden',
               }}
-              onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = '#0F0F0F')}
-              onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = '#C8C5BF')}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                <polyline points="16 17 21 12 16 7" />
-                <line x1="21" y1="12" x2="9" y2="12" />
-              </svg>
-            </button>
+              {!avatarUrl && initials}
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleAvatarUpload}
+                style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }}
+                aria-label="Upload profile photo"
+              />
+              {/* Hover overlay */}
+              <div style={{
+                position: 'absolute', inset: 0, borderRadius: '50%',
+                background: 'rgba(0,0,0,0.4)', display: 'flex',
+                alignItems: 'center', justifyContent: 'center',
+                opacity: 0, transition: 'opacity 0.15s',
+              }}
+                onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
+                onMouseLeave={(e) => (e.currentTarget.style.opacity = '0')}
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
+                  <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
+                  <circle cx="12" cy="13" r="4" />
+                </svg>
+              </div>
+            </label>
+
+            {!isCollapsed && (
+              <>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#0F0F0F', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.01em' }}>
+                    {firstName}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: '#B0ADA8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>
+                    {user?.email}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowLogout(true)}
+                  title="Sign out"
+                  aria-label="Sign out"
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: '#C8C5BF', padding: 4, borderRadius: 5,
+                    display: 'flex', alignItems: 'center', flexShrink: 0,
+                    transition: 'color 0.12s',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = '#b91c1c')}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = '#C8C5BF')}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                    <polyline points="16 17 21 12 16 7" />
+                    <line x1="21" y1="12" x2="9" y2="12" />
+                  </svg>
+                </button>
+              </>
+            )}
+
+            {isCollapsed && (
+              <button
+                onClick={() => setShowLogout(true)}
+                title="Sign out"
+                aria-label="Sign out"
+                style={{
+                  position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)',
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: '#C8C5BF', padding: 4, borderRadius: 5,
+                  display: 'none', alignItems: 'center',
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                  <polyline points="16 17 21 12 16 7" />
+                  <line x1="21" y1="12" x2="9" y2="12" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
       </aside>
+    );
+  }
 
-      {/* ── Main content ────────────────────────────────── */}
-      <main style={{ marginLeft: 220, flex: 1, minWidth: 0 }}>
+  return (
+    <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-base)' }}>
+
+      {/* ── Mobile hamburger ──────────────────────────── */}
+      <div className="mobile-topbar" style={{
+        display: 'none',
+        position: 'fixed', top: 0, left: 0, right: 0,
+        height: 52, zIndex: 50,
+        background: 'var(--sidebar-bg)',
+        borderBottom: '1px solid var(--sidebar-border)',
+        alignItems: 'center', padding: '0 16px',
+        justifyContent: 'space-between',
+      }}>
+        <button
+          onClick={() => setMobileOpen(true)}
+          aria-label="Open navigation menu"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#0F0F0F', display: 'flex', padding: 4 }}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+        <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: '-0.04em', color: '#0F0F0F' }}>Tradeliv</span>
+        <div style={{ width: 28 }} /> {/* spacer */}
+      </div>
+
+      {/* ── Mobile overlay ────────────────────────────── */}
+      {mobileOpen && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 51,
+            background: 'rgba(0,0,0,0.3)', backdropFilter: 'blur(2px)',
+          }}
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
+      {/* ── Mobile sidebar drawer ─────────────────────── */}
+      <div className="mobile-sidebar" style={{
+        display: 'none',
+        position: 'fixed', top: 0, bottom: 0, left: 0,
+        zIndex: 52,
+        transform: mobileOpen ? 'translateX(0)' : 'translateX(-100%)',
+        transition: 'transform 0.25s cubic-bezier(0.22,1,0.36,1)',
+      }}>
+        {/* Close button */}
+        <button
+          onClick={() => setMobileOpen(false)}
+          aria-label="Close navigation menu"
+          style={{
+            position: 'absolute', top: 14, right: -44,
+            width: 36, height: 36, borderRadius: '50%',
+            background: 'rgba(0,0,0,0.5)', border: 'none',
+            color: '#fff', cursor: 'pointer',
+            display: mobileOpen ? 'flex' : 'none',
+            alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+        {renderSidebar(true)}
+      </div>
+
+      {/* ── Desktop sidebar ───────────────────────────── */}
+      <div className="desktop-sidebar">
+        {renderSidebar(false)}
+      </div>
+
+      {/* ── Main content ──────────────────────────────── */}
+      <main className="main-content" style={{ marginLeft: sidebarWidth, flex: 1, minWidth: 0, transition: 'margin-left 0.2s cubic-bezier(0.22,1,0.36,1)' }}>
+        {/* Breadcrumbs */}
+        {breadcrumbs.length > 1 && (
+          <nav aria-label="Breadcrumb" style={{ padding: '16px 44px 0', display: 'flex', alignItems: 'center', gap: 6 }}>
+            {breadcrumbs.map((crumb, i) => {
+              const isLast = i === breadcrumbs.length - 1;
+              return (
+                <span key={crumb.href} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {i > 0 && (
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#C8C5BF" strokeWidth="2.5" strokeLinecap="round">
+                      <path d="M9 18l6-6-6-6" />
+                    </svg>
+                  )}
+                  {isLast ? (
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: '#0F0F0F', letterSpacing: '-0.01em' }}>
+                      {crumb.label}
+                    </span>
+                  ) : (
+                    <Link
+                      href={crumb.href}
+                      style={{
+                        fontSize: 12.5, fontWeight: 500, color: '#B0ADA8',
+                        textDecoration: 'none', letterSpacing: '-0.01em',
+                        transition: 'color 0.12s',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.color = '#6B6B6B')}
+                      onMouseLeave={(e) => (e.currentTarget.style.color = '#B0ADA8')}
+                    >
+                      {crumb.label}
+                    </Link>
+                  )}
+                </span>
+              );
+            })}
+          </nav>
+        )}
         {children}
       </main>
+
+      {/* ── Logout confirmation modal ─────────────────── */}
+      {showLogout && <LogoutModal onConfirm={handleSignOut} onCancel={() => setShowLogout(false)} />}
+
+      {/* ── Keyboard shortcut toast ────────────────────── */}
+      {gPressed && (
+        <div style={{
+          position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 100, background: '#0F0F0F', color: '#fff',
+          padding: '8px 16px', borderRadius: 8,
+          fontSize: 12, fontWeight: 600, letterSpacing: '-0.01em',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <span style={{ opacity: 0.6 }}>Go to:</span>
+          {NAV.map((n) => (
+            <span key={n.shortcut} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+              <kbd style={{
+                background: 'rgba(255,255,255,0.15)', borderRadius: 3,
+                padding: '1px 5px', fontSize: 10, fontFamily: 'inherit',
+              }}>{n.shortcut}</kbd>
+              <span style={{ fontSize: 11, opacity: 0.7 }}>{n.label}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* ── Responsive CSS ────────────────────────────── */}
+      <style>{`
+        @media (max-width: 768px) {
+          .desktop-sidebar { display: none !important; }
+          .mobile-topbar { display: flex !important; }
+          .mobile-sidebar { display: block !important; }
+          .main-content { margin-left: 0 !important; padding-top: 52px; }
+        }
+        @media (min-width: 769px) {
+          .mobile-topbar { display: none !important; }
+          .mobile-sidebar { display: none !important; }
+        }
+      `}</style>
     </div>
   );
 }

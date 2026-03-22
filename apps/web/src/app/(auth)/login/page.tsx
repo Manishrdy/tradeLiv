@@ -49,13 +49,15 @@ export default function LoginPage() {
   const router  = useRouter();
   const setUser = useAuthStore((s) => s.setUser);
 
-  const [email,    setEmail]    = useState('');
-  const [password, setPassword] = useState('');
-  const [showPw,   setShowPw]   = useState(false);
-  const [loading,  setLoading]  = useState(false);
-  const [error,    setError]    = useState('');
-  const [success,  setSuccess]  = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [email,      setEmail]      = useState('');
+  const [password,   setPassword]   = useState('');
+  const [showPw,     setShowPw]     = useState(false);
+  const [loading,    setLoading]    = useState(false);
+  const [error,      setError]      = useState('');
+  const [success,    setSuccess]    = useState(false);
+  const [progress,   setProgress]   = useState(0);
+  const [remember,   setRemember]   = useState(false);
+  const [touched,    setTouched]    = useState<{ email?: boolean; password?: boolean }>({});
 
   useEffect(() => {
     if (!success) return;
@@ -68,12 +70,17 @@ export default function LoginPage() {
     return () => clearInterval(iv);
   }, [success, router]);
 
+  const emailError = touched.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? 'Enter a valid email address.' : '';
+  const passwordError = touched.password && !password ? 'Password is required.' : '';
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setTouched({ email: true, password: true });
     if (!email.trim() || !password) { setError('Please fill in all fields.'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError('Enter a valid email address.'); return; }
     setLoading(true);
     setError('');
-    const result = await api.login({ email: email.trim(), password });
+    const result = await api.login({ email: email.trim(), password, remember });
     setLoading(false);
     if (result.error || !result.data) { setError(result.error ?? 'Login failed'); return; }
     if (result.data.role === 'admin') {
@@ -152,38 +159,52 @@ export default function LoginPage() {
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} noValidate>
+        <form onSubmit={handleSubmit} noValidate aria-label="Sign in to your account">
           <div style={{ marginBottom: 16 }}>
-            <label style={LABEL}>Email address</label>
+            <label htmlFor="login-email" style={LABEL}>Email address</label>
             <input
+              id="login-email"
               type="email"
               placeholder="you@studio.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              onBlur={() => setTouched((t) => ({ ...t, email: true }))}
               autoComplete="email"
               autoFocus
-              style={INPUT}
-              onFocus={(e) => (e.target.style.borderColor = '#0F0F0F')}
-              onBlur={(e) => (e.target.style.borderColor = '#E4E1DC')}
+              aria-required="true"
+              aria-invalid={!!emailError}
+              aria-describedby={emailError ? 'login-email-error' : undefined}
+              style={{ ...INPUT, borderColor: emailError ? '#ef4444' : undefined }}
+              onFocus={(e) => (e.target.style.borderColor = emailError ? '#ef4444' : '#0F0F0F')}
             />
+            {emailError && (
+              <p id="login-email-error" role="alert" style={{ fontSize: 12, color: '#ef4444', marginTop: 5, letterSpacing: '-0.01em' }}>
+                {emailError}
+              </p>
+            )}
           </div>
 
-          <div style={{ marginBottom: 10 }}>
-            <label style={LABEL}>Password</label>
+          <div style={{ marginBottom: 16 }}>
+            <label htmlFor="login-password" style={LABEL}>Password</label>
             <div style={{ position: 'relative' }}>
               <input
+                id="login-password"
                 type={showPw ? 'text' : 'password'}
                 placeholder="Your password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                onBlur={() => setTouched((t) => ({ ...t, password: true }))}
                 autoComplete="current-password"
-                style={{ ...INPUT, paddingRight: 44 }}
-                onFocus={(e) => (e.target.style.borderColor = '#0F0F0F')}
-                onBlur={(e) => (e.target.style.borderColor = '#E4E1DC')}
+                aria-required="true"
+                aria-invalid={!!passwordError}
+                aria-describedby={passwordError ? 'login-password-error' : undefined}
+                style={{ ...INPUT, paddingRight: 44, borderColor: passwordError ? '#ef4444' : undefined }}
+                onFocus={(e) => (e.target.style.borderColor = passwordError ? '#ef4444' : '#0F0F0F')}
               />
               <button
                 type="button" tabIndex={-1}
                 onClick={() => setShowPw((v) => !v)}
+                aria-label={showPw ? 'Hide password' : 'Show password'}
                 style={{
                   position: 'absolute', right: 13, top: '50%',
                   transform: 'translateY(-50%)',
@@ -194,10 +215,49 @@ export default function LoginPage() {
                 <EyeIcon open={showPw} />
               </button>
             </div>
+            {passwordError && (
+              <p id="login-password-error" role="alert" style={{ fontSize: 12, color: '#ef4444', marginTop: 5, letterSpacing: '-0.01em' }}>
+                {passwordError}
+              </p>
+            )}
           </div>
 
-          {error && (
+          {/* Remember Me */}
+          <label
+            htmlFor="login-remember"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              marginBottom: 20, cursor: 'pointer', userSelect: 'none',
+            }}
+          >
             <div style={{
+              width: 16, height: 16, borderRadius: 4,
+              border: `1.5px solid ${remember ? '#0F0F0F' : '#D4D1CC'}`,
+              background: remember ? '#0F0F0F' : '#fff',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              transition: 'background 0.14s, border-color 0.14s',
+              flexShrink: 0,
+            }}>
+              {remember && (
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+                  <path d="M3 8.5L6.5 12L13 4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+            </div>
+            <input
+              id="login-remember"
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
+            />
+            <span style={{ fontSize: 13, color: '#8C8984', letterSpacing: '-0.01em' }}>
+              Remember me
+            </span>
+          </label>
+
+          {error && (
+            <div role="alert" style={{
               background: 'rgba(185,28,28,0.04)', border: '1px solid rgba(185,28,28,0.12)',
               borderRadius: 8, padding: '10px 13px', fontSize: 13, color: '#b91c1c',
               marginBottom: 16, letterSpacing: '-0.01em',
@@ -209,6 +269,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
+            aria-busy={loading}
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               width: '100%', padding: '13px 0',
