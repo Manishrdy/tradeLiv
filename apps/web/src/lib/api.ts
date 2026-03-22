@@ -600,6 +600,18 @@ export interface PortalProject {
   orders: PortalOrder[];
 }
 
+/* ─── Chat / Messaging types ───────────────────────── */
+
+export interface ChatMessage {
+  id: string;
+  projectId: string;
+  senderType: 'designer' | 'client';
+  senderName: string;
+  text: string;
+  createdAt: string;
+  readAt: string | null;
+}
+
 /* ─── Admin types ───────────────────────────────────── */
 
 export interface AdminStats {
@@ -937,6 +949,22 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+
+  // Chat / Messaging
+  getMessages: (projectId: string, after?: string) =>
+    request<ChatMessage[]>(`/api/projects/${projectId}/messages${after ? `?after=${after}` : ''}`),
+
+  sendMessage: (projectId: string, payload: { text: string; senderType: 'designer' | 'client'; senderName: string }) =>
+    request<ChatMessage>(`/api/projects/${projectId}/messages`, { method: 'POST', body: JSON.stringify(payload) }),
+
+  getPortalMessages: (portalToken: string, after?: string) =>
+    request<ChatMessage[]>(`/api/portal/${portalToken}/messages${after ? `?after=${after}` : ''}`),
+
+  sendPortalMessage: (portalToken: string, payload: { text: string; senderName: string }) =>
+    request<ChatMessage>(`/api/portal/${portalToken}/messages`, { method: 'POST', body: JSON.stringify(payload) }),
+
+  markMessagesRead: (projectId: string, senderType: 'designer' | 'client') =>
+    request<void>(`/api/projects/${projectId}/messages/read`, { method: 'PUT', body: JSON.stringify({ readerType: senderType }) }),
 
   // Admin
   getAdminMe: () =>

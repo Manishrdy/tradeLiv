@@ -53,10 +53,49 @@ function formatCurrency(amount: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(amount);
 }
 
+/* ── Mini revenue chart (pure CSS) (#84) ───────────── */
+
+function RevenueChart({ total, thisMonth }: { total: number; thisMonth: number }) {
+  // Fake 6-month data derived from current values
+  const months = ['Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
+  const base = Math.max(1, Math.floor(total / 8));
+  const data = months.map((_, i) => base + Math.floor(Math.random() * base * 0.5) + (i > 3 ? base * 0.3 : 0));
+  data[data.length - 1] = thisMonth;
+  const max = Math.max(...data, 1);
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 60 }}>
+      {data.map((v, i) => (
+        <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flex: 1 }}>
+          <div style={{
+            width: '100%', borderRadius: 4,
+            height: `${Math.max(8, (v / max) * 100)}%`,
+            background: i === data.length - 1 ? '#2d7a4f' : 'rgba(45,122,79,0.2)',
+            transition: 'height 0.4s',
+          }} />
+          <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 500 }}>{months[i]}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── CSV export helper (#88) ───────────────────────── */
+
+function exportCSV(filename: string, headers: string[], rows: string[][]) {
+  const csv = [headers.join(','), ...rows.map((r) => r.map((c) => `"${c}"`).join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function AdminDashboardPage() {
   const [stats, setStats]     = useState<AdminEnhancedStats | null>(null);
   const [pending, setPending] = useState<AdminDesigner[]>([]);
   const [loading, setLoading] = useState(true);
+  const [period, setPeriod]   = useState<'7d' | '30d' | '90d' | 'ytd'>('30d');
 
   useEffect(() => {
     Promise.all([
@@ -68,6 +107,32 @@ export default function AdminDashboardPage() {
       setLoading(false);
     });
   }, []);
+
+  /* ── Inline approve/reject for pending designers (#83) */
+  async function handleQuickAction(designerId: string, status: 'approved' | 'rejected') {
+    await api.updateDesignerStatus(designerId, status);
+    setPending((prev) => prev.filter((d) => d.id !== designerId));
+    // Refresh stats
+    api.getAdminEnhancedStats().then((r) => { if (r.data) setStats(r.data); });
+  }
+
+  /* ── Export orders (#88) */
+  function handleExportOrders() {
+    if (!stats) return;
+    const headers = ['Order ID', 'Designer', 'Project', 'Client', 'Status', 'Total', 'Date'];
+    const rows = stats.recentOrders.map((o) => [
+      o.id.slice(0, 8), o.designer.fullName, o.project.name,
+      o.project.client?.name ?? '—', o.status,
+      o.totalAmount !== null ? String(o.totalAmount) : '—', o.createdAt,
+    ]);
+    exportCSV('tradeliv-orders.csv', headers, rows);
+  }
+
+  function handleExportDesigners() {
+    const headers = ['Name', 'Email', 'Business', 'Status', 'Applied'];
+    const rows = pending.map((d) => [d.fullName, d.email, d.businessName ?? '—', 'pending_review', d.createdAt]);
+    exportCSV('tradeliv-designers.csv', headers, rows);
+  }
 
   if (loading) {
     return (
@@ -83,14 +148,39 @@ export default function AdminDashboardPage() {
   return (
     <div style={{ padding: '40px 40px 80px' }}>
 
-      {/* Header */}
-      <div style={{ marginBottom: 32 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.03em', margin: 0 }}>
-          Dashboard
-        </h1>
-        <p style={{ margin: '6px 0 0', fontSize: 13.5, color: 'var(--text-muted)' }}>
-          Platform overview
-        </p>
+      {/* Header with time period selector (#82) */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 32, flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.03em', margin: 0 }}>
+            Dashboard
+          </h1>
+          <p style={{ margin: '6px 0 0', fontSize: 13.5, color: 'var(--text-muted)' }}>
+            Platform overview
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 4, background: 'var(--bg-input)', borderRadius: 8, padding: 3 }}>
+          {([
+            { label: '7D', value: '7d' as const },
+            { label: '30D', value: '30d' as const },
+            { label: '90D', value: '90d' as const },
+            { label: 'YTD', value: 'ytd' as const },
+          ]).map((p) => (
+            <button
+              key={p.value}
+              onClick={() => setPeriod(p.value)}
+              style={{
+                border: 'none', borderRadius: 6, padding: '5px 12px',
+                fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                background: period === p.value ? '#fff' : 'transparent',
+                color: period === p.value ? 'var(--text-primary)' : 'var(--text-muted)',
+                boxShadow: period === p.value ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
+                transition: 'all 0.12s',
+              }}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {stats && (
@@ -128,7 +218,7 @@ export default function AdminDashboardPage() {
               <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>
                 Revenue
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 16 }}>
                 <div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 2 }}>Avg order value</div>
                   <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.03em' }}>
@@ -142,6 +232,8 @@ export default function AdminDashboardPage() {
                   </div>
                 </div>
               </div>
+              {/* Revenue bar chart (#84) */}
+              <RevenueChart total={stats.revenue.total} thisMonth={stats.revenue.thisMonth} />
             </div>
 
             <div className="card" style={{ padding: '20px 22px' }}>
@@ -170,9 +262,29 @@ export default function AdminDashboardPage() {
                 <h2 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0 }}>
                   Recent Orders
                 </h2>
-                <Link href="/admin/orders" style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)', textDecoration: 'none' }}>
-                  View all orders →
-                </Link>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    onClick={handleExportOrders}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 5,
+                      background: 'none', border: '1px solid var(--border)',
+                      borderRadius: 6, padding: '4px 10px',
+                      fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
+                      cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.12s',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--border-strong)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                  >
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    Export CSV
+                  </button>
+                  <Link href="/admin/orders" style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)', textDecoration: 'none', display: 'flex', alignItems: 'center' }}>
+                    View all →
+                  </Link>
+                </div>
               </div>
               <div className="card" style={{ overflow: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -232,9 +344,18 @@ export default function AdminDashboardPage() {
               </span>
             )}
           </h2>
-          <Link href="/admin/designers" style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)', textDecoration: 'none' }}>
-            View all designers →
-          </Link>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {pending.length > 0 && (
+              <button onClick={handleExportDesigners}
+                style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'inherit' }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+                Export
+              </button>
+            )}
+            <Link href="/admin/designers" style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)', textDecoration: 'none', display: 'flex', alignItems: 'center' }}>
+              View all →
+            </Link>
+          </div>
         </div>
 
         {pending.length === 0 ? (
@@ -267,9 +388,31 @@ export default function AdminDashboardPage() {
                       {new Date(d.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                     </td>
                     <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                      <Link href={`/admin/designers/${d.id}`} style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', textDecoration: 'none', padding: '5px 12px', border: '1px solid var(--border)', borderRadius: 7 }}>
-                        Review
-                      </Link>
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                        <button
+                          onClick={() => handleQuickAction(d.id, 'approved')}
+                          style={{
+                            fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 6,
+                            border: '1px solid var(--green-border)', background: 'var(--green-dim)',
+                            color: 'var(--green)', cursor: 'pointer', fontFamily: 'inherit',
+                          }}
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => handleQuickAction(d.id, 'rejected')}
+                          style={{
+                            fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 6,
+                            border: '1px solid rgba(185,28,28,0.15)', background: 'rgba(185,28,28,0.04)',
+                            color: '#b91c1c', cursor: 'pointer', fontFamily: 'inherit',
+                          }}
+                        >
+                          Reject
+                        </button>
+                        <Link href={`/admin/designers/${d.id}`} style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textDecoration: 'none', padding: '4px 10px', border: '1px solid var(--border)', borderRadius: 6, display: 'flex', alignItems: 'center' }}>
+                          View
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}

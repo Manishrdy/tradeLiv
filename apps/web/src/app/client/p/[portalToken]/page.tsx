@@ -17,30 +17,309 @@ function formatDimensions(dim: PortalProduct['dimensions']): string | null {
   return parts.length > 0 ? parts.join('  ') : null;
 }
 
+/* ── Client-friendly status labels (#79) ───────────── */
+
 function statusBadge(status: string) {
   const map: Record<string, { bg: string; color: string; label: string }> = {
-    draft:           { bg: 'var(--bg-input)',      color: 'var(--text-muted)',   label: 'Draft' },
-    active:          { bg: 'var(--green-dim)',      color: 'var(--green)',        label: 'Active' },
-    ordered:         { bg: 'rgba(56,80,190,0.08)', color: '#3850be',             label: 'Ordered' },
-    closed:          { bg: 'var(--bg-input)',       color: 'var(--text-muted)',   label: 'Closed' },
-    suggested:       { bg: 'var(--gold-dim)',       color: 'var(--gold)',         label: 'Pending' },
-    approved:        { bg: 'var(--green-dim)',      color: 'var(--green)',        label: 'Approved' },
-    rejected:        { bg: 'rgba(153,27,27,0.07)', color: '#991B1B',             label: 'Rejected' },
-    added_to_cart:   { bg: 'rgba(56,80,190,0.08)', color: '#3850be',             label: 'In Cart' },
-    submitted:       { bg: 'rgba(56,80,190,0.08)', color: '#3850be',             label: 'Submitted' },
-    paid:            { bg: 'var(--green-dim)',      color: 'var(--green)',        label: 'Paid' },
-    split_to_brands: { bg: 'rgba(91,33,182,0.07)', color: '#5B21B6',             label: 'Processing' },
+    draft:           { bg: 'var(--bg-input)',      color: 'var(--text-muted)',   label: 'Getting started' },
+    active:          { bg: 'var(--green-dim)',      color: 'var(--green)',        label: 'In progress' },
+    ordered:         { bg: 'rgba(56,80,190,0.08)', color: '#3850be',             label: 'Order placed' },
+    closed:          { bg: 'var(--bg-input)',       color: 'var(--text-muted)',   label: 'Completed' },
+    suggested:       { bg: 'var(--gold-dim)',       color: 'var(--gold)',         label: 'Waiting for your review' },
+    approved:        { bg: 'var(--green-dim)',      color: 'var(--green)',        label: 'You approved this' },
+    rejected:        { bg: 'rgba(153,27,27,0.07)', color: '#991B1B',             label: 'You declined this' },
+    added_to_cart:   { bg: 'rgba(56,80,190,0.08)', color: '#3850be',             label: 'Added to cart' },
+    submitted:       { bg: 'rgba(56,80,190,0.08)', color: '#3850be',             label: 'Order submitted' },
+    paid:            { bg: 'var(--green-dim)',      color: 'var(--green)',        label: 'Payment confirmed' },
+    split_to_brands: { bg: 'rgba(91,33,182,0.07)', color: '#5B21B6',             label: 'Being prepared' },
   };
   const s = map[status] ?? map.draft;
   return (
     <span style={{
       background: s.bg, color: s.color,
-      borderRadius: 999, padding: '2px 10px',
-      fontSize: 11, fontWeight: 700, letterSpacing: '0.03em',
+      borderRadius: 999, padding: '3px 10px',
+      fontSize: 11, fontWeight: 700,
       display: 'inline-block',
     }}>
       {s.label}
     </span>
+  );
+}
+
+/* ── Client identity capture (#75) ─────────────────── */
+
+function ClientIdentityCapture({ onSubmit }: { onSubmit: (name: string) => void }) {
+  const [name, setName] = useState('');
+  return (
+    <div className="anim-fade-up" style={{
+      background: 'var(--bg-card)', border: '1px solid var(--border)',
+      borderRadius: 14, padding: '28px 28px 24px', marginBottom: 24,
+      textAlign: 'center', maxWidth: 420, margin: '0 auto 24px',
+    }}>
+      <div style={{ fontSize: 28, marginBottom: 12 }}>👋</div>
+      <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em', marginBottom: 6 }}>
+        Welcome
+      </h2>
+      <p style={{ fontSize: 13.5, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 20 }}>
+        Enter your name so your designer knows who&apos;s reviewing.
+      </p>
+      <form onSubmit={(e) => { e.preventDefault(); if (name.trim()) onSubmit(name.trim()); }} style={{ display: 'flex', gap: 8 }}>
+        <input
+          className="input-field"
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Your name"
+          autoFocus
+          style={{ flex: 1 }}
+        />
+        <button
+          type="submit"
+          disabled={!name.trim()}
+          style={{
+            background: '#111', color: '#fff', border: 'none',
+            borderRadius: 8, padding: '10px 20px',
+            fontSize: 13, fontWeight: 600, cursor: name.trim() ? 'pointer' : 'not-allowed',
+            opacity: name.trim() ? 1 : 0.4, fontFamily: 'inherit',
+          }}
+        >
+          Continue
+        </button>
+      </form>
+    </div>
+  );
+}
+
+/* ── Project progress indicator (#80) ──────────────── */
+
+function ProjectProgress({ totalItems, approvedCount, rejectedCount, hasOrders }: { totalItems: number; approvedCount: number; rejectedCount: number; hasOrders: boolean }) {
+  const steps = [
+    { label: 'Products selected', done: totalItems > 0 },
+    { label: 'Your review', done: approvedCount + rejectedCount > 0 },
+    { label: 'All reviewed', done: totalItems > 0 && approvedCount + rejectedCount >= totalItems },
+    { label: 'Order placed', done: hasOrders },
+  ];
+  const doneCount = steps.filter((s) => s.done).length;
+  const pct = (doneCount / steps.length) * 100;
+
+  return (
+    <div style={{
+      background: 'var(--bg-card)', border: '1px solid var(--border)',
+      borderRadius: 12, padding: '16px 20px', marginBottom: 20,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '-0.01em' }}>Project progress</span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>{doneCount}/{steps.length}</span>
+      </div>
+      <div style={{ height: 4, background: 'var(--bg-input)', borderRadius: 999, overflow: 'hidden', marginBottom: 12 }}>
+        <div style={{ height: '100%', background: '#2d7a4f', borderRadius: 999, width: `${pct}%`, transition: 'width 0.5s ease' }} />
+      </div>
+      <div className="progress-steps" style={{ display: 'flex', gap: 8 }}>
+        {steps.map((s) => (
+          <div key={s.label} style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 5 }}>
+            <div style={{
+              width: 14, height: 14, borderRadius: '50%', flexShrink: 0,
+              background: s.done ? '#2d7a4f' : 'transparent',
+              border: s.done ? 'none' : '1.5px solid #D4D1CC',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              {s.done && (
+                <svg width="8" height="8" viewBox="0 0 16 16" fill="none">
+                  <path d="M3 8.5L6.5 12L13 4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+            </div>
+            <span style={{ fontSize: 10.5, fontWeight: s.done ? 600 : 500, color: s.done ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
+              {s.label}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Chat widget (#78) ─────────────────────────────── */
+
+function ChatWidget({ portalToken, clientName, designerName }: { portalToken: string; clientName: string; designerName: string }) {
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState<{ id: string; senderType: string; senderName: string; text: string; createdAt: string }[]>([]);
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [unread, setUnread] = useState(0);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
+
+  // Load messages
+  const loadMessages = useCallback(async () => {
+    const r = await api.getPortalMessages(portalToken);
+    if (r.data) {
+      setMessages(r.data);
+      const unreadCount = r.data.filter((m) => m.senderType === 'designer' && !m.readAt).length;
+      setUnread(unreadCount);
+    }
+  }, [portalToken]);
+
+  useEffect(() => { loadMessages(); }, [loadMessages]);
+
+  // Poll every 5s when open
+  useEffect(() => {
+    if (open) {
+      loadMessages();
+      pollRef.current = setInterval(loadMessages, 5000);
+      return () => clearInterval(pollRef.current);
+    } else {
+      clearInterval(pollRef.current);
+    }
+  }, [open, loadMessages]);
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    if (open) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length, open]);
+
+  async function handleSend() {
+    if (!draft.trim() || sending) return;
+    setSending(true);
+    const r = await api.sendPortalMessage(portalToken, { text: draft.trim(), senderName: clientName });
+    setSending(false);
+    if (r.data) {
+      setMessages((prev) => [...prev, r.data!]);
+      setDraft('');
+    }
+  }
+
+  return (
+    <>
+      {/* Floating chat button */}
+      <button
+        onClick={() => { setOpen((v) => !v); if (!open) setUnread(0); }}
+        style={{
+          position: 'fixed', bottom: 24, right: 24, zIndex: 100,
+          width: 52, height: 52, borderRadius: '50%',
+          background: '#111', border: 'none', color: '#fff',
+          cursor: 'pointer', boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          transition: 'transform 0.15s',
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.08)')}
+        onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+      >
+        {open ? (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        ) : (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+        )}
+        {unread > 0 && !open && (
+          <span style={{
+            position: 'absolute', top: -2, right: -2,
+            width: 20, height: 20, borderRadius: '50%',
+            background: '#ef4444', color: '#fff',
+            fontSize: 10, fontWeight: 700,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            border: '2px solid #fff',
+          }}>
+            {unread}
+          </span>
+        )}
+      </button>
+
+      {/* Chat panel */}
+      {open && (
+        <div className="anim-scale-in" style={{
+          position: 'fixed', bottom: 88, right: 24, zIndex: 100,
+          width: 360, maxHeight: 480, borderRadius: 16,
+          background: '#fff', boxShadow: '0 12px 40px rgba(0,0,0,0.15)',
+          border: '1px solid var(--border)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}>
+          {/* Header */}
+          <div style={{
+            padding: '14px 18px', borderBottom: '1px solid var(--border)',
+            display: 'flex', alignItems: 'center', gap: 10,
+          }}>
+            <div style={{
+              width: 32, height: 32, borderRadius: '50%', background: 'var(--bg-input)',
+              border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)',
+            }}>
+              {designerName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{designerName}</div>
+              <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Your designer</div>
+            </div>
+          </div>
+
+          {/* Messages */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8, minHeight: 200, maxHeight: 320 }}>
+            {messages.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: 12.5 }}>
+                No messages yet. Start a conversation with your designer.
+              </div>
+            )}
+            {messages.map((m) => {
+              const isClient = m.senderType === 'client';
+              return (
+                <div key={m.id} style={{ display: 'flex', flexDirection: 'column', alignItems: isClient ? 'flex-end' : 'flex-start' }}>
+                  <div style={{
+                    maxWidth: '80%', padding: '9px 13px', borderRadius: 12,
+                    background: isClient ? '#111' : 'var(--bg-input)',
+                    color: isClient ? '#fff' : 'var(--text-primary)',
+                    fontSize: 13, lineHeight: 1.45,
+                    borderBottomRightRadius: isClient ? 4 : 12,
+                    borderBottomLeftRadius: isClient ? 12 : 4,
+                  }}>
+                    {m.text}
+                  </div>
+                  <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3, paddingLeft: 4, paddingRight: 4 }}>
+                    {m.senderName} · {new Date(m.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
+              );
+            })}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input */}
+          <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8 }}>
+            <input
+              type="text"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSend(); }}
+              placeholder="Type a message…"
+              style={{
+                flex: 1, border: '1px solid var(--border)', borderRadius: 8,
+                padding: '8px 12px', fontSize: 13, fontFamily: 'inherit',
+                outline: 'none', background: 'var(--bg-input)',
+              }}
+            />
+            <button
+              onClick={handleSend}
+              disabled={!draft.trim() || sending}
+              style={{
+                width: 36, height: 36, borderRadius: 8,
+                background: draft.trim() ? '#111' : 'var(--bg-input)',
+                border: 'none', cursor: draft.trim() ? 'pointer' : 'default',
+                color: draft.trim() ? '#fff' : 'var(--text-muted)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'all 0.12s',
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -149,16 +428,16 @@ function ComparisonModal({
           </button>
         </div>
 
-        {/* Table */}
-        <div style={{ overflowX: 'auto' }}>
+        {/* Table (#76 — sticky headers) */}
+        <div style={{ overflowX: 'auto', maxHeight: '70vh' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
             <colgroup>
-              <col style={{ width: 130 }} />
+              <col style={{ width: 120 }} />
               {items.map((item) => <col key={item.id} style={{ width: colWidth }} />)}
             </colgroup>
 
-            {/* Product header rows */}
-            <thead>
+            {/* Product header rows — sticky */}
+            <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: 'var(--bg-card)' }}>
               {/* Image row */}
               <tr>
                 <td style={{ padding: '16px 16px 0' }} />
@@ -295,10 +574,24 @@ function ShortlistCard({
   const [saving, setSaving] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackText, setFeedbackText] = useState('');
+  const [pendingStatus, setPendingStatus] = useState<'approved' | 'rejected' | null>(null);
+
   async function handleStatusChange(status: 'approved' | 'rejected') {
-    const optimistic = { ...item, status };
+    // For rejection, prompt for feedback first
+    if (status === 'rejected' && !feedbackOpen) {
+      setPendingStatus('rejected');
+      setFeedbackOpen(true);
+      return;
+    }
+    const clientNotes = feedbackText.trim() || undefined;
+    const optimistic = { ...item, status, clientNotes: clientNotes ?? item.clientNotes };
     onUpdate(optimistic);
-    const res = await api.updatePortalShortlistItem(portalToken, item.id, { status });
+    setFeedbackOpen(false);
+    setFeedbackText('');
+    setPendingStatus(null);
+    const res = await api.updatePortalShortlistItem(portalToken, item.id, { status, clientNotes });
     if (res.error) onUpdate(item);
   }
 
@@ -521,6 +814,57 @@ function ShortlistCard({
               </div>
             )}
           </div>
+
+          {/* Feedback prompt (on reject) (#77) */}
+          {feedbackOpen && (
+            <div style={{
+              marginTop: 10, padding: '12px 14px',
+              background: 'rgba(153,27,27,0.04)', border: '1px solid rgba(153,27,27,0.12)',
+              borderRadius: 10, animation: 'fadeSlideUp 0.2s ease both',
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#991B1B', marginBottom: 8 }}>
+                {pendingStatus === 'rejected' ? 'Why are you declining this?' : 'Any feedback?'}
+                <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 4 }}>(optional)</span>
+              </div>
+              <textarea
+                value={feedbackText}
+                onChange={(e) => setFeedbackText(e.target.value)}
+                placeholder="e.g., Too large for the space, prefer lighter color…"
+                rows={2}
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  border: '1px solid var(--border)', borderRadius: 8,
+                  padding: '8px 10px', fontSize: 12.5, lineHeight: 1.4,
+                  outline: 'none', resize: 'none', fontFamily: 'inherit',
+                  background: '#fff',
+                }}
+                autoFocus
+              />
+              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                <button
+                  onClick={() => handleStatusChange(pendingStatus!)}
+                  style={{
+                    background: '#991B1B', color: '#fff', border: 'none',
+                    borderRadius: 7, padding: '6px 14px', fontSize: 12,
+                    fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  {feedbackText.trim() ? 'Decline with feedback' : 'Decline anyway'}
+                </button>
+                <button
+                  onClick={() => { setFeedbackOpen(false); setPendingStatus(null); setFeedbackText(''); }}
+                  style={{
+                    background: 'transparent', border: '1px solid var(--border)',
+                    borderRadius: 7, padding: '6px 14px', fontSize: 12,
+                    fontWeight: 600, cursor: 'pointer', color: 'var(--text-secondary)',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Bottom action row: compare checkbox + approve/reject */}
           <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -770,6 +1114,18 @@ export default function PortalPage() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [activeTab, setActiveTab] = useState<'shortlist' | 'order'>('shortlist');
+  const [clientName, setClientName] = useState<string | null>(null);
+
+  // Load client name from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem(`tradeliv-portal-name-${portalToken}`);
+    if (saved) setClientName(saved);
+  }, [portalToken]);
+
+  function handleIdentity(name: string) {
+    setClientName(name);
+    localStorage.setItem(`tradeliv-portal-name-${portalToken}`, name);
+  }
 
   const loadProject = useCallback(() => {
     if (!portalToken) return;
@@ -847,12 +1203,22 @@ export default function PortalPage() {
     (sum, r) => sum + r.shortlistItems.filter((i) => i.status === 'rejected').length, 0
   );
   const pendingCount = totalItems - approvedCount - rejectedCount;
+  const designerDisplayName = project.designer.businessName || project.designer.fullName;
+
+  // Gate: capture client identity first (#75)
+  if (!clientName) {
+    return (
+      <div style={{ paddingTop: 60 }}>
+        <ClientIdentityCapture onSubmit={handleIdentity} />
+      </div>
+    );
+  }
 
   return (
     <div style={{ paddingBottom: 100 }}>
       {/* Project header */}
-      <div style={{ marginBottom: 28 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+      <div style={{ marginBottom: 24 }}>
+        <div className="portal-header" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)', letterSpacing: '-0.03em', margin: 0 }}>
             {project.name}
           </h1>
@@ -860,10 +1226,19 @@ export default function PortalPage() {
         </div>
         <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
           Designed by <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>
-            {project.designer.businessName || project.designer.fullName}
+            {designerDisplayName}
           </span>
+          {' · '}Reviewing as <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>{clientName}</span>
         </div>
       </div>
+
+      {/* Project progress (#80) */}
+      <ProjectProgress
+        totalItems={totalItems}
+        approvedCount={approvedCount}
+        rejectedCount={rejectedCount}
+        hasOrders={hasOrders}
+      />
 
       {/* Summary row */}
       {totalItems > 0 && (
@@ -966,15 +1341,28 @@ export default function PortalPage() {
                 background: 'var(--bg-input)', borderRadius: 8,
                 fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6,
               }}>
-                Your designer will provide delivery updates. For queries, contact{' '}
-                <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                  {project.designer.phone || project.designer.email}
-                </span>.
+                Your designer will provide delivery updates. Use the chat below to ask questions.
               </div>
             </div>
           ))}
         </div>
       )}
+
+      {/* Chat widget (#78) */}
+      <ChatWidget
+        portalToken={portalToken}
+        clientName={clientName}
+        designerName={designerDisplayName}
+      />
+
+      {/* Mobile responsive styles (#81) */}
+      <style>{`
+        @media (max-width: 640px) {
+          .portal-header h1 { font-size: 18px !important; }
+          .progress-steps { flex-wrap: wrap; gap: 6px !important; }
+          .progress-steps > div { flex: none !important; }
+        }
+      `}</style>
     </div>
   );
 }

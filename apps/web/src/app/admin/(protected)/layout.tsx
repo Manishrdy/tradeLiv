@@ -126,14 +126,14 @@ export default function AdminProtectedLayout({ children }: { children: React.Rea
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-base)' }}>
 
-      {/* ── Sidebar ─────────────────────────────────────── */}
+      {/* ── Sidebar (#86 — distinct admin theme) ──────── */}
       <aside style={{
         width: 220,
         flexShrink: 0,
         display: 'flex',
         flexDirection: 'column',
-        background: 'var(--sidebar-bg)',
-        borderRight: '1px solid var(--sidebar-border)',
+        background: '#1A1A2E',
+        borderRight: '1px solid rgba(255,255,255,0.06)',
         position: 'fixed',
         top: 0, left: 0, bottom: 0,
         zIndex: 40,
@@ -141,12 +141,12 @@ export default function AdminProtectedLayout({ children }: { children: React.Rea
 
         {/* Logo + badge */}
         <div style={{ padding: '22px 20px 18px', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.04em', color: '#0F0F0F' }}>
+          <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.04em', color: '#fff' }}>
             Tradeliv
           </span>
           <span style={{
             fontSize: 9, fontWeight: 800, letterSpacing: '0.07em',
-            color: '#7a5c2d', background: '#fdf5e6',
+            color: '#C4A265', background: 'rgba(196,162,101,0.15)',
             padding: '2px 7px', borderRadius: 20, textTransform: 'uppercase',
           }}>
             Admin
@@ -154,7 +154,7 @@ export default function AdminProtectedLayout({ children }: { children: React.Rea
         </div>
 
         {/* Divider */}
-        <div style={{ height: 1, background: 'var(--sidebar-border)', margin: '0 12px 8px' }} />
+        <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', margin: '0 12px 8px' }} />
 
         {/* Nav */}
         <nav style={{ flex: 1, padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -167,28 +167,28 @@ export default function AdminProtectedLayout({ children }: { children: React.Rea
                 style={{
                   display: 'flex', alignItems: 'center', gap: 9,
                   padding: '8px 10px', borderRadius: 8,
-                  fontSize: 13, fontWeight: active ? 600 : 500,
-                  color: active ? 'var(--sidebar-text-active)' : 'var(--sidebar-text)',
-                  background: active ? 'var(--sidebar-active-bg)' : 'transparent',
-                  borderLeft: active ? '2px solid var(--sidebar-active-border)' : '2px solid transparent',
+                  fontSize: 13, fontWeight: active ? 700 : 500,
+                  color: active ? '#fff' : 'rgba(255,255,255,0.45)',
+                  background: active ? 'rgba(255,255,255,0.08)' : 'transparent',
+                  borderLeft: active ? '2px solid #C4A265' : '2px solid transparent',
                   textDecoration: 'none', transition: 'all 0.12s ease',
                   letterSpacing: '-0.01em',
                   paddingLeft: active ? 8 : 10,
                 }}
                 onMouseEnter={(e) => {
                   if (!active) {
-                    (e.currentTarget as HTMLAnchorElement).style.background = 'var(--sidebar-hover-bg)';
-                    (e.currentTarget as HTMLAnchorElement).style.color = '#4A4A4A';
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                    e.currentTarget.style.color = 'rgba(255,255,255,0.75)';
                   }
                 }}
                 onMouseLeave={(e) => {
                   if (!active) {
-                    (e.currentTarget as HTMLAnchorElement).style.background = 'transparent';
-                    (e.currentTarget as HTMLAnchorElement).style.color = 'var(--sidebar-text)';
+                    e.currentTarget.style.background = 'transparent';
+                    e.currentTarget.style.color = 'rgba(255,255,255,0.45)';
                   }
                 }}
               >
-                <span style={{ flexShrink: 0, opacity: active ? 1 : 0.65 }}>{icon}</span>
+                <span style={{ flexShrink: 0, opacity: active ? 1 : 0.5 }}>{icon}</span>
                 {label}
               </Link>
             );
@@ -197,25 +197,25 @@ export default function AdminProtectedLayout({ children }: { children: React.Rea
 
         {/* User + sign out */}
         <div style={{ padding: '8px 10px 14px' }}>
-          <div style={{ height: 1, background: 'var(--sidebar-border)', marginBottom: 10 }} />
+          <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', marginBottom: 10 }} />
           <div style={{
             display: 'flex', alignItems: 'center', gap: 9,
             padding: '8px 10px', borderRadius: 8,
           }}>
             <div style={{
               width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
-              background: '#fdf5e6', border: '1px solid #e8d5b0',
+              background: 'rgba(196,162,101,0.15)', border: '1px solid rgba(196,162,101,0.25)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 10, fontWeight: 700, color: '#7a5c2d',
+              fontSize: 10, fontWeight: 700, color: '#C4A265',
               letterSpacing: '0.02em',
             }}>
               {initials}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: '#0F0F0F', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.01em' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.01em' }}>
                 {admin.fullName.split(' ')[0]}
               </div>
-              <div style={{ fontSize: 10.5, color: '#B0ADA8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>
+              <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.35)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>
                 {admin.email}
               </div>
             </div>
@@ -224,12 +224,12 @@ export default function AdminProtectedLayout({ children }: { children: React.Rea
               title="Sign out"
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
-                color: '#C8C5BF', padding: 4, borderRadius: 5,
+                color: 'rgba(255,255,255,0.25)', padding: 4, borderRadius: 5,
                 display: 'flex', alignItems: 'center', flexShrink: 0,
                 transition: 'color 0.12s',
               }}
-              onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = '#0F0F0F')}
-              onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = '#C8C5BF')}
+              onMouseEnter={(e) => (e.currentTarget.style.color = 'rgba(255,255,255,0.7)')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = 'rgba(255,255,255,0.25)')}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />

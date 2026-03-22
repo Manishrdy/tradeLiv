@@ -228,6 +228,9 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
   const [gPressed, setGPressed]       = useState(false);
   const gTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [avatarUrl, setAvatarUrl]     = useState<string | null>(null);
+  const [cmdkOpen, setCmdkOpen]       = useState(false);
+  const [cmdkSearch, setCmdkSearch]   = useState('');
+  const [isOffline, setIsOffline]     = useState(false);
 
   useEffect(() => {
     setHydrated(true);
@@ -242,7 +245,17 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close mobile sidebar on route change
-  useEffect(() => { setMobileOpen(false); }, [pathname]);
+  useEffect(() => { setMobileOpen(false); setCmdkOpen(false); }, [pathname]);
+
+  // Offline detection (#100)
+  useEffect(() => {
+    const goOffline = () => setIsOffline(true);
+    const goOnline = () => setIsOffline(false);
+    window.addEventListener('offline', goOffline);
+    window.addEventListener('online', goOnline);
+    setIsOffline(!navigator.onLine);
+    return () => { window.removeEventListener('offline', goOffline); window.removeEventListener('online', goOnline); };
+  }, []);
 
   /* ── Keyboard shortcuts: G then <key> ───────────── */
   useEffect(() => {
@@ -255,6 +268,14 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
       if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
         e.preventDefault();
         setCollapsed((c) => !c);
+        return;
+      }
+
+      // Command palette: Cmd/Ctrl + K (#89)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setCmdkOpen((v) => !v);
+        setCmdkSearch('');
         return;
       }
 
@@ -708,6 +729,92 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
               <span style={{ fontSize: 11, opacity: 0.7 }}>{n.label}</span>
             </span>
           ))}
+        </div>
+      )}
+
+      {/* ── Offline banner (#100) ─────────────────────── */}
+      {isOffline && (
+        <div className="offline-banner">
+          You&apos;re offline. Some features may not work until you reconnect.
+        </div>
+      )}
+
+      {/* ── Command palette (#89) ─────────────────────── */}
+      {cmdkOpen && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+            paddingTop: '15vh',
+          }}
+          onClick={() => setCmdkOpen(false)}
+        >
+          <div
+            className="anim-scale-in"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff', borderRadius: 16, width: 520,
+              boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+              overflow: 'hidden',
+            }}
+          >
+            {/* Search input */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid var(--border)' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round">
+                <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                type="text"
+                value={cmdkSearch}
+                onChange={(e) => setCmdkSearch(e.target.value)}
+                placeholder="Search or jump to…"
+                autoFocus
+                style={{
+                  flex: 1, border: 'none', outline: 'none',
+                  fontSize: 15, fontFamily: 'inherit', color: 'var(--text-primary)',
+                  background: 'transparent',
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setCmdkOpen(false);
+                }}
+              />
+              <kbd style={{ fontSize: 10, color: 'var(--text-muted)', background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px' }}>ESC</kbd>
+            </div>
+
+            {/* Results */}
+            <div style={{ maxHeight: 320, overflowY: 'auto', padding: '8px 0' }}>
+              {NAV.filter((n) =>
+                !cmdkSearch.trim() ||
+                n.label.toLowerCase().includes(cmdkSearch.toLowerCase())
+              ).map((n) => (
+                <button
+                  key={n.href}
+                  onClick={() => { router.push(n.href); setCmdkOpen(false); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                    padding: '10px 18px', border: 'none', background: 'transparent',
+                    cursor: 'pointer', fontFamily: 'inherit', fontSize: 14,
+                    fontWeight: 500, color: 'var(--text-primary)',
+                    transition: 'background 0.08s', textAlign: 'left',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-input)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <span style={{ opacity: 0.5, display: 'flex' }}>{n.icon}</span>
+                  {n.label}
+                  <kbd style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--text-muted)', background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 3, padding: '1px 5px' }}>
+                    G {n.shortcut}
+                  </kbd>
+                </button>
+              ))}
+              {cmdkSearch.trim() && NAV.filter((n) => n.label.toLowerCase().includes(cmdkSearch.toLowerCase())).length === 0 && (
+                <div style={{ padding: '24px 18px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                  No results for &ldquo;{cmdkSearch}&rdquo;
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

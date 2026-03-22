@@ -3,7 +3,19 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Tradeliv — Trade. Design. Deliver.',
-  description: 'The professional trade platform for interior designers and their clients.',
+  description: 'The professional trade platform for interior designers and their clients. Manage projects, curate products, and place orders.',
+  openGraph: {
+    title: 'Tradeliv — Trade. Design. Deliver.',
+    description: 'The professional trade platform for interior designers. Manage clients, curate products, and streamline orders.',
+    type: 'website',
+    siteName: 'Tradeliv',
+  },
+  twitter: {
+    card: 'summary',
+    title: 'Tradeliv — Trade. Design. Deliver.',
+    description: 'The professional trade platform for interior designers.',
+  },
+  robots: { index: true, follow: true },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
