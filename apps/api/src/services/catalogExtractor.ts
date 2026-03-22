@@ -435,10 +435,135 @@ function resolveOfferPrice(
   return { price: getPrice(offers), currency: getCurrency(offers) };
 }
 
+type DimensionUnitRaw = 'in' | 'cm' | 'ft' | 'mm' | 'm';
+
+function parseNumberToken(raw: string): number | null {
+  if (!raw) return null;
+  const t = raw.trim().replace(/,/g, '').toLowerCase();
+
+  // 68-1/2 or 68 1/2
+  const mixed = t.match(/^(\d+)(?:\s+|-)(\d+)\/(\d+)$/);
+  if (mixed) {
+    const whole = Number(mixed[1]);
+    const num = Number(mixed[2]);
+    const den = Number(mixed[3]);
+    if (den !== 0) return whole + num / den;
+  }
+
+  // 1/2
+  const frac = t.match(/^(\d+)\/(\d+)$/);
+  if (frac) {
+    const num = Number(frac[1]);
+    const den = Number(frac[2]);
+    if (den !== 0) return num / den;
+  }
+
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+function detectUnit(text: string): DimensionUnitRaw {
+  const t = text.toLowerCase();
+  // Check mm before m to avoid false "m" matches on "mm"
+  if (/\bmm\b|millimeters?/.test(t)) return 'mm';
+  if (/\bcm\b|centimeters?/.test(t)) return 'cm';
+  if (/\bft\b|feet|foot/.test(t)) return 'ft';
+  if (/\bm\b|meters?/.test(t)) return 'm';
+  return 'in';
+}
+
+function normalizeDimensionsObject(
+  dims: ExtractedProductData['dimensions'] | null | undefined,
+): ExtractedProductData['dimensions'] | null {
+  if (!dims) return null;
+
+  const out: ExtractedProductData['dimensions'] = { ...dims };
+  const rawUnit = (dims.unit as DimensionUnitRaw | undefined) ?? (dims.raw ? detectUnit(dims.raw) : undefined);
+
+  if (rawUnit === 'mm') {
+    if (out.length != null) out.length = out.length / 10;
+    if (out.width != null) out.width = out.width / 10;
+    if (out.height != null) out.height = out.height / 10;
+    if (out.depth != null) out.depth = out.depth / 10;
+    out.unit = 'cm';
+  } else if (rawUnit === 'm') {
+    if (out.length != null) out.length = out.length * 100;
+    if (out.width != null) out.width = out.width * 100;
+    if (out.height != null) out.height = out.height * 100;
+    if (out.depth != null) out.depth = out.depth * 100;
+    out.unit = 'cm';
+  } else if (rawUnit === 'in' || rawUnit === 'cm' || rawUnit === 'ft') {
+    out.unit = rawUnit;
+  }
+
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function hasPrimaryDimensions(dims?: ExtractedProductData['dimensions'] | null): boolean {
+  if (!dims) return false;
+  return Boolean(dims.width || dims.height || dims.depth || dims.length);
+}
+
+function extractDimensionContextBlocks(html: string): string[] {
+  const cleaned = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+    .replace(/<\/(?:p|li|tr|td|th|dt|dd|h[1-6]|section|article|div|table|ul|ol)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&#\d+;/g, ' ')
+    .replace(/\r/g, '');
+
+  const lines = cleaned
+    .split('\n')
+    .map((l) => l.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  const headingRx = /\b(?:overall\s+)?(?:dimensions?|measurements?|specifications?|specs)\b/i;
+  const measurementRx =
+    /(\d+(?:\.\d+)?(?:\s+|-)\d+\/\d+|\d+(?:\.\d+)?(?:\s*["″']|\s*(?:in(?:ches)?|cm|mm|ft|m))|\d+(?:\.\d+)?\s*[x×X]\s*\d+(?:\.\d+)?(?:\s*[x×X]\s*\d+(?:\.\d+)?)?)/i;
+
+  const blocks: string[] = [];
+  const seen = new Set<string>();
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!headingRx.test(line)) continue;
+
+    const block = [line, lines[i + 1] ?? '', lines[i + 2] ?? '']
+      .filter(Boolean)
+      .join(' | ')
+      .slice(0, 500);
+
+    if (!measurementRx.test(block)) continue;
+    const key = block.slice(0, 120).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    blocks.push(block);
+    if (blocks.length >= 30) break;
+  }
+
+  return blocks;
+}
+
 /* ─── Aggressive dimension extraction ───────────────── */
 
 function extractDimensionsFromText(text: string): string[] {
   const lines: string[] = [];
+
+  const isLikelyPhysicalDimension = (value: number, context: string): boolean => {
+    if (!Number.isFinite(value) || value <= 0) return false;
+    const unit = detectUnit(context);
+    if (unit === 'in') return value <= 240;
+    if (unit === 'ft') return value <= 25;
+    if (unit === 'cm') return value <= 700;
+    if (unit === 'mm') return value <= 7000;
+    if (unit === 'm') return value <= 7;
+    // No clear unit: be conservative to avoid pixel values.
+    return value <= 130;
+  };
 
   // Pattern 1: W x D x H with unit markers — e.g. 84"W x 38"D x 34"H
   const wdhQuote =
@@ -469,8 +594,10 @@ function extractDimensionsFromText(text: string): string[] {
 
   // Pattern 4: Individual dimension labels — e.g. Width: 84", Height: 34 inches, Width 22"
   const labelPattern =
-    /(?:overall\s+)?(?:width|length|height|depth|seat\s*height|seat\s*depth|arm\s*height|diameter)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(?:["″]|in(?:ches)?|cm|mm|ft)?/gi;
+    /(?:overall\s+)?(?:width|length|height|depth|seat\s*height|seat\s*depth|arm\s*height|diameter)\s*(?::|\b)\s*(\d+(?:\.\d+)?)\s*(?:["″]|in(?:ches)?|cm|mm|ft|m)?/gi;
   for (const m of text.matchAll(labelPattern)) {
+    const val = Number(m[1]);
+    if (!isLikelyPhysicalDimension(val, m[0])) continue;
     lines.push(`dim_label: ${m[0].trim()}`);
   }
 
@@ -898,44 +1025,18 @@ function extractSignals(html: string, url: string): string {
   const dataCurrency = html.match(/\bdata-currency=["']([A-Z]{3})["']/i);
   if (dataCurrency) lines.push(`data_currency: ${dataCurrency[1].toUpperCase()}`);
 
-  // ── Aggressive dimension extraction from full page ────
-  const dimLines = extractDimensionsFromText(html);
+  // Extract likely specs once and reuse for regex scanning + context lines.
+  const specSections = extractSpecSections(html);
+  const bodyText = extractBodyText(html);
+  const dimensionScanText = [specSections, bodyText].filter(Boolean).join('\n');
+
+  // ── Aggressive dimension extraction from product-focused text ────
+  const dimLines = extractDimensionsFromText(dimensionScanText || html);
   lines.push(...dimLines);
 
-  // ── Targeted dimension keyword search (full page, all domains) ────
-  // Strip HTML once, then search for ALL common dimension/spec headings used
-  // across furniture sites globally (Arhaus, Pottery Barn, West Elm, RH, IKEA,
-  // Crate & Barrel, Wayfair, CB2, Article, custom sites, etc.).
-  // This populates the explicit_dimensions_label signal referenced at priority 0
-  // in the system prompt, ensuring the AI always sees labeled dimension text.
-  const strippedFullHtml = html.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&#\d+;/g, ' ').replace(/\s+/g, ' ');
-
-  const dimensionKeywordPatterns: RegExp[] = [
-    // "Dimensions", "Overall Dimensions", "Product Dimensions"
-    /(?:overall|product|item|furniture|exterior|interior|frame)?\s*dimensions?\s*[:.]?\s*(.{10,500})/gi,
-    // "Measurements", "Product Measurements"
-    /(?:overall|product)?\s*measurements?\s*[:.]?\s*(.{10,500})/gi,
-    // "Specifications" / "Product Specs"
-    /(?:product\s+)?(?:specifications?|specs)\s*[:.]?\s*(.{10,500})/gi,
-    // "Size & Fit", "Size Details", "Size Guide", "Product Size"
-    /(?:product\s+)?size(?:\s*(?:&|and)\s*fit|\s+details?|\s+guide)?\s*[:.]?\s*(.{10,500})/gi,
-    // "Width:", "Height:", "Depth:" as standalone section headers
-    /(?:overall\s+)?(?:width|height|depth|length)\s*[:]\s*(.{5,200})/gi,
-  ];
-
-  const seenDimLabels = new Set<string>();
-  for (const pattern of dimensionKeywordPatterns) {
-    let dimLabelMatch: RegExpExecArray | null;
-    while ((dimLabelMatch = pattern.exec(strippedFullHtml)) !== null) {
-      const captured = dimLabelMatch[0].trim().slice(0, 500);
-      // Skip generic matches that are just the keyword in navigation/links
-      if (captured.length < 15) continue;
-      // Deduplicate near-identical matches
-      const key = captured.slice(0, 60);
-      if (seenDimLabels.has(key)) continue;
-      seenDimLabels.add(key);
-      lines.push(`explicit_dimensions_label: ${captured}`);
-    }
+  // ── High-confidence dimension blocks near headings ───────────────
+  for (const block of extractDimensionContextBlocks(html)) {
+    lines.push(`explicit_dimensions_label: ${block}`);
   }
 
   // ── Embedded product JSON (Shopify, Next.js, etc.) ────
@@ -945,13 +1046,11 @@ function extractSignals(html: string, url: string): string {
   }
 
   // ── Dimension/spec sections from HTML structure ───────
-  const specSections = extractSpecSections(html);
   if (specSections.length > 0) {
     lines.push(`\nspec_sections:\n${specSections}`);
   }
 
   // ── Body text for AI analysis ─────────────────────────
-  const bodyText = extractBodyText(html);
   if (bodyText.length > 200) {
     lines.push(`\nbody_text:\n${bodyText}`);
   }
@@ -968,16 +1067,25 @@ function parseDimensionsFromText(text: string): ExtractedProductData['dimensions
     .replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'")
     .replace(/\s+/g, ' ');
 
+  const finalize = (dims: NonNullable<ExtractedProductData['dimensions']>): ExtractedProductData['dimensions'] | null => {
+    if (!dims.raw) return null;
+    if (!dims.unit) {
+      const detected = detectUnit(dims.raw);
+      if (detected === 'in' || detected === 'cm' || detected === 'ft') dims.unit = detected;
+    }
+    return normalizeDimensionsObject(dims);
+  };
+
   // Pattern 1: n" Width/W x n" Depth/D x n" Height/H  (labeled with quotes)
   // e.g. 90" Width x 100" Depth x 42" Height
   const labeledQuote =
     /(\d+(?:\.\d+)?)\s*["″']\s*(?:width|w)\s*x\s*(\d+(?:\.\d+)?)\s*["″']\s*(?:depth|d)\s*x\s*(\d+(?:\.\d+)?)\s*["″']\s*(?:height|h)/i;
   let m = t.match(labeledQuote);
   if (m) {
-    return {
+    return finalize({
       width: Number(m[1]), depth: Number(m[2]), height: Number(m[3]),
       unit: 'in', raw: m[0].trim(),
-    };
+    });
   }
 
   // Pattern 1b: Width x Depth x Height with labels AFTER numbers but no quotes
@@ -986,10 +1094,10 @@ function parseDimensionsFromText(text: string): ExtractedProductData['dimensions
     /(\d+(?:\.\d+)?)\s*(?:width|w)\s*x\s*(\d+(?:\.\d+)?)\s*(?:depth|d)\s*x\s*(\d+(?:\.\d+)?)\s*(?:height|h)/i;
   m = t.match(labeledNoQuote);
   if (m) {
-    return {
+    return finalize({
       width: Number(m[1]), depth: Number(m[2]), height: Number(m[3]),
       unit: 'in', raw: m[0].trim(),
-    };
+    });
   }
 
   // Pattern 2: n"W x n"D x n"H  (short labels)
@@ -998,10 +1106,10 @@ function parseDimensionsFromText(text: string): ExtractedProductData['dimensions
     /(\d+(?:\.\d+)?)\s*["″']?\s*[Ww]\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″']?\s*[Dd]\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″']?\s*[Hh]/;
   m = t.match(shortLabel);
   if (m) {
-    return {
+    return finalize({
       width: Number(m[1]), depth: Number(m[2]), height: Number(m[3]),
       unit: 'in', raw: m[0].trim(),
-    };
+    });
   }
 
   // Pattern 3: Overall/Dimensions: n x n x n (with unit after)
@@ -1010,11 +1118,14 @@ function parseDimensionsFromText(text: string): ExtractedProductData['dimensions
     /(?:overall|dimensions?)\s*[:.]?\s*(\d+(?:\.\d+)?)\s*["″]?\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]?\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]?\s*(?:in(?:ches)?|cm|ft)?/i;
   m = t.match(overallTriple);
   if (m) {
-    const unit = /cm/i.test(m[0]) ? 'cm' as const : /ft/i.test(m[0]) ? 'ft' as const : 'in' as const;
-    return {
+    const detectedUnit = detectUnit(m[0]);
+    const unit = detectedUnit === 'in' || detectedUnit === 'cm' || detectedUnit === 'ft'
+      ? detectedUnit
+      : undefined;
+    return finalize({
       width: Number(m[1]), depth: Number(m[2]), height: Number(m[3]),
       unit, raw: m[0].trim(),
-    };
+    });
   }
 
   // Pattern 4: Plain n" x n" x n" (3 numbers with quotes separated by x)
@@ -1023,10 +1134,10 @@ function parseDimensionsFromText(text: string): ExtractedProductData['dimensions
     /(\d+(?:\.\d+)?)\s*["″]\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]/;
   m = t.match(plainQuoteTriple);
   if (m) {
-    return {
+    return finalize({
       width: Number(m[1]), depth: Number(m[2]), height: Number(m[3]),
       unit: 'in', raw: m[0].trim(),
-    };
+    });
   }
 
   // Pattern 5: Plain n x n x n followed by unit (no quotes)
@@ -1036,11 +1147,14 @@ function parseDimensionsFromText(text: string): ExtractedProductData['dimensions
     /(\d{2,3}(?:\.\d+)?)\s*[x×X]\s*(\d{2,3}(?:\.\d+)?)\s*[x×X]\s*(\d{2,3}(?:\.\d+)?)\s*(?:in(?:ches)?|cm|ft|mm)/i;
   m = t.match(plainTripleWithUnit);
   if (m) {
-    const unit = /cm/i.test(m[0]) ? 'cm' as const : /ft/i.test(m[0]) ? 'ft' as const : 'in' as const;
-    return {
+    const detectedUnit = detectUnit(m[0]);
+    const unit = detectedUnit === 'in' || detectedUnit === 'cm' || detectedUnit === 'ft'
+      ? detectedUnit
+      : undefined;
+    return finalize({
       width: Number(m[1]), depth: Number(m[2]), height: Number(m[3]),
       unit, raw: m[0].trim(),
-    };
+    });
   }
 
   // Pattern 6: Individual labeled lines — Width: n", Depth: n", Height: n"
@@ -1056,10 +1170,69 @@ function parseDimensionsFromText(text: string): ExtractedProductData['dimensions
       raw: [wMatch[0], dMatch?.[0], hMatch[0]].filter(Boolean).join(', '),
     };
     if (dMatch) dims.depth = Number(dMatch[1]);
-    return dims;
+    return finalize(dims);
+  }
+
+  // Pattern 7: Handle mixed fractions in labeled forms, e.g. 68-1/2" W x 85" D x 54" H
+  const mixedTriplet =
+    /(\d+(?:[\s-]\d+\/\d+)?|\d+\/\d+)\s*["″']?\s*[Ww]\s*[x×X]\s*(\d+(?:[\s-]\d+\/\d+)?|\d+\/\d+)\s*["″']?\s*[Dd]\s*[x×X]\s*(\d+(?:[\s-]\d+\/\d+)?|\d+\/\d+)\s*["″']?\s*[Hh]/;
+  m = t.match(mixedTriplet);
+  if (m) {
+    const w = parseNumberToken(m[1]);
+    const d = parseNumberToken(m[2]);
+    const h = parseNumberToken(m[3]);
+    if (w != null && d != null && h != null) {
+      const detectedUnit = detectUnit(m[0]);
+      const unit = detectedUnit === 'in' || detectedUnit === 'cm' || detectedUnit === 'ft'
+        ? detectedUnit
+        : undefined;
+      return finalize({ width: w, depth: d, height: h, unit, raw: m[0].trim() });
+    }
   }
 
   return null;
+}
+
+function parseDimensionsFromSignals(signals: string): ExtractedProductData['dimensions'] | null {
+  const lines = signals
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const byPrefix = (prefix: string) =>
+    lines
+      .filter((l) => l.startsWith(prefix))
+      .map((l) => l.replace(`${prefix}:`, '').trim())
+      .join('\n');
+
+  const priorityChunks = [
+    byPrefix('explicit_dimensions_label'),
+    byPrefix('dim_labelled'),
+    byPrefix('dim_label'),
+    byPrefix('dim_WxDxH'),
+    byPrefix('dim_overall'),
+    byPrefix('embedded_dimensions'),
+    byPrefix('shopify_dimensions'),
+    byPrefix('spec_row'),
+    byPrefix('spec_def'),
+    (() => {
+      const specIdx = lines.findIndex((l) => l === 'spec_sections:');
+      if (specIdx === -1) return '';
+      return lines.slice(specIdx + 1, specIdx + 25).join(' ');
+    })(),
+  ].filter(Boolean);
+
+  for (const chunk of priorityChunks) {
+    const parsed = parseDimensionsFromText(chunk);
+    if (parsed && hasPrimaryDimensions(parsed)) return parsed;
+  }
+
+  // Last resort: search in all dimension-prefixed lines only
+  const merged = lines
+    .filter((l) => /^dim_|^explicit_dimensions_label|^shopify_dim|^embedded_dim|^spec_/.test(l))
+    .join(' ');
+  const parsed = parseDimensionsFromText(merged);
+  return parsed && hasPrimaryDimensions(parsed) ? parsed : null;
 }
 
 /* ─── Dimension enrichment via web search ────────────── */
@@ -1140,8 +1313,11 @@ async function enrichDimensionsViaSearch(
         if (parsed.depth != null && !isNaN(Number(parsed.depth))) dims.depth = Number(parsed.depth);
         if (parsed.length != null && !isNaN(Number(parsed.length))) dims.length = Number(parsed.length);
         if (['in', 'cm', 'ft'].includes(parsed.unit)) dims.unit = parsed.unit;
-        if (parsed.raw && typeof parsed.raw === 'string') dims.raw = parsed.raw;
-        if (Object.keys(dims).length >= 2) {
+        if (parsed.raw && typeof parsed.raw === 'string' && !/^not[_\s-]?found$/i.test(parsed.raw.trim())) {
+          dims.raw = parsed.raw;
+        }
+        const numericCount = [dims.width, dims.height, dims.depth, dims.length].filter((v) => v != null).length;
+        if (numericCount >= 2) {
           logger.info('Dimension enrichment via AI JSON', { url: sourceUrl, dims });
           return dims;
         }
@@ -1235,9 +1411,27 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
           logger.info('Direct extraction succeeded', { url: sourceUrl });
           const result = buildResult(parsed, sourceUrl, preCategory);
 
-          // Check if dimensions are missing — if so, enrich via web search
+          // Deterministic fallback from extracted signals before using web search.
           const product = result.type === 'single' ? result.product : result.products?.[0];
-          const hasDims = product?.dimensions && (product.dimensions.width || product.dimensions.height || product.dimensions.depth);
+          let hasDims = hasPrimaryDimensions(product?.dimensions);
+
+          if (!hasDims) {
+            const deterministicDims = parseDimensionsFromSignals(signals);
+            if (deterministicDims) {
+              if (result.type === 'single' && result.product) {
+                result.product.dimensions = deterministicDims;
+              } else if (result.type === 'multiple' && result.products?.[0]) {
+                result.products[0].dimensions = deterministicDims;
+              }
+              hasDims = true;
+              logger.info('Dimensions recovered via deterministic fallback', {
+                url: sourceUrl,
+                dims: deterministicDims,
+              });
+            }
+          }
+
+          // If still missing, enrich via web search.
           if (!hasDims) {
             logger.info('Dimensions missing from direct extraction — enriching via web search', { url: sourceUrl });
             try {
@@ -1489,9 +1683,10 @@ function normalizeProduct(
     if (d.height != null && !isNaN(Number(d.height))) dims.height = Number(d.height);
     if (d.depth != null && !isNaN(Number(d.depth))) dims.depth = Number(d.depth);
     if (d.weight != null && !isNaN(Number(d.weight))) dims.weight = Number(d.weight);
-    if (['in', 'cm', 'ft'].includes(d.unit)) dims.unit = d.unit;
+    if (typeof d.unit === 'string') dims.unit = d.unit;
     if (d.raw && typeof d.raw === 'string') dims.raw = d.raw;
-    if (Object.keys(dims).length > 0) result.dimensions = dims;
+    const normalized = normalizeDimensionsObject(dims);
+    if (normalized && Object.keys(normalized).length > 0) result.dimensions = normalized;
   }
 
   if (raw.material && typeof raw.material === 'string') result.material = raw.material.trim();

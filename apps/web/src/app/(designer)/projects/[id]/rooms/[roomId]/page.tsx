@@ -53,7 +53,14 @@ function ComparisonModal({
   const dash = <span style={{ color: 'var(--text-placeholder)' }}>—</span>;
 
   const specRows: { label: string; render: (item: ShortlistItem) => React.ReactNode; isNote?: boolean }[] = [
+    {
+      label: 'Description',
+      render: (i) => i.product.metadata?.description
+        ? <span style={{ fontSize: 12, lineHeight: 1.5 }}>{i.product.metadata.description as string}</span>
+        : dash,
+    },
     { label: 'Category',       render: (i) => i.product.category  || dash },
+    { label: 'Style',          render: (i) => (i.product.metadata?.style as string) || dash },
     { label: 'Material',       render: (i) => i.product.material  || dash },
     { label: 'Dimensions',     render: (i) => formatDimensions(i.product.dimensions) || dash },
     {
@@ -66,7 +73,30 @@ function ComparisonModal({
           </div>
         : dash,
     },
+    {
+      label: 'Key Features',
+      render: (i) => {
+        const features = i.product.metadata?.keyFeatures as string[] | undefined;
+        return features?.length
+          ? <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, lineHeight: 1.6 }}>
+              {features.map((f, idx) => <li key={idx}>{f}</li>)}
+            </ul>
+          : dash;
+      },
+    },
+    { label: 'Assembly',       render: (i) => (i.product.metadata?.assembly as string) || dash },
     { label: 'Lead Time',      render: (i) => i.product.leadTime  || dash },
+    { label: 'Care',           render: (i) => (i.product.metadata?.careInstructions as string) || dash },
+    { label: 'Warranty',       render: (i) => (i.product.metadata?.warranty as string) || dash },
+    {
+      label: 'Source',
+      render: (i) => i.product.productUrl
+        ? <a href={i.product.productUrl} target="_blank" rel="noopener noreferrer"
+             style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'underline' }}>
+            View product page
+          </a>
+        : dash,
+    },
     { label: 'Fit Assessment', render: (i) => i.fitAssessment     || dash, isNote: true },
     { label: 'Shared Notes',   render: (i) => i.sharedNotes       || dash, isNote: true },
     { label: 'Designer Notes', render: (i) => i.designerNotes     || dash, isNote: true },

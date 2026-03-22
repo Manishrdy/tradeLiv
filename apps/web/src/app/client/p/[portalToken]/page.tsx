@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { api, PortalProject, PortalShortlistItem, PortalRoom, PortalProduct } from '@/lib/api';
 
@@ -55,12 +55,28 @@ function ComparisonModal({
 }) {
   const dash = '—';
 
-  const specRows: { label: string; get: (item: PortalShortlistItem) => string | null }[] = [
+  const specRows: { label: string; get: (item: PortalShortlistItem) => string | React.ReactNode | null }[] = [
+    { label: 'Description', get: (i) => (i.product.metadata?.description as string) ?? null },
     { label: 'Category',   get: (i) => i.product.category ?? null },
+    { label: 'Style',      get: (i) => (i.product.metadata?.style as string) ?? null },
     { label: 'Material',   get: (i) => i.product.material ?? null },
     { label: 'Dimensions', get: (i) => formatDimensions(i.product.dimensions) },
     { label: 'Finishes',   get: (i) => i.product.finishes?.join(', ') || null },
+    {
+      label: 'Key Features',
+      get: (i) => {
+        const features = i.product.metadata?.keyFeatures as string[] | undefined;
+        return features?.length
+          ? <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, lineHeight: 1.6 }}>
+              {features.map((f, idx) => <li key={idx}>{f}</li>)}
+            </ul>
+          : null;
+      },
+    },
+    { label: 'Assembly',   get: (i) => (i.product.metadata?.assembly as string) ?? null },
     { label: 'Lead Time',  get: (i) => i.product.leadTime ?? null },
+    { label: 'Care',       get: (i) => (i.product.metadata?.careInstructions as string) ?? null },
+    { label: 'Warranty',   get: (i) => (i.product.metadata?.warranty as string) ?? null },
   ];
 
   const noteRows: { label: string; get: (item: PortalShortlistItem) => string | null }[] = [

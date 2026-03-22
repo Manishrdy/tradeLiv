@@ -98,6 +98,7 @@ router.get('/:portalToken', async (req: Request, res: Response) => {
                     finishes: true,
                     leadTime: true,
                     category: true,
+                    metadata: true,
                   },
                 },
               },

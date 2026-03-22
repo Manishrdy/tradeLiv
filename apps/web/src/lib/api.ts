@@ -394,6 +394,18 @@ export interface ShortlistProduct {
   dimensions: ProductDimensions | null;
   finishes: string[];
   leadTime: string | null;
+  productUrl: string | null;
+  metadata: {
+    description?: string;
+    keyFeatures?: string[];
+    assembly?: string;
+    careInstructions?: string;
+    warranty?: string;
+    weightCapacity?: string;
+    style?: string;
+    collection?: string;
+    [key: string]: unknown;
+  } | null;
   isActive?: boolean;
 }
 
@@ -453,6 +465,15 @@ export interface PortalProduct {
   finishes?: string[];
   leadTime?: string | null;
   category?: string | null;
+  metadata?: {
+    description?: string;
+    keyFeatures?: string[];
+    assembly?: string;
+    careInstructions?: string;
+    warranty?: string;
+    style?: string;
+    [key: string]: unknown;
+  } | null;
 }
 
 export interface PortalShortlistItem {

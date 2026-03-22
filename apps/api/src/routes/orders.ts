@@ -131,6 +131,8 @@ router.post('/projects/:projectId/shortlist', async (req: AuthRequest, res: Resp
             dimensions: true,
             finishes: true,
             leadTime: true,
+            productUrl: true,
+            metadata: true,
           },
         },
       },
@@ -186,6 +188,8 @@ router.get('/projects/:projectId/shortlist', async (req: AuthRequest, res: Respo
             finishes: true,
             leadTime: true,
             isActive: true,
+            productUrl: true,
+            metadata: true,
           },
         },
         room: {
@@ -255,6 +259,8 @@ router.put('/projects/:projectId/shortlist/:itemId', async (req: AuthRequest, re
             dimensions: true,
             finishes: true,
             leadTime: true,
+            productUrl: true,
+            metadata: true,
           },
         },
         room: {
