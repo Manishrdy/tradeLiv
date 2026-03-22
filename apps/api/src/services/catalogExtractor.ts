@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import puppeteer from 'puppeteer-core';
 import { config } from '../config';
 import logger from '../config/logger';
 
@@ -371,6 +372,63 @@ async function fetchPageHtml(url: string): Promise<string | null> {
   }
 
   return null;
+}
+
+/* ─── Headless browser fetch (browserless sidecar) ──── */
+
+async function fetchRenderedHtml(url: string): Promise<string | null> {
+  const wsEndpoint = config.browserWsEndpoint;
+  if (!wsEndpoint) {
+    logger.info('Browser WS endpoint not configured — skipping rendered fetch');
+    return null;
+  }
+
+  let browser: Awaited<ReturnType<typeof puppeteer.connect>> | null = null;
+  try {
+    browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
+    const page = await browser.newPage();
+
+    await page.setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    );
+
+    await page.goto(url, { waitUntil: 'networkidle0', timeout: 20_000 });
+
+    // Try clicking common "Dimensions" / "Specifications" tabs/accordions
+    try {
+      const dimTrigger = await page.$(
+        [
+          'button:has-text("Dimensions")',
+          'button:has-text("Specifications")',
+          'button:has-text("Specs")',
+          '[data-tab="dimensions"]',
+          '[data-tab="specifications"]',
+          '[aria-controls*="dimension"]',
+          '[aria-controls*="spec"]',
+        ].join(', '),
+      );
+      if (dimTrigger) {
+        await dimTrigger.click();
+        await page.waitForNetworkIdle({ timeout: 3_000 }).catch(() => {});
+      }
+    } catch {
+      // Tab click is best-effort — continue regardless
+    }
+
+    const html = await page.content();
+    await page.close();
+    browser.disconnect();
+
+    const trimmed = html.length > HTML_BODY_LIMIT ? html.slice(0, HTML_BODY_LIMIT) : html;
+    logger.info('Rendered HTML fetched via headless browser', { url, bytes: trimmed.length });
+    return trimmed;
+  } catch (err: any) {
+    logger.warn('fetchRenderedHtml failed', { url, err: err?.message });
+    if (browser) {
+      try { browser.disconnect(); } catch {}
+    }
+    return null;
+  }
 }
 
 /* ─── Signal extraction from HTML ───────────────────── */
@@ -1237,125 +1295,6 @@ function parseDimensionsFromSignals(signals: string): ExtractedProductData['dime
 
 /* ─── Dimension enrichment via web search ────────────── */
 
-async function enrichDimensionsViaSearch(
-  sourceUrl: string,
-  product?: ExtractedProductData,
-): Promise<ExtractedProductData['dimensions'] | null> {
-  const productName = product?.productName ?? '';
-  const brandName = product?.brandName ?? '';
-  const searchHint = [brandName, productName].filter(Boolean).join(' ');
-
-  // Use a very specific search query + strict output instructions.
-  // Many furniture sites render dimensions via JS so the product page itself
-  // may not have them — but searching for "{product} dimensions" often surfaces
-  // specs from Google Shopping, review sites, or cached product pages.
-  const messages: Anthropic.MessageParam[] = [
-    {
-      role: 'user',
-      content: [
-        `Search for: "${searchHint} dimensions specifications"`,
-        `Also try the product URL directly: ${sourceUrl}`,
-        '',
-        'I need the furniture product\'s physical dimensions — width, depth (or length), and height.',
-        'Look for patterns like "90\\" Width x 100\\" Depth x 42\\" Height" or "W x D x H" or a specifications table.',
-        '',
-        'When you find the dimensions, respond with ONLY this JSON (no other text):',
-        '{"width": 90, "depth": 100, "height": 42, "unit": "in", "raw": "90\\" Width x 100\\" Depth x 42\\" Height"}',
-        '',
-        'IMPORTANT: If the search results mention ANY numbers that look like furniture dimensions',
-        '(typically 2-3 numbers between 10-120, near words like width/depth/height/W/D/H),',
-        'extract them. Do NOT say not_found if you see dimension-like numbers.',
-      ].join('\n'),
-    },
-  ];
-
-  // Max 2 turns to avoid rate limits (web search uses many input tokens)
-  const MAX_TURNS = 2;
-
-  for (let turn = 0; turn < MAX_TURNS; turn++) {
-    const response = await client.messages.create({
-      model: MODEL_SEARCH,
-      max_tokens: 1024,
-      messages,
-      tools: [{ type: 'web_search_20250305', name: 'web_search' }] as any,
-    });
-
-    const { stop_reason, content } = response;
-    const blockTypes = content.map((b) => b.type);
-    logger.info('Dimension enrichment turn', { url: sourceUrl, turn, stop_reason, blockTypes });
-
-    // Collect ALL text from the AI's response blocks
-    const allAiText = content
-      .filter((b) => b.type === 'text')
-      .map((b) => (b as any).text ?? '')
-      .join('\n');
-
-    if (allAiText.length > 0) {
-      logger.info('Dimension enrichment AI text', {
-        url: sourceUrl,
-        turn,
-        preview: allAiText.slice(0, 600),
-      });
-
-      // 1) Try regex on the AI's prose (it often quotes dimensions even when saying not_found)
-      const dimsFromText = parseDimensionsFromText(allAiText);
-      if (dimsFromText) {
-        logger.info('Dimensions found via regex in AI response', { url: sourceUrl, dims: dimsFromText });
-        return dimsFromText;
-      }
-
-      // 2) Try JSON parse
-      const parsed = tryParseJson(allAiText);
-      if (parsed && !parsed.not_found) {
-        const dims: ExtractedProductData['dimensions'] = {};
-        if (parsed.width != null && !isNaN(Number(parsed.width))) dims.width = Number(parsed.width);
-        if (parsed.height != null && !isNaN(Number(parsed.height))) dims.height = Number(parsed.height);
-        if (parsed.depth != null && !isNaN(Number(parsed.depth))) dims.depth = Number(parsed.depth);
-        if (parsed.length != null && !isNaN(Number(parsed.length))) dims.length = Number(parsed.length);
-        if (['in', 'cm', 'ft'].includes(parsed.unit)) dims.unit = parsed.unit;
-        if (parsed.raw && typeof parsed.raw === 'string' && !/^not[_\s-]?found$/i.test(parsed.raw.trim())) {
-          dims.raw = parsed.raw;
-        }
-        const numericCount = [dims.width, dims.height, dims.depth, dims.length].filter((v) => v != null).length;
-        if (numericCount >= 2) {
-          logger.info('Dimension enrichment via AI JSON', { url: sourceUrl, dims });
-          return dims;
-        }
-      }
-    }
-
-    // Continue if the model wants to use more tools
-    if (stop_reason === 'tool_use') {
-      messages.push({ role: 'assistant', content: content as any });
-      const toolUseBlocks = content.filter((b) => b.type === 'tool_use') as any[];
-      messages.push({
-        role: 'user',
-        content: toolUseBlocks.map((b) => ({
-          type: 'tool_result' as const,
-          tool_use_id: b.id,
-          content: '',
-        })) as any,
-      });
-      continue;
-    }
-
-    // On first turn end, try a more targeted search
-    if (stop_reason === 'end_turn' && turn < MAX_TURNS - 1) {
-      messages.push({ role: 'assistant', content: content as any });
-      messages.push({
-        role: 'user',
-        content: `The dimensions must exist. Please search for "${searchHint} width height depth inches" and look for any measurement numbers. Extract them as JSON.`,
-      });
-      continue;
-    }
-
-    break;
-  }
-
-  logger.warn('Dimension enrichment: could not find dimensions', { url: sourceUrl });
-  return null;
-}
-
 /* ─── Main extractor ─────────────────────────────────── */
 
 export async function extractProductFromUrl(sourceUrl: string): Promise<ExtractionResult> {
@@ -1431,20 +1370,30 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
             }
           }
 
-          // If still missing, enrich via web search.
+          // If still missing, try headless browser to get JS-rendered HTML
           if (!hasDims) {
-            logger.info('Dimensions missing from direct extraction — enriching via web search', { url: sourceUrl });
-            try {
-              const enriched = await enrichDimensionsViaSearch(sourceUrl, product);
-              if (enriched && result.type === 'single' && result.product) {
-                result.product.dimensions = enriched;
-                logger.info('Dimensions enriched via web search', { url: sourceUrl, dims: enriched });
-              } else if (enriched && result.type === 'multiple' && result.products?.[0]) {
-                result.products[0].dimensions = enriched;
+            logger.info('Dimensions missing — attempting headless browser fetch', { url: sourceUrl });
+            const renderedHtml = await fetchRenderedHtml(sourceUrl);
+            if (renderedHtml && renderedHtml.length > 500) {
+              const renderedSignals = extractSignals(renderedHtml, sourceUrl);
+              const browserDims = parseDimensionsFromSignals(renderedSignals);
+              if (browserDims) {
+                if (result.type === 'single' && result.product) {
+                  result.product.dimensions = browserDims;
+                } else if (result.type === 'multiple' && result.products?.[0]) {
+                  result.products[0].dimensions = browserDims;
+                }
+                hasDims = true;
+                logger.info('Dimensions recovered via headless browser', {
+                  url: sourceUrl,
+                  dims: browserDims,
+                });
               }
-            } catch (err: any) {
-              logger.warn('Dimension enrichment failed', { url: sourceUrl, err: err?.message });
             }
+          }
+
+          if (!hasDims) {
+            logger.info('Dimensions not found after all extraction attempts', { url: sourceUrl });
           }
 
           setCachedResult(sourceUrl, result);
@@ -1456,13 +1405,58 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
       logger.error('Direct extraction Claude call failed', { url: sourceUrl, err: err?.message });
     }
   } else {
-    logger.info('HTML fetch returned empty/short content — likely bot-blocked or JS-only', {
+    logger.info('HTML fetch returned empty/short content — trying headless browser', {
       url: sourceUrl,
       bytes: html?.length ?? 0,
     });
+
+    // Try headless browser before falling back to web search
+    const renderedHtml = await fetchRenderedHtml(sourceUrl);
+    if (renderedHtml && renderedHtml.length > 500) {
+      const signals = extractSignals(renderedHtml, sourceUrl);
+      const preCategory = inferCategoryFromText(signals);
+
+      try {
+        const response = await client.messages.create({
+          model: MODEL_FAST,
+          max_tokens: 2048,
+          system: SYSTEM_PROMPT,
+          messages: [
+            {
+              role: 'user',
+              content: `Extract product data from these page signals.\n\nPRICE: If "selected_variant_price" is present, use that — it's the exact price for the URL's variant. Do NOT use og:price or meta tag prices when selected_variant_price exists.\n\nDIMENSIONS (HIGHEST PRIORITY): Look for "explicit_dimensions_label" signals FIRST — these contain the raw text near a "Dimensions" heading on the page and are the MOST AUTHORITATIVE source. Parse width, depth, height, and unit values from that text. Then use dim_labelled and dim_label signals. Do NOT confuse variant titles (like "22 x 22") with actual product dimensions. Only labelled measurements (Width/Depth/Height) are real dimensions. NEVER return a product without dimensions if ANY dimension signal (explicit_dimensions_label, dim_label, dim_labelled, dim_WxDxH, spec_sections with measurements) exists in the signals below.\n\n${signals}`,
+            },
+          ],
+        });
+
+        const textBlock = response.content.find((b) => b.type === 'text') as any;
+        if (textBlock?.text) {
+          const parsed = tryParseJson(textBlock.text);
+          if (parsed) {
+            logger.info('Browser-rendered extraction succeeded', { url: sourceUrl });
+            const result = buildResult(parsed, sourceUrl, preCategory);
+
+            // Deterministic dimension fallback on rendered signals
+            const product = result.type === 'single' ? result.product : result.products?.[0];
+            if (!hasPrimaryDimensions(product?.dimensions)) {
+              const dims = parseDimensionsFromSignals(signals);
+              if (dims) {
+                if (result.type === 'single' && result.product) result.product.dimensions = dims;
+                else if (result.type === 'multiple' && result.products?.[0]) result.products[0].dimensions = dims;
+              }
+            }
+
+            setCachedResult(sourceUrl, result);
+            return result;
+          }
+        }
+      } catch (err: any) {
+        logger.error('Browser-rendered Claude call failed', { url: sourceUrl, err: err?.message });
+      }
+    }
   }
 
-  // Stage 2: Fallback — web search (JS-rendered pages, anti-bot protected sites)
+  // Stage 3: Final fallback — web search (when both static + browser fetch fail)
   logger.info('Falling back to web search', { url: sourceUrl });
   const result = await extractWithWebSearch(sourceUrl);
   setCachedResult(sourceUrl, result);

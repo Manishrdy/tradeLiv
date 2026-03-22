@@ -6,4 +6,5 @@ export const config = {
   get claudeApiKey() { return process.env.CLAUDE_API_KEY!; },
   get stripeSecretKey() { return process.env.STRIPE_SECRET_KEY!; },
   get stripeWebhookSecret() { return process.env.STRIPE_WEBHOOK_SECRET!; },
+  get browserWsEndpoint() { return process.env.BROWSER_WS_ENDPOINT || ''; },
 };

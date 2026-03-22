@@ -7,8 +7,8 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace=apps/api & npm run dev --workspace=apps/web",
-    "dev:api": "npm run dev --workspace=apps/api",
+    "dev": "docker-compose up chrome -d && npm run dev --workspace=apps/api & npm run dev --workspace=apps/web",
+    "dev:api": "docker-compose up chrome -d && npm run dev --workspace=apps/api",
     "dev:web": "npm run dev --workspace=apps/web",
     "build:api": "npm run build --workspace=apps/api",
     "build:web": "npm run build --workspace=apps/web",

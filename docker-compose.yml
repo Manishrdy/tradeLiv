@@ -1,4 +1,18 @@
 services:
+  chrome:
+    image: ghcr.io/browserless/chromium:latest
+    ports:
+      - "3100:3000"
+    environment:
+      - MAX_CONCURRENT_SESSIONS=2
+      - CONNECTION_TIMEOUT=30000
+      - TIMEOUT=25000
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
   api:
     build:
       context: ./apps/api
@@ -14,6 +28,9 @@ services:
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
       - FRONTEND_URL=${FRONTEND_URL}
+      - BROWSER_WS_ENDPOINT=ws://chrome:3000
+    depends_on:
+      - chrome
     restart: unless-stopped
 
   web:
