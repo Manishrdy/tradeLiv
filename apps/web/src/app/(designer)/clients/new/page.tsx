@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, ClientPayload } from '@/lib/api';
@@ -18,6 +18,59 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div style={{ marginBottom: 14 }}>
       <label className="form-label">{label}</label>
       {children}
+    </div>
+  );
+}
+
+/* ── Phone formatting helper ──────────────────────── */
+
+function formatPhoneDisplay(value: string): string {
+  // Strip non-digits except leading +
+  const hasPlus = value.startsWith('+');
+  const digits = value.replace(/[^\d]/g, '');
+
+  if (hasPlus) {
+    // International format: +1 (555) 867-5309
+    if (digits.length <= 1) return `+${digits}`;
+    const cc = digits.slice(0, 1);
+    const rest = digits.slice(1);
+    if (rest.length <= 3) return `+${cc} (${rest}`;
+    if (rest.length <= 6) return `+${cc} (${rest.slice(0, 3)}) ${rest.slice(3)}`;
+    return `+${cc} (${rest.slice(0, 3)}) ${rest.slice(3, 6)}-${rest.slice(6, 10)}`;
+  }
+
+  // US format: (555) 867-5309
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
+}
+
+function PhoneInput({ value, onChange, ...props }: { value: string; onChange: (v: string) => void } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'value'>) {
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const raw = e.target.value;
+    // Allow typing + at start
+    if (raw === '+' || raw === '') { onChange(raw); return; }
+    onChange(formatPhoneDisplay(raw));
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <span style={{
+        position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
+        fontSize: 13, color: 'var(--text-muted)', pointerEvents: 'none',
+      }}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.99 12 19.79 19.79 0 0 1 1.97 3.32 2 2 0 0 1 3.94 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 8.91a16 16 0 0 0 5.99 5.99l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
+        </svg>
+      </span>
+      <input
+        className="input-field"
+        type="tel"
+        value={value}
+        onChange={handleChange}
+        style={{ paddingLeft: 34 }}
+        {...props}
+      />
     </div>
   );
 }
@@ -129,12 +182,10 @@ export default function NewClientPage() {
               />
             </Field>
             <Field label="Phone Number">
-              <input
-                className="input-field"
-                type="tel"
-                placeholder="(555) 867-5309"
+              <PhoneInput
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                onChange={setPhone}
+                placeholder="+1 (555) 867-5309"
               />
             </Field>
           </div>
@@ -169,27 +220,55 @@ export default function NewClientPage() {
             <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10.5, opacity: 0.7 }}>(optional)</span>
           </SectionHeading>
 
-          {/* Same as billing toggle */}
+          {/* Same as billing toggle with auto-fill */}
           <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', marginBottom: 18 }}>
             <div
-              onClick={() => setSameAddress((v) => !v)}
+              onClick={() => {
+                const next = !sameAddress;
+                setSameAddress(next);
+                if (next) {
+                  // Auto-fill shipping from billing with a brief delay for visual feedback
+                  setTimeout(() => {
+                    setShipLine1(billLine1);
+                    setShipLine2(billLine2);
+                    setShipCity(billCity);
+                    setShipState(billState);
+                    setShipZip(billZip);
+                  }, 100);
+                } else {
+                  // Clear shipping when unchecking
+                  setShipLine1('');
+                  setShipLine2('');
+                  setShipCity('');
+                  setShipState('');
+                  setShipZip('');
+                }
+              }}
               style={{
                 width: 38, height: 20, borderRadius: 999,
                 background: sameAddress ? '#111111' : 'var(--border-strong)',
-                position: 'relative', transition: 'background 0.18s', cursor: 'pointer', flexShrink: 0,
+                position: 'relative', transition: 'background 0.2s ease', cursor: 'pointer', flexShrink: 0,
               }}
             >
               <div style={{
                 position: 'absolute', top: 3, left: sameAddress ? 19 : 3,
                 width: 14, height: 14, borderRadius: '50%', background: '#fff',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'left 0.18s',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                transition: 'left 0.2s cubic-bezier(0.22,1,0.36,1)',
               }} />
             </div>
-            <span style={{ fontSize: 13.5, color: 'var(--text-secondary)', fontWeight: 500 }}>Same as billing address</span>
+            <div>
+              <span style={{ fontSize: 13.5, color: 'var(--text-secondary)', fontWeight: 500 }}>Same as billing address</span>
+              {sameAddress && billLine1 && (
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, transition: 'opacity 0.2s', opacity: 1 }}>
+                  {[billLine1, billCity, billState].filter(Boolean).join(', ')}
+                </div>
+              )}
+            </div>
           </label>
 
           {!sameAddress && (
-            <div>
+            <div style={{ animation: 'fadeSlideUp 0.25s ease both' }}>
               <Field label="Address Line 1">
                 <input className="input-field" type="text" placeholder="42 Maple Street, Apt 3B" value={shipLine1} onChange={(e) => setShipLine1(e.target.value)} />
               </Field>

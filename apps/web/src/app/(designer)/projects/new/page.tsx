@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, Client, ClientPayload } from '@/lib/api';
+
+/* ── Constants ─────────────────────────────────────── */
 
 const BUDGET_CHIPS = [
   { label: 'Under $10K',    min: 0,      max: 10000 },
@@ -14,29 +16,169 @@ const BUDGET_CHIPS = [
   { label: '$250K+',        min: 250000, max: 0 },
 ];
 
+const STYLE_PRESETS = [
+  { label: 'Modern Minimalist', icon: '◻️', desc: 'Clean lines, neutral tones, functional spaces' },
+  { label: 'Scandinavian', icon: '🌿', desc: 'Light wood, organic textures, cozy simplicity' },
+  { label: 'Industrial', icon: '🏗️', desc: 'Raw materials, exposed elements, urban edge' },
+  { label: 'Mid-Century Modern', icon: '🪑', desc: 'Retro forms, warm woods, bold accents' },
+  { label: 'Contemporary Luxury', icon: '✨', desc: 'Rich materials, elegant finishes, refined details' },
+  { label: 'Bohemian', icon: '🎨', desc: 'Eclectic patterns, layered textures, global influences' },
+  { label: 'Japandi', icon: '🎋', desc: 'Japanese simplicity meets Scandinavian warmth' },
+  { label: 'Art Deco', icon: '💎', desc: 'Geometric patterns, bold glamour, rich colors' },
+];
+
+const STORAGE_KEY = 'tradeliv-new-project-draft';
+
+/* ── Helpers ───────────────────────────────────────── */
+
 function initials(name: string) {
   return name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
 }
 
-function StepDot({ n, active, done }: { n: number; active: boolean; done: boolean }) {
+/* ── Labeled step indicator ────────────────────────── */
+
+function StepIndicator({ step }: { step: 1 | 2 }) {
+  const steps = [
+    { n: 1, label: 'Select Client' },
+    { n: 2, label: 'Project Details' },
+  ];
   return (
-    <div style={{
-      width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: 11, fontWeight: 700,
-      background: done ? '#111111' : active ? 'var(--bg-input)' : 'var(--bg-input)',
-      border: `1.5px solid ${done ? '#111111' : active ? 'var(--border-strong)' : 'var(--border)'}`,
-      color: done ? '#fff' : active ? 'var(--text-primary)' : 'var(--text-muted)',
-      transition: 'all 0.2s',
-    }}>
-      {done ? (
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-      ) : n}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 36 }} role="progressbar" aria-valuenow={step} aria-valuemin={1} aria-valuemax={2}>
+      {steps.map((s, i) => {
+        const isDone = step > s.n;
+        const isActive = step === s.n;
+        return (
+          <div key={s.n} style={{ display: 'flex', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+              <div style={{
+                width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 12, fontWeight: 700,
+                background: isDone ? '#111111' : isActive ? '#fff' : 'var(--bg-input)',
+                border: `2px solid ${isDone ? '#111111' : isActive ? '#111111' : 'var(--border)'}`,
+                color: isDone ? '#fff' : isActive ? '#111111' : 'var(--text-muted)',
+                transition: 'all 0.25s',
+              }}>
+                {isDone ? (
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                ) : s.n}
+              </div>
+              <div>
+                <div style={{
+                  fontSize: 13, fontWeight: isActive ? 700 : isDone ? 600 : 500,
+                  color: isActive ? 'var(--text-primary)' : isDone ? 'var(--text-secondary)' : 'var(--text-muted)',
+                  letterSpacing: '-0.01em',
+                }}>
+                  {s.label}
+                </div>
+                <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 1 }}>
+                  {isDone ? 'Completed' : isActive ? 'In progress' : 'Upcoming'}
+                </div>
+              </div>
+            </div>
+            {i < steps.length - 1 && (
+              <div style={{
+                width: 48, height: 2, borderRadius: 999,
+                background: isDone ? '#111111' : 'var(--border)',
+                margin: '0 16px', transition: 'background 0.3s',
+              }} />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
+
+/* ── New Client Drawer ─────────────────────────────── */
+
+function NewClientDrawer({
+  open, onClose, onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreated: (client: Client) => void;
+}) {
+  const [name, setName]   = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) { setError('Client name is required.'); return; }
+    setLoading(true); setError('');
+    const payload: ClientPayload = {
+      name: name.trim(),
+      email: email.trim() || undefined,
+      phone: phone.trim() || undefined,
+    };
+    const r = await api.createClient(payload);
+    setLoading(false);
+    if (r.error) { setError(r.error); return; }
+    onCreated(r.data!);
+    setName(''); setEmail(''); setPhone('');
+  }
+
+  if (!open) return null;
+
+  return (
+    <>
+      <div
+        style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(0,0,0,0.25)', backdropFilter: 'blur(2px)' }}
+        onClick={onClose}
+      />
+      <div
+        className="anim-fade-up"
+        style={{
+          position: 'fixed', top: 0, right: 0, bottom: 0, width: 400,
+          zIndex: 51, background: '#fff', boxShadow: '-8px 0 30px rgba(0,0,0,0.1)',
+          display: 'flex', flexDirection: 'column',
+        }}
+      >
+        <div style={{ padding: '24px 28px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h3 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0 }}>New Client</h3>
+          <button
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'flex' }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} style={{ padding: '24px 28px', flex: 1, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <label className="form-label">Full Name *</label>
+            <input className="input-field" type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Priya Sharma" autoFocus />
+          </div>
+          <div>
+            <label className="form-label">Email</label>
+            <input className="input-field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="priya@example.com" />
+          </div>
+          <div>
+            <label className="form-label">Phone</label>
+            <input className="input-field" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" />
+          </div>
+          {error && <div className="error-box">{error}</div>}
+          <div style={{ marginTop: 'auto', display: 'flex', gap: 10, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+            <button type="submit" className="btn-primary" disabled={loading} style={{ flex: 1 }}>
+              {loading ? 'Creating…' : 'Create & Select'}
+            </button>
+            <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+          </div>
+        </form>
+      </div>
+    </>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   New Project Page
+   ══════════════════════════════════════════════════════ */
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -47,30 +189,53 @@ export default function NewProjectPage() {
   const [clientsLoading, setClientsLoading] = useState(true);
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-
   const [showNewClient, setShowNewClient] = useState(false);
-  const [newClientName, setNewClientName] = useState('');
-  const [newClientEmail, setNewClientEmail] = useState('');
-  const [newClientPhone, setNewClientPhone] = useState('');
-  const [creatingClient, setCreatingClient] = useState(false);
-  const [clientError, setClientError] = useState('');
 
-  const [projectName, setProjectName] = useState('');
-  const [description, setDescription] = useState('');
-  const [budgetMin, setBudgetMin] = useState('');
-  const [budgetMax, setBudgetMax] = useState('');
-  const [activeChip, setActiveChip] = useState(-1);
+  const [projectName, setProjectName]     = useState('');
+  const [description, setDescription]     = useState('');
+  const [budgetMin, setBudgetMin]         = useState('');
+  const [budgetMax, setBudgetMax]         = useState('');
+  const [activeChip, setActiveChip]       = useState(-1);
   const [stylePreference, setStylePreference] = useState('');
-  const [projectError, setProjectError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [submitMode, setSubmitMode] = useState<'draft' | 'active'>('draft');
+  const [projectError, setProjectError]   = useState('');
+  const [submitting, setSubmitting]       = useState(false);
+  const [submitMode, setSubmitMode]       = useState<'draft' | 'active'>('draft');
+  const [lastSaved, setLastSaved]         = useState<string | null>(null);
+
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     api.getClients().then((r) => {
       if (r.data) setClients(r.data);
       setClientsLoading(false);
     });
+
+    // Restore draft from localStorage
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const draft = JSON.parse(saved);
+        if (draft.projectName) setProjectName(draft.projectName);
+        if (draft.description) setDescription(draft.description);
+        if (draft.budgetMin) setBudgetMin(draft.budgetMin);
+        if (draft.budgetMax) setBudgetMax(draft.budgetMax);
+        if (draft.stylePreference) setStylePreference(draft.stylePreference);
+        if (draft.activeChip !== undefined) setActiveChip(draft.activeChip);
+      }
+    } catch {}
   }, []);
+
+  /* ── Auto-save to localStorage ───────────────────── */
+  const autoSave = useCallback(() => {
+    clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      const draft = { projectName, description, budgetMin, budgetMax, stylePreference, activeChip };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+      setLastSaved(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }));
+    }, 1000);
+  }, [projectName, description, budgetMin, budgetMax, stylePreference, activeChip]);
+
+  useEffect(() => { if (step === 2) autoSave(); }, [projectName, description, budgetMin, budgetMax, stylePreference, step, autoSave]);
 
   const filteredClients = clientSearch.trim()
     ? clients.filter((c) =>
@@ -78,23 +243,6 @@ export default function NewProjectPage() {
         (c.email ?? '').toLowerCase().includes(clientSearch.toLowerCase())
       )
     : clients;
-
-  async function handleCreateClient() {
-    if (!newClientName.trim()) { setClientError('Client name is required.'); return; }
-    setCreatingClient(true); setClientError('');
-    const payload: ClientPayload = {
-      name: newClientName.trim(),
-      email: newClientEmail.trim() || undefined,
-      phone: newClientPhone.trim() || undefined,
-    };
-    const r = await api.createClient(payload);
-    setCreatingClient(false);
-    if (r.error) { setClientError(r.error); return; }
-    setClients((prev) => [r.data!, ...prev]);
-    setSelectedClient(r.data!);
-    setShowNewClient(false);
-    setNewClientName(''); setNewClientEmail(''); setNewClientPhone('');
-  }
 
   function handleChipSelect(idx: number) {
     const chip = BUDGET_CHIPS[idx];
@@ -123,18 +271,20 @@ export default function NewProjectPage() {
 
     setSubmitting(false);
     if (r.error) { setProjectError(r.error); return; }
+    // Clear draft
+    localStorage.removeItem(STORAGE_KEY);
     router.push(`/projects/${r.data!.id}`);
   }
 
   return (
     <div style={{ padding: '40px 44px', maxWidth: 720 }}>
 
-      {/* ── Back ────────────────────────────────────────── */}
+      {/* ── Back ──────────────────────────────────────── */}
       <Link
         href="/projects"
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--text-muted)', fontWeight: 500, textDecoration: 'none', marginBottom: 28 }}
-        onMouseEnter={(e) => ((e.currentTarget as HTMLAnchorElement).style.color = 'var(--text-primary)')}
-        onMouseLeave={(e) => ((e.currentTarget as HTMLAnchorElement).style.color = 'var(--text-muted)')}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--text-muted)', fontWeight: 500, textDecoration: 'none', marginBottom: 28, transition: 'color 0.12s' }}
+        onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
+        onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M19 12H5M12 19l-7-7 7-7" />
@@ -142,32 +292,10 @@ export default function NewProjectPage() {
         Back to projects
       </Link>
 
-      {/* ── Step indicator ──────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 36 }}>
-        {[
-          { n: 1, label: 'Select Client' },
-          { n: 2, label: 'Project Details' },
-        ].map((s, i) => (
-          <div key={s.n} style={{ display: 'flex', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-              <StepDot n={s.n} active={step === s.n} done={step > s.n} />
-              <span style={{
-                fontSize: 13, fontWeight: 600,
-                color: step === s.n ? 'var(--text-primary)' : step > s.n ? 'var(--text-secondary)' : 'var(--text-muted)',
-              }}>
-                {s.label}
-              </span>
-            </div>
-            {i < 1 && (
-              <div style={{ width: 44, height: 1, background: step > s.n ? 'var(--border-strong)' : 'var(--border)', margin: '0 14px' }} />
-            )}
-          </div>
-        ))}
-      </div>
+      {/* ── Step indicator (labeled) ───────────────────── */}
+      <StepIndicator step={step} />
 
-      {/* ════════════════════════════════════════════════
-          STEP 1 — CLIENT SELECTION
-      ════════════════════════════════════════════════ */}
+      {/* ═══ STEP 1 — CLIENT SELECTION ═══════════════ */}
       {step === 1 && (
         <div>
           <div style={{ marginBottom: 24 }}>
@@ -204,7 +332,7 @@ export default function NewProjectPage() {
                 </svg>
                 Loading clients…
               </div>
-            ) : filteredClients.length === 0 && !showNewClient ? (
+            ) : filteredClients.length === 0 ? (
               <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
                 {clientSearch ? 'No clients match your search.' : 'No clients yet.'}
               </div>
@@ -257,55 +385,24 @@ export default function NewProjectPage() {
             )}
           </div>
 
-          {/* New client inline */}
-          {!showNewClient ? (
-            <button
-              onClick={() => setShowNewClient(true)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                padding: '11px 15px', borderRadius: 9, cursor: 'pointer',
-                border: '1px dashed var(--border-strong)', background: 'transparent',
-                color: 'var(--text-muted)', fontSize: 13, fontWeight: 600,
-                transition: 'all 0.12s',
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-primary)'; (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-input)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-              Create a new client
-            </button>
-          ) : (
-            <div className="card" style={{ padding: 20 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 16 }}>New client</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div>
-                  <label className="form-label">Full Name *</label>
-                  <input className="input-field" type="text" value={newClientName} onChange={(e) => setNewClientName(e.target.value)} placeholder="Priya Sharma" />
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div>
-                    <label className="form-label">Email</label>
-                    <input className="input-field" type="email" value={newClientEmail} onChange={(e) => setNewClientEmail(e.target.value)} placeholder="priya@example.com" />
-                  </div>
-                  <div>
-                    <label className="form-label">Phone</label>
-                    <input className="input-field" type="tel" value={newClientPhone} onChange={(e) => setNewClientPhone(e.target.value)} placeholder="+91 98765 43210" />
-                  </div>
-                </div>
-                {clientError && <div className="error-box">{clientError}</div>}
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn-primary" onClick={handleCreateClient} disabled={creatingClient} style={{ fontSize: 13 }}>
-                    {creatingClient ? 'Creating…' : 'Create & Select'}
-                  </button>
-                  <button className="btn-ghost" onClick={() => { setShowNewClient(false); setClientError(''); }} style={{ fontSize: 13 }}>
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* New client — opens drawer */}
+          <button
+            onClick={() => setShowNewClient(true)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+              padding: '11px 15px', borderRadius: 9, cursor: 'pointer',
+              border: '1px dashed var(--border-strong)', background: 'transparent',
+              color: 'var(--text-muted)', fontSize: 13, fontWeight: 600,
+              transition: 'all 0.12s', fontFamily: 'inherit',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--bg-input)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            Create a new client
+          </button>
 
           {/* Continue */}
           <div style={{ marginTop: 28, paddingTop: 22, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
@@ -333,18 +430,26 @@ export default function NewProjectPage() {
         </div>
       )}
 
-      {/* ════════════════════════════════════════════════
-          STEP 2 — PROJECT DETAILS
-      ════════════════════════════════════════════════ */}
+      {/* ═══ STEP 2 — PROJECT DETAILS ════════════════ */}
       {step === 2 && (
         <div>
           <div style={{ marginBottom: 24 }}>
             <h1 style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.03em', marginBottom: 6 }}>
               Project details
             </h1>
-            <p style={{ fontSize: 13.5, color: 'var(--text-secondary)' }}>
-              For <strong style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{selectedClient?.name}</strong>
-            </p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>
+                For <strong style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{selectedClient?.name}</strong>
+              </p>
+              {lastSaved && (
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  Draft saved {lastSaved}
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="card" style={{ padding: 28 }}>
@@ -386,7 +491,7 @@ export default function NewProjectPage() {
                       background: activeChip === i ? '#111111' : 'var(--bg-input)',
                       color: activeChip === i ? '#fff' : 'var(--text-secondary)',
                       borderRadius: 999, padding: '5px 13px', fontSize: 12, fontWeight: 600,
-                      cursor: 'pointer', transition: 'all 0.12s',
+                      cursor: 'pointer', transition: 'all 0.12s', fontFamily: 'inherit',
                     }}
                   >
                     {chip.label}
@@ -419,14 +524,52 @@ export default function NewProjectPage() {
               </div>
             </div>
 
+            {/* ── Style picker with visual presets ────── */}
             <div>
               <label className="form-label">Style Preference</label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 12 }}>
+                {STYLE_PRESETS.map((s) => {
+                  const isActive = stylePreference === s.label;
+                  return (
+                    <button
+                      key={s.label}
+                      type="button"
+                      onClick={() => setStylePreference(isActive ? '' : s.label)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '10px 13px', borderRadius: 9,
+                        border: `1.5px solid ${isActive ? '#111111' : 'var(--border)'}`,
+                        background: isActive ? 'rgba(17,17,17,0.04)' : 'transparent',
+                        cursor: 'pointer', fontFamily: 'inherit',
+                        textAlign: 'left', transition: 'all 0.12s',
+                      }}
+                      onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.borderColor = 'var(--border-strong)'; }}
+                      onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.borderColor = 'var(--border)'; }}
+                    >
+                      <span style={{ fontSize: 20, flexShrink: 0 }}>{s.icon}</span>
+                      <div>
+                        <div style={{ fontSize: 12.5, fontWeight: isActive ? 700 : 600, color: isActive ? '#111' : 'var(--text-primary)', marginBottom: 1 }}>
+                          {s.label}
+                        </div>
+                        <div style={{ fontSize: 10.5, color: 'var(--text-muted)', lineHeight: 1.3 }}>
+                          {s.desc}
+                        </div>
+                      </div>
+                      {isActive && (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#111" strokeWidth="2.5" strokeLinecap="round" style={{ flexShrink: 0, marginLeft: 'auto' }}>
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
               <input
                 className="input-field"
                 type="text"
                 value={stylePreference}
                 onChange={(e) => setStylePreference(e.target.value)}
-                placeholder="e.g., Modern minimalist with warm wood tones"
+                placeholder="Or type a custom style…"
               />
             </div>
           </div>
@@ -452,6 +595,17 @@ export default function NewProjectPage() {
           </div>
         </div>
       )}
+
+      {/* ── New client slide-out drawer ────────────── */}
+      <NewClientDrawer
+        open={showNewClient}
+        onClose={() => setShowNewClient(false)}
+        onCreated={(client) => {
+          setClients((prev) => [client, ...prev]);
+          setSelectedClient(client);
+          setShowNewClient(false);
+        }}
+      />
     </div>
   );
 }
