@@ -486,16 +486,16 @@ function AddFromCatalogModal({
 function ShortlistItemCard({
   item,
   projectId,
-  onUpdated,
-  onRemoved,
+  onItemChange,
+  onItemRemove,
   isSelectedForCompare,
   onToggleCompare,
   compareDisabled,
 }: {
   item: ShortlistItem;
   projectId: string;
-  onUpdated: () => void;
-  onRemoved: () => void;
+  onItemChange: (id: string, updated: Partial<ShortlistItem>) => void;
+  onItemRemove: (id: string) => void;
   isSelectedForCompare: boolean;
   onToggleCompare: () => void;
   compareDisabled: boolean;
@@ -504,7 +504,6 @@ function ShortlistItemCard({
   const [saving, setSaving] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [removing, setRemoving] = useState(false);
-
   const [quantity, setQuantity] = useState(item.quantity);
   const [designerNotes, setDesignerNotes] = useState(item.designerNotes ?? '');
   const [sharedNotes, setSharedNotes] = useState(item.sharedNotes ?? '');
@@ -525,22 +524,35 @@ function ShortlistItemCard({
       fitAssessment: fitAssessment.trim() || null,
       isPinned,
     };
-    await api.updateShortlistItem(projectId, item.id, payload);
-    setSaving(false);
+    // Optimistic update
+    onItemChange(item.id, {
+      quantity,
+      designerNotes: designerNotes.trim() || null,
+      sharedNotes: sharedNotes.trim() || null,
+      fitAssessment: fitAssessment.trim() || null,
+      isPinned,
+      status: isPinned ? 'added_to_cart' : 'suggested',
+    });
     setEditing(false);
-    onUpdated();
+    setSaving(false);
+    await api.updateShortlistItem(projectId, item.id, payload);
   }
 
   async function handleRemove() {
     setRemoving(true);
+    // Optimistic remove
+    onItemRemove(item.id);
     await api.removeShortlistItem(projectId, item.id);
-    setRemoving(false);
-    onRemoved();
   }
 
   async function handleTogglePin() {
-    await api.updateShortlistItem(projectId, item.id, { isPinned: !item.isPinned });
-    onUpdated();
+    const newPinned = !item.isPinned;
+    // Optimistic update — instant UI change
+    onItemChange(item.id, {
+      isPinned: newPinned,
+      status: newPinned ? 'added_to_cart' : 'suggested',
+    });
+    await api.updateShortlistItem(projectId, item.id, { isPinned: newPinned });
   }
 
   return (
@@ -1015,8 +1027,12 @@ export default function RoomDetailPage() {
                   key={item.id}
                   item={item}
                   projectId={projectId}
-                  onUpdated={loadShortlist}
-                  onRemoved={loadShortlist}
+                  onItemChange={(id, updated) => {
+                    setShortlistItems((prev) => prev.map((i) => i.id === id ? { ...i, ...updated } : i));
+                  }}
+                  onItemRemove={(id) => {
+                    setShortlistItems((prev) => prev.filter((i) => i.id !== id));
+                  }}
                   isSelectedForCompare={selectedForCompare.has(item.id)}
                   onToggleCompare={() => toggleSelectForCompare(item.id)}
                   compareDisabled={compareDisabled}

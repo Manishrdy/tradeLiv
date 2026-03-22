@@ -6,6 +6,8 @@ import { useParams, usePathname } from 'next/navigation';
 const TABS = [
   { label: 'Overview', href: (id: string) => `/projects/${id}` },
   { label: 'Rooms',    href: (id: string) => `/projects/${id}/rooms` },
+  { label: 'Cart',     href: (id: string) => `/projects/${id}/cart` },
+  { label: 'Orders',   href: (id: string) => `/projects/${id}/orders` },
 ];
 
 export default function ProjectLayout({ children }: { children: React.ReactNode }) {
@@ -24,7 +26,9 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
       }}>
         {TABS.map((tab) => {
           const href = tab.href(id);
-          const isActive = pathname === href || (tab.label === 'Rooms' && pathname.startsWith(`/projects/${id}/rooms`));
+          const isActive = pathname === href
+            || (tab.label === 'Rooms' && pathname.startsWith(`/projects/${id}/rooms`))
+            || (tab.label === 'Orders' && pathname.startsWith(`/projects/${id}/orders`));
           return (
             <Link
               key={tab.label}

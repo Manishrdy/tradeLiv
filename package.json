@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "docker-compose up chrome -d && npm run dev --workspace=apps/api & npm run dev --workspace=apps/web",
+    "dev": "docker-compose up chrome -d && npm run dev --workspace=apps/api & npm run dev --workspace=apps/web & stripe listen --forward-to localhost:4000/api/webhooks/stripe",
     "dev:api": "docker-compose up chrome -d && npm run dev --workspace=apps/api",
     "dev:web": "npm run dev --workspace=apps/web",
     "build:api": "npm run build --workspace=apps/api",

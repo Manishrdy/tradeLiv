@@ -452,6 +452,89 @@ export interface ShortlistUpdatePayload {
   status?: 'suggested' | 'approved' | 'rejected' | 'added_to_cart';
 }
 
+/* ─── Cart types ───────────────────────────────────── */
+
+export interface CartItem {
+  id: string;
+  projectId: string;
+  productId: string;
+  roomId: string;
+  selectedVariant: Record<string, string> | null;
+  quantity: number;
+  unitPrice: number | null;
+  createdAt: string;
+  product: ShortlistProduct;
+  room: { id: string; name: string };
+}
+
+export interface CartAddPayload {
+  shortlistItemId: string;
+  quantity?: number;
+}
+
+/* ─── Order types ──────────────────────────────────── */
+
+export interface OrderLineItem {
+  id: string;
+  orderId: string;
+  productId: string;
+  roomId: string;
+  selectedVariant: Record<string, string> | null;
+  quantity: number;
+  unitPrice: number | null;
+  lineTotal: number | null;
+  product: { id: string; productName: string; brandName: string | null; price: number | null; imageUrl: string | null; category: string | null };
+  room: { id: string; name: string };
+}
+
+export interface BrandPO {
+  id: string;
+  orderId: string;
+  brandName: string;
+  status: string;
+  subtotal: number | null;
+  createdAt: string;
+  lineItems: OrderLineItem[];
+}
+
+export interface OrderSummary {
+  id: string;
+  projectId: string;
+  status: string;
+  totalAmount: number | null;
+  createdAt: string;
+  _count: { lineItems: number; brandPOs: number };
+}
+
+export interface OrderDetail {
+  id: string;
+  projectId: string;
+  designerId: string;
+  status: string;
+  totalAmount: number | null;
+  taxAmount: number | null;
+  createdAt: string;
+  updatedAt: string;
+  lineItems: OrderLineItem[];
+  brandPOs: BrandPO[];
+}
+
+export interface OrderSummaryGlobal extends OrderSummary {
+  project: { id: string; name: string; client: { name: string } | null };
+}
+
+export interface Payment {
+  id: string;
+  orderId: string;
+  stripeSessionId: string | null;
+  stripePaymentIntentId: string | null;
+  amount: number;
+  currency: string;
+  status: string;
+  paymentMethod: string | null;
+  createdAt: string;
+}
+
 /* ─── Portal types ──────────────────────────────────── */
 
 export interface PortalProduct {
@@ -685,6 +768,65 @@ export const api = {
     request<{ message: string }>(`/api/orders/projects/${projectId}/shortlist/${itemId}`, {
       method: 'DELETE',
     }),
+
+  // Cart
+  getCart: (projectId: string) =>
+    request<CartItem[]>(`/api/orders/projects/${projectId}/cart`),
+
+  addToCart: (projectId: string, payload: CartAddPayload) =>
+    request<CartItem>(`/api/orders/projects/${projectId}/cart`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateCartItem: (projectId: string, itemId: string, payload: { quantity: number }) =>
+    request<CartItem>(`/api/orders/projects/${projectId}/cart/${itemId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  removeCartItem: (projectId: string, itemId: string) =>
+    request<{ message: string }>(`/api/orders/projects/${projectId}/cart/${itemId}`, {
+      method: 'DELETE',
+    }),
+
+  // Orders
+  getAllOrders: (status?: string) => {
+    const qs = status ? `?status=${status}` : '';
+    return request<OrderSummaryGlobal[]>(`/api/orders${qs}`);
+  },
+
+  getProjectOrders: (projectId: string) =>
+    request<OrderSummary[]>(`/api/orders/projects/${projectId}/orders`),
+
+  createOrder: (projectId: string) =>
+    request<OrderDetail>(`/api/orders/projects/${projectId}/orders`, {
+      method: 'POST',
+    }),
+
+  getOrder: (projectId: string, orderId: string) =>
+    request<OrderDetail>(`/api/orders/projects/${projectId}/orders/${orderId}`),
+
+  cancelOrder: (projectId: string, orderId: string) =>
+    request<{ message: string }>(`/api/orders/projects/${projectId}/orders/${orderId}/cancel`, {
+      method: 'PUT',
+    }),
+
+  updateBrandPoStatus: (orderId: string, poId: string, status: string) =>
+    request<BrandPO>(`/api/orders/${orderId}/brand-pos/${poId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    }),
+
+  // Payments
+  createCheckoutSession: (orderId: string) =>
+    request<{ sessionUrl: string }>('/api/payments/create-checkout-session', {
+      method: 'POST',
+      body: JSON.stringify({ orderId }),
+    }),
+
+  getOrderPayments: (orderId: string) =>
+    request<Payment[]>(`/api/payments/order/${orderId}`),
 
   // Portal (public)
   getPortalProject: (portalToken: string) =>

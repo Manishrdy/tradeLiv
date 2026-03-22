@@ -56,7 +56,7 @@ const NAV = [
   {
     href: '/orders',
     label: 'Orders',
-    available: false,
+    available: true,
     icon: (
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M9 11l3 3L22 4" />

@@ -227,6 +227,7 @@ model Order {
   designer  Designer             @relation(fields: [designerId], references: [id])
   lineItems OrderLineItem[]
   brandPOs  BrandPurchaseOrder[]
+  payments  Payment[]
 }
 
 model OrderLineItem {
@@ -257,6 +258,22 @@ model BrandPurchaseOrder {
 
   order     Order           @relation(fields: [orderId], references: [id])
   lineItems OrderLineItem[]
+}
+
+model Payment {
+  id                    String   @id @default(uuid())
+  orderId               String
+  stripeSessionId       String?  @unique
+  stripePaymentIntentId String?  @unique
+  amount                Decimal
+  currency              String   @default("usd")
+  status                String   @default("pending")
+  paymentMethod         String?
+  stripeResponse        Json?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
 }
 
 model AuditLog {

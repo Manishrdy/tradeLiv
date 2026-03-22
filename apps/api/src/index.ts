@@ -14,6 +14,8 @@ import projectsRouter from './routes/projects';
 import catalogRouter from './routes/catalog';
 import ordersRouter from './routes/orders';
 import adminRouter from './routes/admin';
+import paymentsRouter from './routes/payments';
+import { stripeWebhookHandler } from './routes/webhooks';
 import { addProjectListener } from './services/projectEvents';
 
 const app = express();
@@ -25,6 +27,10 @@ app.use(cors({
   credentials: true,
 }));
 app.use(cookieParser());
+
+// Stripe webhook needs raw body — must be BEFORE express.json()
+app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhookHandler);
+
 app.use(express.json());
 
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -57,6 +63,7 @@ app.use('/api/portal', portalRouter);
 app.use('/api/projects', projectsRouter);
 app.use('/api/catalog', catalogRouter);
 app.use('/api/orders', ordersRouter);
+app.use('/api/payments', paymentsRouter);
 app.use('/api/admin', adminRouter);
 
 /* ─── SSE: real-time project events ───────────────── */

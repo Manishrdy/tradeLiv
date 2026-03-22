@@ -4,6 +4,7 @@ import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { writeAuditLog } from '../services/auditLog';
 import { emitProjectEvent } from '../services/projectEvents';
+import { splitOrderByBrand } from '../services/orderSplitter';
 import logger from '../config/logger';
 
 const router = Router();
@@ -32,6 +33,15 @@ const shortlistUpdateSchema = z.object({
   status: z.enum(['suggested', 'approved', 'rejected', 'added_to_cart']).optional(),
 });
 
+const cartAddSchema = z.object({
+  shortlistItemId: z.string().uuid('Invalid shortlist item ID'),
+  quantity: z.number().int().positive().optional(),
+});
+
+const cartUpdateSchema = z.object({
+  quantity: z.number().int().positive('Quantity must be at least 1'),
+});
+
 /* ─── Helpers ───────────────────────────────────────── */
 
 function toNum(v: unknown): number | null {
@@ -49,9 +59,119 @@ function serializeShortlistItem(item: any) {
   };
 }
 
+function serializeCartItem(item: any) {
+  return {
+    ...item,
+    unitPrice: toNum(item.unitPrice),
+    product: item.product
+      ? { ...item.product, price: toNum(item.product.price) }
+      : undefined,
+  };
+}
+
+function serializeOrder(order: any) {
+  return {
+    ...order,
+    totalAmount: toNum(order.totalAmount),
+    taxAmount: toNum(order.taxAmount),
+    lineItems: order.lineItems?.map((li: any) => ({
+      ...li,
+      unitPrice: toNum(li.unitPrice),
+      lineTotal: toNum(li.lineTotal),
+      product: li.product ? { ...li.product, price: toNum(li.product.price) } : undefined,
+    })),
+    brandPOs: order.brandPOs?.map((po: any) => ({
+      ...po,
+      subtotal: toNum(po.subtotal),
+      lineItems: po.lineItems?.map((li: any) => ({
+        ...li,
+        unitPrice: toNum(li.unitPrice),
+        lineTotal: toNum(li.lineTotal),
+      })),
+    })),
+  };
+}
+
+const productSelect = {
+  id: true, productName: true, brandName: true, price: true,
+  imageUrl: true, category: true, material: true, dimensions: true,
+  finishes: true, leadTime: true, productUrl: true, metadata: true,
+};
+
 async function getOwnedProject(projectId: string, designerId: string) {
   return prisma.project.findFirst({ where: { id: projectId, designerId } });
 }
+
+/* ─── GET /api/orders (global — all orders for designer) ─ */
+
+router.get('/', async (req: AuthRequest, res: Response) => {
+  try {
+    const status = req.query.status as string | undefined;
+    const where: any = { designerId: req.user!.id };
+    if (status) where.status = status;
+
+    const orders = await prisma.order.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        project: {
+          select: { id: true, name: true, client: { select: { name: true } } },
+        },
+        _count: { select: { lineItems: true, brandPOs: true } },
+      },
+    });
+
+    res.json(orders.map((o) => ({
+      ...o,
+      totalAmount: toNum(o.totalAmount),
+      taxAmount: toNum(o.taxAmount),
+    })));
+  } catch (err) {
+    logger.error('orders route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── PUT /api/orders/:orderId/brand-pos/:poId/status ── */
+
+const brandPoStatusSchema = z.object({
+  status: z.enum(['sent', 'acknowledged', 'in_production', 'dispatched', 'delivered', 'cancelled']),
+});
+
+router.put('/:orderId/brand-pos/:poId/status', async (req: AuthRequest, res: Response) => {
+  const parsed = brandPoStatusSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors[0].message }); return; }
+
+  try {
+    const order = await prisma.order.findFirst({
+      where: { id: req.params.orderId, designerId: req.user!.id },
+    });
+    if (!order) { res.status(404).json({ error: 'Order not found.' }); return; }
+
+    const po = await prisma.brandPurchaseOrder.findFirst({
+      where: { id: req.params.poId, orderId: req.params.orderId },
+    });
+    if (!po) { res.status(404).json({ error: 'Brand PO not found.' }); return; }
+
+    const updated = await prisma.brandPurchaseOrder.update({
+      where: { id: req.params.poId },
+      data: { status: parsed.data.status },
+    });
+
+    writeAuditLog({
+      actorType: 'designer', actorId: req.user!.id,
+      action: 'brand_po_status_changed', entityType: 'project', entityId: order.projectId,
+      payload: { orderId: order.id, poId: po.id, brandName: po.brandName, oldStatus: po.status, newStatus: parsed.data.status },
+    });
+
+    emitProjectEvent(order.projectId, 'order_updated', { orderId: order.id, poId: po.id });
+
+    res.json({ ...updated, subtotal: toNum(updated.subtotal) });
+  } catch (err) {
+    logger.error('orders route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
 
 /* ─── POST /api/orders/projects/:projectId/shortlist ── */
 
@@ -229,18 +349,47 @@ router.put('/projects/:projectId/shortlist/:itemId', async (req: AuthRequest, re
       return;
     }
 
-    // Sync isPinned ↔ status: starring = approved, unstarring = suggested
+    // Sync isPinned ↔ status ↔ cart
     const updateData = { ...parsed.data };
     if (updateData.isPinned === true && updateData.status === undefined) {
-      updateData.status = 'approved';
+      updateData.status = 'added_to_cart';
     } else if (updateData.isPinned === false && updateData.status === undefined) {
       updateData.status = 'suggested';
     }
-    // If status is set explicitly, sync isPinned accordingly
     if (updateData.status === 'approved' && updateData.isPinned === undefined) {
       updateData.isPinned = true;
+      updateData.status = 'added_to_cart';
     } else if ((updateData.status === 'rejected' || updateData.status === 'suggested') && updateData.isPinned === undefined) {
       updateData.isPinned = false;
+    }
+
+    // Auto-add to cart when pinning
+    const pinning = updateData.isPinned === true && !existing.isPinned;
+    const unpinning = updateData.isPinned === false && existing.isPinned;
+
+    if (pinning) {
+      // Check no duplicate in cart
+      const alreadyInCart = await prisma.cartItem.findFirst({
+        where: { projectId: req.params.projectId, productId: existing.productId, roomId: existing.roomId },
+      });
+      if (!alreadyInCart) {
+        const product = await prisma.product.findUnique({ where: { id: existing.productId }, select: { price: true } });
+        await prisma.cartItem.create({
+          data: {
+            projectId: req.params.projectId,
+            productId: existing.productId,
+            roomId: existing.roomId,
+            selectedVariant: existing.selectedVariant ?? undefined,
+            quantity: existing.quantity,
+            unitPrice: product?.price ?? null,
+          },
+        });
+      }
+    } else if (unpinning) {
+      // Remove from cart
+      await prisma.cartItem.deleteMany({
+        where: { projectId: req.params.projectId, productId: existing.productId, roomId: existing.roomId },
+      });
     }
 
     const item = await prisma.shortlistItem.update({
@@ -279,6 +428,9 @@ router.put('/projects/:projectId/shortlist/:itemId', async (req: AuthRequest, re
     });
 
     emitProjectEvent(req.params.projectId, 'shortlist_updated', { itemId: item.id });
+    if (pinning || unpinning) {
+      emitProjectEvent(req.params.projectId, 'cart_updated', { action: pinning ? 'added' : 'removed' });
+    }
 
     res.json(serializeShortlistItem(item));
   } catch (err) {
@@ -328,16 +480,409 @@ router.delete('/projects/:projectId/shortlist/:itemId', async (req: AuthRequest,
   }
 });
 
-/* ─── Cart (stub — Module 5) ───────────────────────── */
+/* ─── GET /api/orders/projects/:projectId/cart ──────── */
 
-router.get('/projects/:projectId/cart', (_req, res) => res.status(501).json({ message: 'Not implemented' }));
-router.post('/projects/:projectId/cart', (_req, res) => res.status(501).json({ message: 'Not implemented' }));
-router.put('/projects/:projectId/cart/:itemId', (_req, res) => res.status(501).json({ message: 'Not implemented' }));
-router.delete('/projects/:projectId/cart/:itemId', (_req, res) => res.status(501).json({ message: 'Not implemented' }));
+router.get('/projects/:projectId/cart', async (req: AuthRequest, res: Response) => {
+  try {
+    const project = await getOwnedProject(req.params.projectId, req.user!.id);
+    if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
 
-/* ─── Orders (stub — Module 5) ─────────────────────── */
+    const items = await prisma.cartItem.findMany({
+      where: { projectId: req.params.projectId },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        product: { select: productSelect },
+        room: { select: { id: true, name: true } },
+      },
+    });
 
-router.post('/projects/:projectId/orders', (_req, res) => res.status(501).json({ message: 'Not implemented' }));
-router.get('/projects/:projectId/orders/:orderId', (_req, res) => res.status(501).json({ message: 'Not implemented' }));
+    res.json(items.map(serializeCartItem));
+  } catch (err) {
+    logger.error('orders route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── POST /api/orders/projects/:projectId/cart ─────── */
+
+router.post('/projects/:projectId/cart', async (req: AuthRequest, res: Response) => {
+  const parsed = cartAddSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors[0].message }); return; }
+
+  const { shortlistItemId, quantity } = parsed.data;
+
+  try {
+    const project = await getOwnedProject(req.params.projectId, req.user!.id);
+    if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
+
+    const shortlistItem = await prisma.shortlistItem.findFirst({
+      where: { id: shortlistItemId, projectId: req.params.projectId },
+      include: { product: { select: { id: true, productName: true, brandName: true, price: true } }, room: { select: { id: true, name: true } } },
+    });
+    if (!shortlistItem) { res.status(404).json({ error: 'Shortlist item not found.' }); return; }
+
+    if (shortlistItem.status === 'added_to_cart') {
+      res.status(400).json({ error: 'Item is already in cart.' }); return;
+    }
+    if (shortlistItem.status === 'rejected') {
+      res.status(400).json({ error: 'Cannot add a rejected item to cart.' }); return;
+    }
+
+    // Check for duplicate in cart
+    const existingCartItem = await prisma.cartItem.findFirst({
+      where: { projectId: req.params.projectId, productId: shortlistItem.productId, roomId: shortlistItem.roomId },
+    });
+    if (existingCartItem) {
+      res.status(400).json({ error: 'This product is already in the cart for this room.' }); return;
+    }
+
+    const [cartItem] = await prisma.$transaction([
+      prisma.cartItem.create({
+        data: {
+          projectId: req.params.projectId,
+          productId: shortlistItem.productId,
+          roomId: shortlistItem.roomId,
+          selectedVariant: shortlistItem.selectedVariant ?? undefined,
+          quantity: quantity ?? shortlistItem.quantity,
+          unitPrice: shortlistItem.product.price,
+        },
+        include: {
+          product: { select: productSelect },
+          room: { select: { id: true, name: true } },
+        },
+      }),
+      prisma.shortlistItem.update({
+        where: { id: shortlistItemId },
+        data: { status: 'added_to_cart' },
+      }),
+    ]);
+
+    writeAuditLog({
+      actorType: 'designer', actorId: req.user!.id,
+      action: 'cart_item_added', entityType: 'project', entityId: req.params.projectId,
+      payload: { productId: shortlistItem.productId, productName: shortlistItem.product.productName, roomId: shortlistItem.roomId, roomName: shortlistItem.room.name },
+    });
+
+    emitProjectEvent(req.params.projectId, 'cart_updated', { action: 'added' });
+
+    res.status(201).json(serializeCartItem(cartItem));
+  } catch (err) {
+    logger.error('orders route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── PUT /api/orders/projects/:projectId/cart/:itemId ─ */
+
+router.put('/projects/:projectId/cart/:itemId', async (req: AuthRequest, res: Response) => {
+  const parsed = cartUpdateSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors[0].message }); return; }
+
+  try {
+    const project = await getOwnedProject(req.params.projectId, req.user!.id);
+    if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
+
+    const existing = await prisma.cartItem.findFirst({
+      where: { id: req.params.itemId, projectId: req.params.projectId },
+    });
+    if (!existing) { res.status(404).json({ error: 'Cart item not found.' }); return; }
+
+    const item = await prisma.cartItem.update({
+      where: { id: req.params.itemId },
+      data: { quantity: parsed.data.quantity },
+      include: {
+        product: { select: productSelect },
+        room: { select: { id: true, name: true } },
+      },
+    });
+
+    writeAuditLog({
+      actorType: 'designer', actorId: req.user!.id,
+      action: 'cart_item_updated', entityType: 'project', entityId: req.params.projectId,
+      payload: { cartItemId: item.id, oldQty: existing.quantity, newQty: parsed.data.quantity },
+    });
+
+    res.json(serializeCartItem(item));
+  } catch (err) {
+    logger.error('orders route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── DELETE /api/orders/projects/:projectId/cart/:itemId */
+
+router.delete('/projects/:projectId/cart/:itemId', async (req: AuthRequest, res: Response) => {
+  try {
+    const project = await getOwnedProject(req.params.projectId, req.user!.id);
+    if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
+
+    const existing = await prisma.cartItem.findFirst({
+      where: { id: req.params.itemId, projectId: req.params.projectId },
+      include: { product: { select: { productName: true } } },
+    });
+    if (!existing) { res.status(404).json({ error: 'Cart item not found.' }); return; }
+
+    await prisma.$transaction([
+      prisma.cartItem.delete({ where: { id: req.params.itemId } }),
+      // Reset corresponding shortlist item status back to approved
+      prisma.shortlistItem.updateMany({
+        where: { projectId: req.params.projectId, productId: existing.productId, roomId: existing.roomId, status: 'added_to_cart' },
+        data: { status: 'approved' },
+      }),
+    ]);
+
+    writeAuditLog({
+      actorType: 'designer', actorId: req.user!.id,
+      action: 'cart_item_removed', entityType: 'project', entityId: req.params.projectId,
+      payload: { cartItemId: existing.id, productName: existing.product.productName, roomId: existing.roomId },
+    });
+
+    emitProjectEvent(req.params.projectId, 'cart_updated', { action: 'removed' });
+
+    res.json({ message: 'Item removed from cart.' });
+  } catch (err) {
+    logger.error('orders route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── POST /api/orders/projects/:projectId/orders ──── */
+
+router.post('/projects/:projectId/orders', async (req: AuthRequest, res: Response) => {
+  try {
+    const project = await getOwnedProject(req.params.projectId, req.user!.id);
+    if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
+
+    const cartItems = await prisma.cartItem.findMany({
+      where: { projectId: req.params.projectId },
+      include: { product: { select: { id: true, productName: true, brandName: true, price: true } } },
+    });
+
+    if (cartItems.length === 0) {
+      res.status(400).json({ error: 'Cart is empty. Add items before submitting an order.' }); return;
+    }
+
+    // Calculate line totals
+    const lineItemsData = cartItems.map((ci) => {
+      const unitPrice = ci.unitPrice ?? ci.product.price;
+      const up = Number(unitPrice ?? 0);
+      const lt = up * ci.quantity;
+      return {
+        productId: ci.productId,
+        roomId: ci.roomId,
+        selectedVariant: ci.selectedVariant ?? undefined,
+        quantity: ci.quantity,
+        unitPrice: up,
+        lineTotal: lt,
+        brandName: ci.product.brandName || 'Unknown',
+      };
+    });
+
+    const totalAmount = lineItemsData.reduce((sum, li) => sum + li.lineTotal, 0);
+
+    // Build brand PO groups
+    const brandGroups = splitOrderByBrand(
+      lineItemsData.map((li, i) => ({ id: String(i), brandName: li.brandName, lineTotal: li.lineTotal }))
+    );
+
+    // Execute everything in a transaction
+    const order = await prisma.$transaction(async (tx) => {
+      // 1. Create order
+      const newOrder = await tx.order.create({
+        data: {
+          projectId: req.params.projectId,
+          designerId: req.user!.id,
+          status: 'draft',
+          totalAmount,
+          taxAmount: null,
+        },
+      });
+
+      // 2. Create brand POs
+      const brandPoMap = new Map<string, string>(); // brandName → poId
+      for (const group of brandGroups) {
+        const po = await tx.brandPurchaseOrder.create({
+          data: {
+            orderId: newOrder.id,
+            brandName: group.brandName,
+            status: 'sent',
+            subtotal: group.subtotal,
+          },
+        });
+        brandPoMap.set(group.brandName, po.id);
+      }
+
+      // 3. Create order line items linked to brand POs
+      for (const li of lineItemsData) {
+        await tx.orderLineItem.create({
+          data: {
+            orderId: newOrder.id,
+            productId: li.productId,
+            roomId: li.roomId,
+            selectedVariant: li.selectedVariant,
+            quantity: li.quantity,
+            unitPrice: li.unitPrice,
+            lineTotal: li.lineTotal,
+            brandPoId: brandPoMap.get(li.brandName) ?? null,
+          },
+        });
+      }
+
+      // 4. Clear cart
+      await tx.cartItem.deleteMany({ where: { projectId: req.params.projectId } });
+
+      // 5. Fetch the complete order
+      return tx.order.findUnique({
+        where: { id: newOrder.id },
+        include: {
+          lineItems: {
+            include: {
+              product: { select: productSelect },
+              room: { select: { id: true, name: true } },
+            },
+          },
+          brandPOs: {
+            include: {
+              lineItems: {
+                include: {
+                  product: { select: { id: true, productName: true, brandName: true, price: true, imageUrl: true, category: true } },
+                  room: { select: { id: true, name: true } },
+                },
+              },
+            },
+          },
+        },
+      });
+    });
+
+    writeAuditLog({
+      actorType: 'designer', actorId: req.user!.id,
+      action: 'order_created', entityType: 'project', entityId: req.params.projectId,
+      payload: { orderId: order!.id, lineItemCount: lineItemsData.length, totalAmount, brandCount: brandGroups.length },
+    });
+
+    emitProjectEvent(req.params.projectId, 'order_created', { orderId: order!.id });
+
+    res.status(201).json(serializeOrder(order));
+  } catch (err) {
+    logger.error('orders route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── PUT /api/orders/projects/:projectId/orders/:orderId/cancel */
+
+router.put('/projects/:projectId/orders/:orderId/cancel', async (req: AuthRequest, res: Response) => {
+  try {
+    const project = await getOwnedProject(req.params.projectId, req.user!.id);
+    if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
+
+    const order = await prisma.order.findFirst({
+      where: { id: req.params.orderId, projectId: req.params.projectId },
+      include: { lineItems: true },
+    });
+    if (!order) { res.status(404).json({ error: 'Order not found.' }); return; }
+
+    if (order.status === 'closed') {
+      res.status(400).json({ error: 'Order is already closed.' }); return;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // 1. Close the order
+      await tx.order.update({ where: { id: order.id }, data: { status: 'closed' } });
+
+      // 2. Cancel all brand POs
+      await tx.brandPurchaseOrder.updateMany({
+        where: { orderId: order.id },
+        data: { status: 'cancelled' },
+      });
+
+      // 3. Reset shortlist items back to approved so they can be re-carted
+      for (const li of order.lineItems) {
+        await tx.shortlistItem.updateMany({
+          where: { projectId: req.params.projectId, productId: li.productId, roomId: li.roomId, status: 'added_to_cart' },
+          data: { status: 'approved', isPinned: false },
+        });
+      }
+    });
+
+    writeAuditLog({
+      actorType: 'designer', actorId: req.user!.id,
+      action: 'order_cancelled', entityType: 'project', entityId: req.params.projectId,
+      payload: { orderId: order.id },
+    });
+
+    emitProjectEvent(req.params.projectId, 'order_updated', { orderId: order.id });
+
+    res.json({ message: 'Order cancelled.' });
+  } catch (err) {
+    logger.error('orders route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── GET /api/orders/projects/:projectId/orders ───── */
+
+router.get('/projects/:projectId/orders', async (req: AuthRequest, res: Response) => {
+  try {
+    const project = await getOwnedProject(req.params.projectId, req.user!.id);
+    if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
+
+    const orders = await prisma.order.findMany({
+      where: { projectId: req.params.projectId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        _count: { select: { lineItems: true, brandPOs: true } },
+      },
+    });
+
+    res.json(orders.map((o) => ({
+      ...o,
+      totalAmount: toNum(o.totalAmount),
+      taxAmount: toNum(o.taxAmount),
+    })));
+  } catch (err) {
+    logger.error('orders route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── GET /api/orders/projects/:projectId/orders/:orderId */
+
+router.get('/projects/:projectId/orders/:orderId', async (req: AuthRequest, res: Response) => {
+  try {
+    const project = await getOwnedProject(req.params.projectId, req.user!.id);
+    if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
+
+    const order = await prisma.order.findFirst({
+      where: { id: req.params.orderId, projectId: req.params.projectId },
+      include: {
+        lineItems: {
+          include: {
+            product: { select: productSelect },
+            room: { select: { id: true, name: true } },
+          },
+        },
+        brandPOs: {
+          include: {
+            lineItems: {
+              include: {
+                product: { select: { id: true, productName: true, brandName: true, price: true, imageUrl: true, category: true } },
+                room: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!order) { res.status(404).json({ error: 'Order not found.' }); return; }
+
+    res.json(serializeOrder(order));
+  } catch (err) {
+    logger.error('orders route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
 
 export default router;

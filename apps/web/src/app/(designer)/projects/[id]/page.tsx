@@ -342,11 +342,12 @@ export default function ProjectOverviewPage() {
           )}
 
           {/* Quick stats */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
             {[
               { label: 'Rooms', value: project.rooms.length, href: `/projects/${id}/rooms`, icon: '🛋️' },
-              { label: 'Shortlisted', value: project._count.shortlistItems, href: '#', icon: '❤️' },
-              { label: 'Orders', value: project._count.orders, href: '#', icon: '📦' },
+              { label: 'Shortlisted', value: project._count.shortlistItems, href: `/projects/${id}/rooms`, icon: '❤️' },
+              { label: 'Cart', value: project._count.cartItems, href: `/projects/${id}/cart`, icon: '🛒' },
+              { label: 'Orders', value: project._count.orders, href: `/projects/${id}/orders`, icon: '📦' },
             ].map((stat) => (
               <div key={stat.label} className="card" style={{ padding: '16px 18px', textAlign: 'center' }}>
                 <div style={{ fontSize: 22, marginBottom: 4 }}>{stat.icon}</div>
