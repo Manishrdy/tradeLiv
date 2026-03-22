@@ -613,6 +613,101 @@ export interface AdminStats {
   totalOrders: number;
 }
 
+export interface AdminEnhancedStats {
+  designers: { total: number; pending_review: number; approved: number; rejected: number; suspended: number };
+  totalProjects: number;
+  orders: { total: number; draft: number; paid: number; processing: number; closed: number };
+  revenue: { total: number; thisMonth: number; averageOrderValue: number };
+  payments: { total: number; pending: number; paid: number; failed: number };
+  recentOrders: {
+    id: string; status: string; totalAmount: number | null; createdAt: string;
+    designer: { fullName: string };
+    project: { name: string; client: { name: string } | null };
+  }[];
+}
+
+export interface AdminUser {
+  id: string;
+  fullName: string;
+  email: string;
+  businessName: string | null;
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
+  createdAt: string;
+}
+
+export interface AdminOrderSummary {
+  id: string;
+  projectId: string;
+  designerId: string;
+  status: string;
+  totalAmount: number | null;
+  stripePaymentId: string | null;
+  createdAt: string;
+  designer: { id: string; fullName: string; email: string };
+  project: { id: string; name: string; client: { name: string } | null };
+  _count: { lineItems: number; brandPOs: number; payments: number };
+}
+
+export interface AdminOrderDetail extends AdminOrderSummary {
+  taxAmount: number | null;
+  updatedAt: string;
+  lineItems: {
+    id: string; quantity: number; unitPrice: number | null; lineTotal: number | null;
+    product: { id: string; productName: string; brandName: string | null; imageUrl: string | null; price: number | null };
+    room: { id: string; name: string };
+  }[];
+  brandPOs: {
+    id: string; brandName: string; status: string; subtotal: number | null;
+    lineItems: { id: string; quantity: number; unitPrice: number | null; lineTotal: number | null }[];
+  }[];
+  payments: {
+    id: string; stripeSessionId: string | null; stripePaymentIntentId: string | null;
+    amount: number; currency: string; status: string; paymentMethod: string | null; createdAt: string;
+  }[];
+  auditLogs: AuditLogEntry[];
+}
+
+export interface AdminPayment {
+  id: string;
+  orderId: string;
+  stripeSessionId: string | null;
+  stripePaymentIntentId: string | null;
+  amount: number;
+  currency: string;
+  status: string;
+  paymentMethod: string | null;
+  createdAt: string;
+  order: {
+    id: string; status: string;
+    designer: { fullName: string };
+    project: { name: string };
+  };
+}
+
+export interface AdminBrandPO {
+  id: string;
+  orderId: string;
+  brandName: string;
+  status: string;
+  subtotal: number | null;
+  createdAt: string;
+  updatedAt: string;
+  order: {
+    id: string;
+    designer: { fullName: string };
+    project: { name: string };
+  };
+  _count: { lineItems: number };
+}
+
+export interface PaginatedResponse<T> {
+  total: number;
+  page: number;
+  totalPages: number;
+  [key: string]: T[] | number;
+}
+
 export interface AdminDesigner {
   id: string;
   fullName: string;
@@ -844,7 +939,7 @@ export const api = {
 
   // Admin
   getAdminMe: () =>
-    request<{ id: string; fullName: string; email: string; isAdmin: boolean }>('/api/admin/me'),
+    request<{ id: string; fullName: string; email: string; isAdmin: boolean; isSuperAdmin: boolean }>('/api/admin/me'),
 
   getAdminStats: () =>
     request<AdminStats>('/api/admin/stats'),
@@ -868,4 +963,69 @@ export const api = {
 
   getAdminActivity: () =>
     request<AuditLogEntry[]>('/api/admin/activity'),
+
+  // Admin team management
+  getAdminAdmins: () =>
+    request<AdminUser[]>('/api/admin/admins'),
+
+  createAdmin: (payload: { designerId?: string; email?: string; password?: string; fullName?: string }) =>
+    request<AdminUser>('/api/admin/admins', { method: 'POST', body: JSON.stringify(payload) }),
+
+  removeAdmin: (id: string) =>
+    request<{ message: string }>(`/api/admin/admins/${id}`, { method: 'DELETE' }),
+
+  // Admin orders
+  getAdminOrders: (params?: { status?: string; search?: string; designerId?: string; page?: number; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.search) qs.set('search', params.search);
+    if (params?.designerId) qs.set('designerId', params.designerId);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return request<{ orders: AdminOrderSummary[]; total: number; page: number; totalPages: number }>(`/api/admin/orders${q ? `?${q}` : ''}`);
+  },
+
+  getAdminOrder: (orderId: string) =>
+    request<AdminOrderDetail>(`/api/admin/orders/${orderId}`),
+
+  updateAdminOrderStatus: (orderId: string, status: string, reason?: string) =>
+    request(`/api/admin/orders/${orderId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status, reason }),
+    }),
+
+  // Admin payments
+  getAdminPayments: (params?: { status?: string; page?: number; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return request<{ payments: AdminPayment[]; total: number; page: number; totalPages: number }>(`/api/admin/payments${q ? `?${q}` : ''}`);
+  },
+
+  getAdminPayment: (paymentId: string) =>
+    request<AdminPayment>(`/api/admin/payments/${paymentId}`),
+
+  // Admin brand POs
+  getAdminBrandPos: (params?: { status?: string; brandName?: string; page?: number; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.brandName) qs.set('brandName', params.brandName);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return request<{ brandPOs: AdminBrandPO[]; total: number; page: number; totalPages: number }>(`/api/admin/brand-pos${q ? `?${q}` : ''}`);
+  },
+
+  updateAdminBrandPoStatus: (poId: string, status: string) =>
+    request(`/api/admin/brand-pos/${poId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    }),
+
+  // Admin enhanced stats
+  getAdminEnhancedStats: () =>
+    request<AdminEnhancedStats>('/api/admin/enhanced-stats'),
 };

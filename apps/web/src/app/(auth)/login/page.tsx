@@ -76,6 +76,10 @@ export default function LoginPage() {
     const result = await api.login({ email: email.trim(), password });
     setLoading(false);
     if (result.error || !result.data) { setError(result.error ?? 'Login failed'); return; }
+    if (result.data.role === 'admin') {
+      router.push('/admin/dashboard');
+      return;
+    }
     setUser(result.data.user);
     setSuccess(true);
   }

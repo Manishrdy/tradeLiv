@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { prisma } from '@furnlo/db';
 import { config } from '../config';
 
 export interface AuthRequest extends Request {
@@ -30,4 +31,20 @@ export function requireRole(...roles: Array<'designer' | 'client' | 'admin'>) {
     }
     next();
   };
+}
+
+export async function requireSuperAdmin(req: AuthRequest, res: Response, next: NextFunction) {
+  if (!req.user) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const designer = await prisma.designer.findUnique({
+    where: { id: req.user.id },
+    select: { isSuperAdmin: true },
+  });
+  if (!designer?.isSuperAdmin) {
+    res.status(403).json({ error: 'Super admin access required.' });
+    return;
+  }
+  next();
 }

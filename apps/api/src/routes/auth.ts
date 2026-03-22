@@ -111,6 +111,18 @@ router.post('/login', async (req: Request, res: Response) => {
       return;
     }
 
+    // Admin accounts go through admin flow
+    if (designer.isAdmin) {
+      const token = signToken({ id: designer.id, role: 'admin' });
+      res.cookie(SESSION_COOKIE, token, cookieOptions());
+      res.json({
+        role: 'admin',
+        user: { id: designer.id, fullName: designer.fullName, email: designer.email, isSuperAdmin: designer.isSuperAdmin },
+      });
+      return;
+    }
+
+    // Designer status checks
     if (designer.status === 'rejected') {
       res.status(403).json({
         error: 'Your application was not approved. Please contact support.',
@@ -171,7 +183,7 @@ router.post('/admin/login', async (req: Request, res: Response) => {
     res.cookie(SESSION_COOKIE, token, cookieOptions());
     res.json({
       role: 'admin',
-      user: { id: designer.id, fullName: designer.fullName, email: designer.email },
+      user: { id: designer.id, fullName: designer.fullName, email: designer.email, isSuperAdmin: designer.isSuperAdmin },
     });
   } catch (err) {
     logger.error('auth route error', { err, path: req.path, method: req.method });
@@ -193,7 +205,7 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
       select: {
         id: true, fullName: true, email: true,
         businessName: true, phone: true, status: true,
-        isAdmin: true, createdAt: true,
+        isAdmin: true, isSuperAdmin: true, createdAt: true,
       },
     });
     if (!designer) {

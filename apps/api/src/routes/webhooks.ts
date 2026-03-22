@@ -5,7 +5,14 @@ import { config } from '../config';
 import { writeAuditLog } from '../services/auditLog';
 import logger from '../config/logger';
 
-const stripe = new Stripe(config.stripeSecretKey);
+let _stripe: Stripe | null = null;
+function getStripe(): Stripe {
+  if (!_stripe) {
+    if (!config.stripeSecretKey) throw new Error('STRIPE_SECRET_KEY is not configured');
+    _stripe = new Stripe(config.stripeSecretKey);
+  }
+  return _stripe;
+}
 
 export async function stripeWebhookHandler(req: Request, res: Response) {
   const sig = req.headers['stripe-signature'];
@@ -13,7 +20,7 @@ export async function stripeWebhookHandler(req: Request, res: Response) {
 
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(req.body, sig, config.stripeWebhookSecret);
+    event = getStripe().webhooks.constructEvent(req.body, sig, config.stripeWebhookSecret);
   } catch (err: any) {
     logger.warn('Stripe webhook signature verification failed', { error: err.message });
     res.status(400).json({ error: `Webhook signature verification failed.` });

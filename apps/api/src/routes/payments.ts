@@ -9,7 +9,14 @@ import logger from '../config/logger';
 const router = Router();
 router.use(requireAuth, requireRole('designer'));
 
-const stripe = new Stripe(config.stripeSecretKey);
+let _stripe: Stripe | null = null;
+function getStripe(): Stripe {
+  if (!_stripe) {
+    if (!config.stripeSecretKey) throw new Error('STRIPE_SECRET_KEY is not configured');
+    _stripe = new Stripe(config.stripeSecretKey);
+  }
+  return _stripe;
+}
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -66,7 +73,7 @@ router.post('/create-checkout-session', async (req: AuthRequest, res: Response) 
     const totalAmount = Number(order.totalAmount ?? 0);
 
     // Create Stripe Checkout Session
-    const session = await stripe.checkout.sessions.create({
+    const session = await getStripe().checkout.sessions.create({
       mode: 'payment',
       line_items: lineItems,
       metadata: {

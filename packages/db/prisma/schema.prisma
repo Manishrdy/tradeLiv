@@ -62,6 +62,7 @@ model Designer {
   phone        String?
   status       DesignerStatus @default(pending_review)
   isAdmin      Boolean        @default(false)
+  isSuperAdmin Boolean        @default(false)
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 

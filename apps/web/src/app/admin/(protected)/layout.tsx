@@ -5,11 +5,12 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 
-interface AdminUser {
+interface AdminUserState {
   id: string;
   fullName: string;
   email: string;
   isAdmin: boolean;
+  isSuperAdmin: boolean;
 }
 
 const NAV = [
@@ -35,12 +36,55 @@ const NAV = [
       </svg>
     ),
   },
+  {
+    href: '/admin/orders',
+    label: 'Orders',
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" />
+        <line x1="3" y1="6" x2="21" y2="6" />
+        <path d="M16 10a4 4 0 01-8 0" />
+      </svg>
+    ),
+  },
+  {
+    href: '/admin/payments',
+    label: 'Payments',
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+        <line x1="1" y1="10" x2="23" y2="10" />
+      </svg>
+    ),
+  },
+  {
+    href: '/admin/brand-pos',
+    label: 'Brand POs',
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+      </svg>
+    ),
+  },
+  {
+    href: '/admin/team',
+    label: 'Team',
+    superAdminOnly: true,
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      </svg>
+    ),
+  },
 ];
 
 export default function AdminProtectedLayout({ children }: { children: React.ReactNode }) {
   const router   = useRouter();
   const pathname = usePathname();
-  const [admin, setAdmin]       = useState<AdminUser | null>(null);
+  const [admin, setAdmin]       = useState<AdminUserState | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
@@ -49,14 +93,14 @@ export default function AdminProtectedLayout({ children }: { children: React.Rea
       if (r.data && r.data.isAdmin) {
         setAdmin(r.data);
       } else {
-        router.replace('/admin/login');
+        router.replace('/login');
       }
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSignOut() {
     await api.logout();
-    router.replace('/admin/login');
+    router.replace('/login');
   }
 
   if (!hydrated || !admin) {
@@ -114,7 +158,7 @@ export default function AdminProtectedLayout({ children }: { children: React.Rea
 
         {/* Nav */}
         <nav style={{ flex: 1, padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {NAV.map(({ href, label, icon }) => {
+          {NAV.filter((item) => !('superAdminOnly' in item && item.superAdminOnly) || admin?.isSuperAdmin).map(({ href, label, icon }) => {
             const active = pathname === href || (href !== '/admin/dashboard' && pathname.startsWith(href));
             return (
               <Link
