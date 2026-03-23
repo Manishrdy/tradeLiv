@@ -11,11 +11,11 @@ function formatPrice(price: number | null) {
 }
 
 const ORDER_STATUS_STYLES: Record<string, { bg: string; border: string; color: string; label: string }> = {
-  draft:           { bg: 'rgba(0,0,0,0.04)',     border: 'rgba(0,0,0,0.09)',     color: 'var(--text-muted)',   label: 'Draft' },
-  submitted:       { bg: 'rgba(50,80,190,0.07)', border: 'rgba(50,80,190,0.18)', color: '#3850be',             label: 'Submitted' },
+  draft:           { bg: 'rgba(50,80,190,0.07)', border: 'rgba(50,80,190,0.18)', color: '#3850be',             label: 'Placed' },
+  submitted:       { bg: 'rgba(50,80,190,0.07)', border: 'rgba(50,80,190,0.18)', color: '#3850be',             label: 'Placed' },
   paid:            { bg: 'var(--green-dim)',      border: 'var(--green-border)',   color: 'var(--green)',        label: 'Paid' },
   split_to_brands: { bg: 'rgba(168,113,10,0.08)', border: 'rgba(168,113,10,0.2)', color: 'var(--gold)',        label: 'Processing' },
-  closed:          { bg: 'rgba(0,0,0,0.04)',     border: 'rgba(0,0,0,0.09)',     color: 'var(--text-muted)',   label: 'Closed' },
+  closed:          { bg: 'rgba(0,0,0,0.04)',     border: 'rgba(0,0,0,0.09)',     color: 'var(--text-muted)',   label: 'Completed' },
 };
 
 export default function OrdersPage() {
@@ -90,14 +90,14 @@ export default function OrdersPage() {
                   </div>
                 </div>
 
-                {/* Status */}
-                <div style={{ background: st.bg, border: `1px solid ${st.border}`, borderRadius: 999, padding: '3px 10px', fontSize: 11, color: st.color, fontWeight: 600, flexShrink: 0 }}>
-                  {st.label}
-                </div>
-
-                {/* Total */}
-                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', flexShrink: 0, minWidth: 80, textAlign: 'right' }}>
-                  {formatPrice(order.totalAmount)}
+                {/* Total + Status */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)' }}>
+                    {formatPrice(order.totalAmount)}
+                  </div>
+                  <div style={{ background: st.bg, border: `1px solid ${st.border}`, borderRadius: 999, padding: '2px 9px', fontSize: 10.5, color: st.color, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                    {st.label}
+                  </div>
                 </div>
 
                 {/* Chevron */}

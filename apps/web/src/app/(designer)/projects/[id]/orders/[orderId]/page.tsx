@@ -11,11 +11,11 @@ function formatPrice(price: number | null) {
 }
 
 const ORDER_STATUS_STYLES: Record<string, { bg: string; border: string; color: string; label: string }> = {
-  draft:           { bg: 'rgba(0,0,0,0.04)',     border: 'rgba(0,0,0,0.09)',     color: 'var(--text-muted)',   label: 'Draft' },
-  submitted:       { bg: 'rgba(50,80,190,0.07)', border: 'rgba(50,80,190,0.18)', color: '#3850be',             label: 'Submitted' },
+  draft:           { bg: 'rgba(50,80,190,0.07)', border: 'rgba(50,80,190,0.18)', color: '#3850be',             label: 'Placed' },
+  submitted:       { bg: 'rgba(50,80,190,0.07)', border: 'rgba(50,80,190,0.18)', color: '#3850be',             label: 'Placed' },
   paid:            { bg: 'var(--green-dim)',      border: 'var(--green-border)',   color: 'var(--green)',        label: 'Paid' },
   split_to_brands: { bg: 'rgba(168,113,10,0.08)', border: 'rgba(168,113,10,0.2)', color: 'var(--gold)',        label: 'Processing' },
-  closed:          { bg: 'rgba(0,0,0,0.04)',     border: 'rgba(0,0,0,0.09)',     color: 'var(--text-muted)',   label: 'Closed' },
+  closed:          { bg: 'rgba(0,0,0,0.04)',     border: 'rgba(0,0,0,0.09)',     color: 'var(--text-muted)',   label: 'Completed' },
 };
 
 const PO_STATUS_STYLES: Record<string, { bg: string; border: string; color: string; label: string }> = {
@@ -240,7 +240,7 @@ export default function OrderDetailPage() {
 
       {/* Order meta */}
       <div className="card" style={{ padding: '16px 20px', marginBottom: 24 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
           <div>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>Date</div>
             <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text-primary)' }}>
@@ -250,15 +250,6 @@ export default function OrderDetailPage() {
           <div>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>Items</div>
             <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text-primary)' }}>{order.lineItems.length}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>Payment</div>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: payment?.status === 'paid' ? 'var(--green)' : 'var(--text-muted)' }}>
-              {payment?.status === 'paid' ? 'Paid' : order.status === 'draft' ? 'Unpaid' : order.status === 'paid' ? 'Paid' : 'Pending'}
-            </div>
-            {payment?.paymentMethod && (
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>via {payment.paymentMethod}</div>
-            )}
           </div>
           <div>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>Total</div>
