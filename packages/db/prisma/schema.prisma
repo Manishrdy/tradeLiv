@@ -27,6 +27,7 @@ enum ShortlistStatus {
   approved
   rejected
   added_to_cart
+  ordered
 }
 
 enum OrderStatus {

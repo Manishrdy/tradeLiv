@@ -1,6 +1,6 @@
 export type DesignerStatus = 'pending_review' | 'approved' | 'rejected' | 'suspended';
 export type ProjectStatus = 'draft' | 'active' | 'ordered' | 'closed';
-export type ShortlistStatus = 'suggested' | 'approved' | 'rejected' | 'added_to_cart';
+export type ShortlistStatus = 'suggested' | 'approved' | 'rejected' | 'added_to_cart' | 'ordered';
 export type OrderStatus = 'draft' | 'submitted' | 'paid' | 'split_to_brands' | 'closed';
 export type BrandPOStatus = 'sent' | 'acknowledged' | 'in_production' | 'dispatched' | 'delivered' | 'cancelled';
 

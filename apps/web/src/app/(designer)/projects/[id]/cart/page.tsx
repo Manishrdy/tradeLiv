@@ -3,18 +3,26 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, CartItem } from '@/lib/api';
+import { api, CartItem, ActiveOrder } from '@/lib/api';
 
 function formatPrice(price: number | null) {
   if (price == null) return '—';
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(price);
 }
 
+const ORDER_STATUS_LABELS: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  draft: { label: 'Unpaid', color: '#92400e', bg: 'rgba(158,124,63,0.08)', border: 'rgba(158,124,63,0.2)' },
+  submitted: { label: 'Submitted', color: '#1e40af', bg: 'rgba(30,64,175,0.07)', border: 'rgba(30,64,175,0.18)' },
+  paid: { label: 'Paid', color: '#166534', bg: 'rgba(22,101,52,0.07)', border: 'rgba(22,101,52,0.18)' },
+  split_to_brands: { label: 'Processing', color: '#7c3aed', bg: 'rgba(124,58,237,0.07)', border: 'rgba(124,58,237,0.18)' },
+};
+
 export default function CartPage() {
   const { id: projectId } = useParams<{ id: string }>();
   const router = useRouter();
 
   const [items, setItems] = useState<CartItem[]>([]);
+  const [activeOrders, setActiveOrders] = useState<ActiveOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +30,10 @@ export default function CartPage() {
 
   const loadCart = useCallback(async () => {
     const r = await api.getCart(projectId);
-    if (!r.error) setItems(r.data!);
+    if (!r.error) {
+      setItems(r.data!.items);
+      setActiveOrders(r.data!.activeOrders);
+    }
     setLoading(false);
   }, [projectId]);
 
@@ -86,6 +97,57 @@ export default function CartPage() {
     );
   }
 
+  // Empty cart with active orders — show "all ordered" state
+  if (items.length === 0 && activeOrders.length > 0) {
+    return (
+      <div style={{ padding: '40px 40px 80px' }}>
+        <h2 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 6px' }}>Cart</h2>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 28px' }}>All items have been ordered. Track your orders below.</p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {activeOrders.map((order) => {
+            const st = ORDER_STATUS_LABELS[order.status] ?? ORDER_STATUS_LABELS.draft;
+            return (
+              <Link key={order.id} href={`/projects/${projectId}/orders/${order.id}`} style={{ textDecoration: 'none' }}>
+                <div className="card" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 16, transition: 'box-shadow 0.15s', cursor: 'pointer' }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = '0 2px 12px rgba(0,0,0,0.08)'; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = ''; }}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />
+                  </svg>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text-primary)' }}>
+                      Order #{order.id.slice(0, 8)}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                      {new Date(order.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      {' \u00B7 '}
+                      {order._count.lineItems} item{order._count.lineItems !== 1 ? 's' : ''}
+                      {order.totalAmount != null && <> {' \u00B7 '} {formatPrice(order.totalAmount)}</>}
+                    </div>
+                  </div>
+                  <div style={{ background: st.bg, border: `1px solid ${st.border}`, borderRadius: 999, padding: '3px 10px', fontSize: 11, color: st.color, fontWeight: 600, flexShrink: 0 }}>
+                    {st.label}
+                  </div>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6" /></svg>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+
+        <div style={{ textAlign: 'center', marginTop: 28 }}>
+          <Link href={`/projects/${projectId}/rooms`}
+            style={{ fontSize: 13, fontWeight: 600, color: 'var(--gold)', textDecoration: 'none' }}>
+            Need more items? Go to Rooms &rarr;
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // Truly empty cart — no orders, no items
   if (items.length === 0) {
     return (
       <div style={{ padding: '80px 40px', textAlign: 'center' }}>
@@ -113,6 +175,25 @@ export default function CartPage() {
         <h2 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Cart</h2>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>{items.length} item{items.length !== 1 ? 's' : ''} across {Object.keys(grouped).length} room{Object.keys(grouped).length !== 1 ? 's' : ''}</p>
       </div>
+
+      {/* Active orders banner */}
+      {activeOrders.length > 0 && (
+        <div style={{
+          background: 'rgba(30,64,175,0.05)', border: '1px solid rgba(30,64,175,0.15)', borderRadius: 10,
+          padding: '10px 16px', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1e40af" strokeWidth="2" strokeLinecap="round">
+            <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
+          </svg>
+          <span style={{ fontSize: 12.5, color: '#1e40af', fontWeight: 600 }}>
+            You have {activeOrders.length} active order{activeOrders.length !== 1 ? 's' : ''}. Items below will create a new order.
+          </span>
+          <Link href={`/projects/${projectId}/orders`}
+            style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: '#1e40af', textDecoration: 'underline', flexShrink: 0 }}>
+            View Orders
+          </Link>
+        </div>
+      )}
 
       {/* Items grouped by room */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>

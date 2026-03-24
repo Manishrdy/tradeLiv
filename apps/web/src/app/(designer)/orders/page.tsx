@@ -1,85 +1,82 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { api, OrderSummaryGlobal } from '@/lib/api';
 
-/* ── Constants ─────────────────────────────────────── */
+/* ── Status config ───────────────────────────────── */
 
-const STATUS_FILTERS = [
-  { label: 'All',        value: '',               color: '#111' },
-  { label: 'Unpaid',     value: 'draft',          color: '#8C8984' },
-  { label: 'Paid',       value: 'paid',           color: '#2d7a4f' },
-  { label: 'Processing', value: 'split_to_brands', color: '#9E7C3F' },
-  { label: 'Closed',     value: 'closed',         color: '#555' },
-];
-
-const STATUS_STYLES: Record<string, { bg: string; border: string; color: string; label: string; dot: string }> = {
-  draft:           { bg: 'rgba(0,0,0,0.04)',      border: 'rgba(0,0,0,0.09)',      color: '#8C8984',   label: 'Unpaid',     dot: '#B0ADA8' },
-  submitted:       { bg: 'rgba(37,99,235,0.07)',  border: 'rgba(37,99,235,0.18)',  color: '#2563eb',   label: 'Submitted',  dot: '#2563eb' },
-  paid:            { bg: 'var(--green-dim)',       border: 'var(--green-border)',    color: 'var(--green)', label: 'Paid',    dot: '#2d7a4f' },
-  split_to_brands: { bg: 'rgba(158,124,63,0.08)', border: 'rgba(158,124,63,0.2)',  color: 'var(--gold)',  label: 'Processing', dot: '#9E7C3F' },
-  closed:          { bg: 'rgba(0,0,0,0.04)',      border: 'rgba(0,0,0,0.09)',      color: '#555',      label: 'Closed',     dot: '#555' },
+const STATUS_CONFIG: Record<string, { accent: string; bg: string; border: string; color: string; label: string }> = {
+  draft:           { accent: '#8C8984', bg: 'rgba(0,0,0,0.04)',      border: 'rgba(0,0,0,0.09)',      color: '#8C8984', label: 'Unpaid' },
+  submitted:       { accent: '#3850be', bg: 'rgba(56,80,190,0.06)',  border: 'rgba(56,80,190,0.15)',  color: '#3850be', label: 'Submitted' },
+  paid:            { accent: 'var(--green)', bg: 'var(--green-dim)', border: 'var(--green-border)',   color: 'var(--green)', label: 'Paid' },
+  split_to_brands: { accent: 'var(--gold)',  bg: 'rgba(158,124,63,0.06)', border: 'rgba(158,124,63,0.15)', color: 'var(--gold)', label: 'Processing' },
+  closed:          { accent: '#555',    bg: 'rgba(0,0,0,0.03)',      border: 'rgba(0,0,0,0.08)',      color: '#555', label: 'Closed' },
 };
 
-const PROGRESS_STEPS = ['draft', 'paid', 'split_to_brands', 'closed'];
-const PROGRESS_LABELS: Record<string, string> = {
-  draft: 'Placed', paid: 'Paid', split_to_brands: 'Processing', closed: 'Completed',
+type FilterTab = 'all' | 'unpaid' | 'paid' | 'processing' | 'closed';
+
+const FILTER_MAP: Record<FilterTab, string[]> = {
+  all: [],
+  unpaid: ['draft', 'submitted'],
+  paid: ['paid'],
+  processing: ['split_to_brands'],
+  closed: ['closed'],
 };
 
-/* ── Helpers ───────────────────────────────────────── */
+/* ── Helpers ─────────────────────────────────────── */
 
 function formatPrice(price: number | null) {
   if (price == null) return '—';
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(price);
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(price);
 }
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-/* ── Progress tracker ──────────────────────────────── */
+function timeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return formatDate(iso);
+}
 
-function OrderProgress({ status }: { status: string }) {
-  const currentIdx = PROGRESS_STEPS.indexOf(status);
-  const activeIdx = currentIdx >= 0 ? currentIdx : 0;
+/* ── Invoice download ────────────────────────────── */
 
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 0, width: '100%' }}>
-      {PROGRESS_STEPS.map((step, i) => {
-        const isDone = i <= activeIdx;
-        const isActive = i === activeIdx;
-        const color = isDone ? (STATUS_STYLES[step]?.dot ?? '#111') : '#D4D1CC';
-        return (
-          <div key={step} style={{ display: 'flex', alignItems: 'center', flex: i < PROGRESS_STEPS.length - 1 ? 1 : undefined }}>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-              <div style={{
-                width: isActive ? 10 : 8, height: isActive ? 10 : 8,
-                borderRadius: '50%', background: color,
-                border: isActive ? `2px solid ${color}40` : 'none',
-                transition: 'all 0.2s',
-              }} />
-              <span style={{
-                fontSize: 9, fontWeight: isDone ? 700 : 500,
-                color: isDone ? color : '#D4D1CC',
-                whiteSpace: 'nowrap',
-              }}>
-                {PROGRESS_LABELS[step]}
-              </span>
-            </div>
-            {i < PROGRESS_STEPS.length - 1 && (
-              <div style={{
-                flex: 1, height: 2, borderRadius: 999,
-                background: i < activeIdx ? color : '#E8E5E0',
-                margin: '0 4px', marginBottom: 16,
-                transition: 'background 0.3s',
-              }} />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
+function downloadInvoice(order: OrderSummaryGlobal) {
+  const lines = [
+    'INVOICE',
+    '═══════════════════════════════════════',
+    '',
+    `Order ID:    #${order.id.slice(0, 8)}`,
+    `Date:        ${formatDate(order.createdAt)}`,
+    `Status:      ${STATUS_CONFIG[order.status]?.label ?? order.status}`,
+    '',
+    `Project:     ${order.project?.name ?? '—'}`,
+    `Client:      ${order.project?.client?.name ?? '—'}`,
+    '',
+    `Items:       ${order._count.lineItems}`,
+    `Brand POs:   ${order._count.brandPOs}`,
+    '',
+    '───────────────────────────────────────',
+    `TOTAL:       ${formatPrice(order.totalAmount)}`,
+    '───────────────────────────────────────',
+    '',
+    'Generated by Tradeliv',
+    `${new Date().toISOString()}`,
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `invoice-${order.id.slice(0, 8)}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 /* ══════════════════════════════════════════════════════
@@ -87,126 +84,187 @@ function OrderProgress({ status }: { status: string }) {
    ══════════════════════════════════════════════════════ */
 
 export default function OrdersPage() {
-  const [orders, setOrders]           = useState<OrderSummaryGlobal[]>([]);
-  const [loading, setLoading]         = useState(true);
-  const [activeFilter, setActiveFilter] = useState('');
-  const [search, setSearch]           = useState('');
+  const [orders, setOrders] = useState<OrderSummaryGlobal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<FilterTab>('all');
+  const [search, setSearch] = useState('');
+  const [hoveredOrder, setHoveredOrder] = useState<string | null>(null);
+  const [hoveredTab, setHoveredTab] = useState<FilterTab | null>(null);
 
   useEffect(() => {
-    setLoading(true);
-    api.getAllOrders(activeFilter || undefined).then((r) => {
+    api.getAllOrders().then((r) => {
       if (r.data) setOrders(r.data);
       setLoading(false);
     });
-  }, [activeFilter]);
+  }, []);
 
-  const filtered = search.trim()
-    ? orders.filter((o) =>
-        o.id.toLowerCase().includes(search.toLowerCase()) ||
-        o.project?.name?.toLowerCase().includes(search.toLowerCase()) ||
-        o.project?.client?.name?.toLowerCase().includes(search.toLowerCase())
-      )
-    : orders;
+  /* ── Derived data ──────────────────────────────── */
 
-  /* ── Generate invoice text (simple) ──────────────── */
-  function downloadInvoice(order: OrderSummaryGlobal) {
-    const lines = [
-      'INVOICE',
-      '═══════════════════════════════════════',
-      '',
-      `Order ID:    #${order.id.slice(0, 8)}`,
-      `Date:        ${formatDate(order.createdAt)}`,
-      `Status:      ${STATUS_STYLES[order.status]?.label ?? order.status}`,
-      '',
-      `Project:     ${order.project?.name ?? '—'}`,
-      `Client:      ${order.project?.client?.name ?? '—'}`,
-      '',
-      `Items:       ${order._count.lineItems}`,
-      `Brand POs:   ${order._count.brandPOs}`,
-      '',
-      '───────────────────────────────────────',
-      `TOTAL:       ${formatPrice(order.totalAmount)}`,
-      '───────────────────────────────────────',
-      '',
-      'Generated by Tradeliv',
-      `${new Date().toISOString()}`,
-    ];
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `invoice-${order.id.slice(0, 8)}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  const stats = useMemo(() => {
+    const total = orders.reduce((sum, o) => sum + (o.totalAmount ?? 0), 0);
+    const paidTotal = orders.filter(o => o.status === 'paid' || o.status === 'split_to_brands' || o.status === 'closed')
+      .reduce((sum, o) => sum + (o.totalAmount ?? 0), 0);
+    const unpaidTotal = orders.filter(o => o.status === 'draft' || o.status === 'submitted')
+      .reduce((sum, o) => sum + (o.totalAmount ?? 0), 0);
+    const paidCount = orders.filter(o => o.status === 'paid' || o.status === 'split_to_brands' || o.status === 'closed').length;
+    const unpaidCount = orders.filter(o => o.status === 'draft' || o.status === 'submitted').length;
+    return { total, paidTotal, unpaidTotal, paidCount, unpaidCount, count: orders.length };
+  }, [orders]);
+
+  const tabCounts = useMemo(() => ({
+    all: orders.length,
+    unpaid: orders.filter(o => o.status === 'draft' || o.status === 'submitted').length,
+    paid: orders.filter(o => o.status === 'paid').length,
+    processing: orders.filter(o => o.status === 'split_to_brands').length,
+    closed: orders.filter(o => o.status === 'closed').length,
+  }), [orders]);
+
+  const filteredOrders = useMemo(() => {
+    let result = orders;
+    if (activeTab !== 'all') {
+      const statuses = FILTER_MAP[activeTab];
+      result = result.filter(o => statuses.includes(o.status));
+    }
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(o =>
+        o.id.toLowerCase().includes(q) ||
+        o.project?.name?.toLowerCase().includes(q) ||
+        o.project?.client?.name?.toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [orders, activeTab, search]);
+
+  /* ── Tabs config ───────────────────────────────── */
+
+  const tabs: { key: FilterTab; label: string }[] = [
+    { key: 'all', label: 'All Orders' },
+    { key: 'unpaid', label: 'Unpaid' },
+    { key: 'paid', label: 'Paid' },
+    { key: 'processing', label: 'Processing' },
+    { key: 'closed', label: 'Closed' },
+  ];
+
+  /* ── Render ────────────────────────────────────── */
 
   return (
     <div style={{ padding: '32px 44px', maxWidth: 1100 }}>
 
-      {/* ── Header ──────────────────────────────────── */}
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.035em' }}>Orders</h1>
-        {!loading && (
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
-            {orders.length} order{orders.length !== 1 ? 's' : ''}
-            {activeFilter && ` · ${STATUS_STYLES[activeFilter]?.label ?? activeFilter}`}
-          </p>
-        )}
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.02em' }}>Orders</h1>
+          {!loading && (
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4, margin: '4px 0 0' }}>
+              {stats.count} order{stats.count !== 1 ? 's' : ''} across all projects
+            </p>
+          )}
+        </div>
       </div>
 
-      {/* ── Filters + Search ────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
-        {/* Colored pill filters */}
-        <div style={{ display: 'flex', gap: 5 }}>
-          {STATUS_FILTERS.map((f) => {
-            const isActive = activeFilter === f.value;
+      {/* Stats Cards */}
+      {!loading && orders.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+          <div className="card" style={{ padding: '14px 18px' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Total Value</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>{formatPrice(stats.total)}</div>
+          </div>
+          <div className="card" style={{ padding: '14px 18px' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Collected</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--green)', letterSpacing: '-0.02em' }}>{formatPrice(stats.paidTotal)}</div>
+            </div>
+          </div>
+          <div className="card" style={{ padding: '14px 18px' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Outstanding</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: stats.unpaidCount > 0 ? '#3850be' : 'var(--text-muted)', letterSpacing: '-0.02em' }}>{formatPrice(stats.unpaidTotal)}</div>
+            </div>
+          </div>
+          <div className="card" style={{ padding: '14px 18px' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Avg. Order</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+              {stats.count > 0 ? formatPrice(stats.total / stats.count) : '—'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Filter Tabs + Search */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 20, borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
+        <div style={{ display: 'flex', gap: 2 }}>
+          {tabs.map((tab) => {
+            const isActive = activeTab === tab.key;
+            const isHovered = hoveredTab === tab.key;
+            const count = tabCounts[tab.key];
             return (
               <button
-                key={f.value}
-                onClick={() => setActiveFilter(f.value)}
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                onMouseEnter={() => setHoveredTab(tab.key)}
+                onMouseLeave={() => setHoveredTab(null)}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 5,
-                  border: `1px solid ${isActive ? f.color + '30' : 'var(--border)'}`,
-                  background: isActive ? f.color + '0C' : 'transparent',
-                  color: isActive ? f.color : 'var(--text-muted)',
-                  borderRadius: 999, padding: '5px 14px', fontSize: 12, fontWeight: 600,
-                  cursor: 'pointer', transition: 'all 0.12s', fontFamily: 'inherit',
+                  padding: '8px 14px',
+                  fontSize: 12.5,
+                  fontWeight: isActive ? 700 : 500,
+                  color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+                  background: isHovered && !isActive ? 'rgba(0,0,0,0.03)' : 'none',
+                  border: 'none',
+                  borderBottom: isActive ? '2px solid var(--text-primary)' : '2px solid transparent',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  marginBottom: -1,
+                  borderRadius: '6px 6px 0 0',
+                  transition: 'all 0.15s',
+                  fontFamily: 'inherit',
                 }}
               >
-                {f.value && (
-                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: isActive ? f.color : 'transparent' }} />
+                {tab.label}
+                {count > 0 && (
+                  <span style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    background: isActive ? 'var(--text-primary)' : 'var(--border)',
+                    color: isActive ? '#fff' : 'var(--text-muted)',
+                    borderRadius: 999,
+                    padding: '1px 6px',
+                    minWidth: 18,
+                    textAlign: 'center',
+                    transition: 'all 0.15s',
+                  }}>
+                    {count}
+                  </span>
                 )}
-                {f.label}
               </button>
             );
           })}
         </div>
 
         {/* Search */}
-        <div style={{ position: 'relative', flex: 1, minWidth: 180, maxWidth: 300 }}>
+        <div style={{ position: 'relative', width: 240, flexShrink: 0, marginBottom: 8 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round"
             style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }}>
             <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
           <input
             className="input-field"
-            placeholder="Search by project, client, or order ID…"
+            placeholder="Search orders..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            style={{ paddingLeft: 32, fontSize: 12.5 }}
+            style={{ paddingLeft: 32, fontSize: 12, height: 34 }}
           />
         </div>
       </div>
 
-      {/* ── Content ─────────────────────────────────── */}
+      {/* Content */}
       {loading ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-muted)', fontSize: 13, padding: '40px 0' }}>
-          <svg className="anim-rotate" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M21 12a9 9 0 11-6.219-8.56" />
-          </svg>
-          Loading orders…
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
+          <div style={{ width: 24, height: 24, border: '3px solid var(--border)', borderTopColor: 'var(--gold)', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />
         </div>
-      ) : filtered.length === 0 ? (
+      ) : filteredOrders.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '72px 0' }}>
           <div style={{
             width: 56, height: 56, borderRadius: 14, margin: '0 auto 18px',
@@ -225,124 +283,165 @@ export default function OrdersPage() {
           </div>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {filtered.map((order, i) => {
-            const st = STATUS_STYLES[order.status] ?? STATUS_STYLES.draft;
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {filteredOrders.map((order) => {
+            const st = STATUS_CONFIG[order.status] ?? STATUS_CONFIG.draft;
+            const isHovered = hoveredOrder === order.id;
             return (
               <div
                 key={order.id}
                 className="card"
+                onMouseEnter={() => setHoveredOrder(order.id)}
+                onMouseLeave={() => setHoveredOrder(null)}
                 style={{
+                  display: 'flex',
                   overflow: 'hidden',
-                  background: i % 2 === 0 ? 'var(--bg-card)' : '#FCFCFA',
-                  transition: 'transform 0.12s, box-shadow 0.12s',
+                  transition: 'border-color 0.15s, box-shadow 0.15s',
+                  borderColor: isHovered ? 'var(--border-strong)' : undefined,
+                  boxShadow: isHovered ? '0 2px 8px rgba(0,0,0,0.06)' : undefined,
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; }}
               >
-                <Link href={`/projects/${order.projectId}/orders/${order.id}`} style={{ textDecoration: 'none' }}>
-                  <div style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 16, cursor: 'pointer' }}>
-                    {/* Icon */}
-                    <div style={{
-                      width: 40, height: 40, borderRadius: 10,
-                      background: st.bg, border: `1px solid ${st.border}`,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                    }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={st.color} strokeWidth="2" strokeLinecap="round">
-                        <rect x="2" y="4" width="20" height="16" rx="2" /><path d="M7 15h0M2 9.5h20" />
+                {/* Accent Bar */}
+                <div style={{ width: 4, flexShrink: 0, background: st.accent, borderRadius: '8px 0 0 8px' }} />
+
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {/* Main row */}
+                  <Link href={`/projects/${order.projectId}/orders/${order.id}`} style={{ textDecoration: 'none' }}>
+                    <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}>
+
+                      {/* Status Icon */}
+                      <div style={{
+                        width: 38, height: 38, borderRadius: 10,
+                        background: st.bg, border: `1px solid ${st.border}`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                      }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={st.color} strokeWidth="2" strokeLinecap="round">
+                          <rect x="2" y="4" width="20" height="16" rx="2" /><path d="M7 15h0M2 9.5h20" />
+                        </svg>
+                      </div>
+
+                      {/* Info */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text-primary)' }}>
+                            #{order.id.slice(0, 8)}
+                          </span>
+                          <span style={{
+                            fontSize: 10, fontWeight: 600,
+                            background: st.bg, border: `1px solid ${st.border}`,
+                            color: st.color, borderRadius: 999, padding: '1px 8px',
+                          }}>
+                            {st.label}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {order.project?.name || 'Unknown project'}
+                          {order.project?.client?.name && <span style={{ opacity: 0.7 }}> &middot; {order.project.client.name}</span>}
+                        </div>
+                      </div>
+
+                      {/* Meta chips */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{order._count.lineItems}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>items</div>
+                        </div>
+                        <div style={{ width: 1, height: 24, background: 'var(--border)' }} />
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{order._count.brandPOs}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>brands</div>
+                        </div>
+                      </div>
+
+                      {/* Date */}
+                      <div style={{ fontSize: 11.5, color: 'var(--text-muted)', flexShrink: 0, width: 64, textAlign: 'right' }}>
+                        {timeAgo(order.createdAt)}
+                      </div>
+
+                      {/* Total */}
+                      <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)', flexShrink: 0, minWidth: 90, textAlign: 'right', letterSpacing: '-0.02em' }}>
+                        {formatPrice(order.totalAmount)}
+                      </div>
+
+                      {/* Chevron */}
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" style={{
+                        flexShrink: 0, opacity: isHovered ? 1 : 0.3, transition: 'opacity 0.15s, transform 0.15s',
+                        transform: isHovered ? 'translateX(2px)' : 'none',
+                      }}>
+                        <polyline points="9 18 15 12 9 6" />
                       </svg>
                     </div>
-
-                    {/* Info */}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
-                          #{order.id.slice(0, 8)}
-                        </span>
-                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                          {formatDate(order.createdAt)}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {order.project?.name || 'Unknown project'}
-                        {order.project?.client?.name && <span> · {order.project.client.name}</span>}
-                        {' · '}{order._count.lineItems} item{order._count.lineItems !== 1 ? 's' : ''}
-                        {' · '}{order._count.brandPOs} brand{order._count.brandPOs !== 1 ? 's' : ''}
-                      </div>
-                    </div>
-
-                    {/* Progress tracker (mini) */}
-                    <div style={{ width: 140, flexShrink: 0 }}>
-                      <OrderProgress status={order.status} />
-                    </div>
-
-                    {/* Status badge */}
-                    <div style={{
-                      display: 'flex', alignItems: 'center', gap: 5,
-                      background: st.bg, border: `1px solid ${st.border}`,
-                      borderRadius: 999, padding: '4px 11px',
-                      fontSize: 10.5, color: st.color, fontWeight: 700, flexShrink: 0,
-                    }}>
-                      <div style={{ width: 5, height: 5, borderRadius: '50%', background: st.dot }} />
-                      {st.label}
-                    </div>
-
-                    {/* Total */}
-                    <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', flexShrink: 0, minWidth: 85, textAlign: 'right', letterSpacing: '-0.01em' }}>
-                      {formatPrice(order.totalAmount)}
-                    </div>
-
-                    {/* Chevron */}
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
-                      <polyline points="9 18 15 12 9 6" />
-                    </svg>
-                  </div>
-                </Link>
-
-                {/* Action buttons row */}
-                <div style={{
-                  display: 'flex', gap: 8, padding: '0 20px 12px',
-                  borderTop: 'none',
-                }}>
-                  <button
-                    onClick={() => downloadInvoice(order)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 5,
-                      background: 'none', border: '1px solid var(--border)',
-                      borderRadius: 6, padding: '4px 10px',
-                      fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
-                      cursor: 'pointer', fontFamily: 'inherit',
-                      transition: 'all 0.12s',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--border-strong)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
-                  >
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="7 10 12 15 17 10" />
-                      <line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                    Invoice
-                  </button>
-                  <Link
-                    href={`/projects/${order.projectId}/cart`}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 5,
-                      background: 'none', border: '1px solid var(--border)',
-                      borderRadius: 6, padding: '4px 10px',
-                      fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
-                      textDecoration: 'none',
-                      transition: 'all 0.12s',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--border-strong)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
-                  >
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                      <polyline points="17 1 21 5 17 9" />
-                      <path d="M3 11V9a4 4 0 0 1 4-4h14" />
-                    </svg>
-                    Reorder
                   </Link>
+
+                  {/* Quick actions — only visible on hover */}
+                  <div style={{
+                    display: 'flex', gap: 6, padding: '0 20px 10px', paddingLeft: 72,
+                    opacity: isHovered ? 1 : 0,
+                    maxHeight: isHovered ? 40 : 0,
+                    overflow: 'hidden',
+                    transition: 'opacity 0.2s, max-height 0.2s',
+                  }}>
+                    <button
+                      onClick={(e) => { e.preventDefault(); downloadInvoice(order); }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 5,
+                        background: 'none', border: '1px solid var(--border)',
+                        borderRadius: 6, padding: '3px 10px',
+                        fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
+                        cursor: 'pointer', fontFamily: 'inherit',
+                        transition: 'all 0.12s',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--border-strong)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                    >
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
+                      Invoice
+                    </button>
+                    <Link
+                      href={`/projects/${order.projectId}/cart`}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 5,
+                        background: 'none', border: '1px solid var(--border)',
+                        borderRadius: 6, padding: '3px 10px',
+                        fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
+                        textDecoration: 'none',
+                        transition: 'all 0.12s',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--border-strong)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                    >
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                        <polyline points="17 1 21 5 17 9" />
+                        <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+                      </svg>
+                      Reorder
+                    </Link>
+                    <Link
+                      href={`/projects/${order.projectId}/orders/${order.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 5,
+                        background: 'none', border: '1px solid var(--border)',
+                        borderRadius: 6, padding: '3px 10px',
+                        fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
+                        textDecoration: 'none',
+                        transition: 'all 0.12s',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--border-strong)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                    >
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                      View Details
+                    </Link>
+                  </div>
                 </div>
               </div>
             );

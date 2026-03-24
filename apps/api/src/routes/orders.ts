@@ -209,9 +209,9 @@ router.post('/projects/:projectId/shortlist', async (req: AuthRequest, res: Resp
       return;
     }
 
-    // Check if product already shortlisted in this room
+    // Check if product already shortlisted in this room (skip ordered items — allow re-adding for new orders)
     const existing = await prisma.shortlistItem.findFirst({
-      where: { projectId: req.params.projectId, roomId, productId },
+      where: { projectId: req.params.projectId, roomId, productId, status: { not: 'ordered' } },
     });
     if (existing) {
       res.status(400).json({ error: 'Product is already shortlisted in this room.' });
@@ -349,6 +349,11 @@ router.put('/projects/:projectId/shortlist/:itemId', async (req: AuthRequest, re
       return;
     }
 
+    if (existing.status === 'ordered') {
+      res.status(400).json({ error: 'This item is part of an active order and cannot be modified.' });
+      return;
+    }
+
     // Sync isPinned ↔ status ↔ cart
     const updateData = { ...parsed.data };
     if (updateData.isPinned === true && updateData.status === undefined) {
@@ -458,6 +463,11 @@ router.delete('/projects/:projectId/shortlist/:itemId', async (req: AuthRequest,
       return;
     }
 
+    if (existing.status === 'ordered') {
+      res.status(400).json({ error: 'This item is part of an active order and cannot be deleted.' });
+      return;
+    }
+
     await prisma.shortlistItem.delete({ where: { id: req.params.itemId } });
 
     writeAuditLog({
@@ -487,16 +497,38 @@ router.get('/projects/:projectId/cart', async (req: AuthRequest, res: Response) 
     const project = await getOwnedProject(req.params.projectId, req.user!.id);
     if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
 
-    const items = await prisma.cartItem.findMany({
-      where: { projectId: req.params.projectId },
-      orderBy: { createdAt: 'asc' },
-      include: {
-        product: { select: productSelect },
-        room: { select: { id: true, name: true } },
-      },
-    });
+    const [items, activeOrders] = await Promise.all([
+      prisma.cartItem.findMany({
+        where: { projectId: req.params.projectId },
+        orderBy: { createdAt: 'asc' },
+        include: {
+          product: { select: productSelect },
+          room: { select: { id: true, name: true } },
+        },
+      }),
+      prisma.order.findMany({
+        where: {
+          projectId: req.params.projectId,
+          status: { in: ['draft', 'submitted', 'paid', 'split_to_brands'] },
+        },
+        select: {
+          id: true,
+          status: true,
+          createdAt: true,
+          totalAmount: true,
+          _count: { select: { lineItems: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
 
-    res.json(items.map(serializeCartItem));
+    res.json({
+      items: items.map(serializeCartItem),
+      activeOrders: activeOrders.map((o) => ({
+        ...o,
+        totalAmount: o.totalAmount ? Number(o.totalAmount) : null,
+      })),
+    });
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
     res.status(500).json({ error: 'An error occurred. Please try again.' });
@@ -731,7 +763,20 @@ router.post('/projects/:projectId/orders', async (req: AuthRequest, res: Respons
       // 4. Clear cart
       await tx.cartItem.deleteMany({ where: { projectId: req.params.projectId } });
 
-      // 5. Fetch the complete order
+      // 5. Lock shortlist items — mark as "ordered"
+      for (const li of lineItemsData) {
+        await tx.shortlistItem.updateMany({
+          where: {
+            projectId: req.params.projectId,
+            productId: li.productId,
+            roomId: li.roomId,
+            status: 'added_to_cart',
+          },
+          data: { status: 'ordered' },
+        });
+      }
+
+      // 6. Fetch the complete order
       return tx.order.findUnique({
         where: { id: newOrder.id },
         include: {
@@ -764,57 +809,6 @@ router.post('/projects/:projectId/orders', async (req: AuthRequest, res: Respons
     emitProjectEvent(req.params.projectId, 'order_created', { orderId: order!.id });
 
     res.status(201).json(serializeOrder(order));
-  } catch (err) {
-    logger.error('orders route error', { err, path: req.path, method: req.method });
-    res.status(500).json({ error: 'An error occurred. Please try again.' });
-  }
-});
-
-/* ─── PUT /api/orders/projects/:projectId/orders/:orderId/cancel */
-
-router.put('/projects/:projectId/orders/:orderId/cancel', async (req: AuthRequest, res: Response) => {
-  try {
-    const project = await getOwnedProject(req.params.projectId, req.user!.id);
-    if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
-
-    const order = await prisma.order.findFirst({
-      where: { id: req.params.orderId, projectId: req.params.projectId },
-      include: { lineItems: true },
-    });
-    if (!order) { res.status(404).json({ error: 'Order not found.' }); return; }
-
-    if (order.status === 'closed') {
-      res.status(400).json({ error: 'Order is already closed.' }); return;
-    }
-
-    await prisma.$transaction(async (tx) => {
-      // 1. Close the order
-      await tx.order.update({ where: { id: order.id }, data: { status: 'closed' } });
-
-      // 2. Cancel all brand POs
-      await tx.brandPurchaseOrder.updateMany({
-        where: { orderId: order.id },
-        data: { status: 'cancelled' },
-      });
-
-      // 3. Reset shortlist items back to approved so they can be re-carted
-      for (const li of order.lineItems) {
-        await tx.shortlistItem.updateMany({
-          where: { projectId: req.params.projectId, productId: li.productId, roomId: li.roomId, status: 'added_to_cart' },
-          data: { status: 'approved', isPinned: false },
-        });
-      }
-    });
-
-    writeAuditLog({
-      actorType: 'designer', actorId: req.user!.id,
-      action: 'order_cancelled', entityType: 'project', entityId: req.params.projectId,
-      payload: { orderId: order.id },
-    });
-
-    emitProjectEvent(req.params.projectId, 'order_updated', { orderId: order.id });
-
-    res.json({ message: 'Order cancelled.' });
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
     res.status(500).json({ error: 'An error occurred. Please try again.' });

@@ -378,16 +378,22 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
                 color: '#C8C5BF', padding: 4, borderRadius: 5,
-                display: isCollapsed ? 'none' : 'flex', alignItems: 'center',
+                display: 'flex', alignItems: 'center',
                 transition: 'color 0.12s',
               }}
               onMouseEnter={(e) => (e.currentTarget.style.color = '#0F0F0F')}
               onMouseLeave={(e) => (e.currentTarget.style.color = '#C8C5BF')}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <line x1="9" y1="3" x2="9" y2="21" />
-              </svg>
+              {isCollapsed ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <line x1="9" y1="3" x2="9" y2="21" />
+                </svg>
+              )}
             </button>
           )}
         </div>

@@ -103,8 +103,6 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
   const [payment, setPayment] = useState<Payment | null>(null);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [payingNow, setPayingNow] = useState(false);
@@ -117,20 +115,6 @@ export default function OrderDetailPage() {
         brandPOs: prev.brandPOs.map((po) => po.id === poId ? { ...po, status: newStatus } : po),
       };
     });
-  }
-
-  async function handleCancelOrder() {
-    setCancelling(true);
-    const r = await api.cancelOrder(projectId, orderId);
-    if (!r.error) {
-      setOrder((prev) => prev ? {
-        ...prev,
-        status: 'closed',
-        brandPOs: prev.brandPOs.map((po) => ({ ...po, status: 'cancelled' })),
-      } : prev);
-    }
-    setCancelling(false);
-    setShowCancelConfirm(false);
   }
 
   useEffect(() => {
@@ -209,34 +193,11 @@ export default function OrderDetailPage() {
         </div>
         <div style={{ flex: 1 }} />
         {order.status !== 'closed' && (
-          <button onClick={() => setShowCancelConfirm(true)}
-            style={{ border: '1px solid rgba(180,30,30,0.25)', borderRadius: 8, background: 'rgba(180,30,30,0.06)', color: '#b91c1c', padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(180,30,30,0.12)'; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(180,30,30,0.06)'; }}
-          >
-            Cancel Order
-          </button>
+          <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+            Need help with this order? Contact support.
+          </span>
         )}
       </div>
-
-      {/* Cancel confirmation */}
-      {showCancelConfirm && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="card" style={{ width: 400, padding: 24 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Cancel this order?</div>
-            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.5 }}>
-              This will close the order, cancel all brand POs, and unpin the shortlisted items so you can re-add them later.
-            </div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button className="btn-ghost" onClick={() => setShowCancelConfirm(false)} disabled={cancelling}>Keep Order</button>
-              <button onClick={handleCancelOrder} disabled={cancelling}
-                style={{ border: 'none', borderRadius: 8, background: '#b91c1c', color: '#fff', padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: cancelling ? 0.7 : 1 }}>
-                {cancelling ? 'Cancelling…' : 'Cancel Order'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Order meta */}
       <div className="card" style={{ padding: '16px 20px', marginBottom: 24 }}>

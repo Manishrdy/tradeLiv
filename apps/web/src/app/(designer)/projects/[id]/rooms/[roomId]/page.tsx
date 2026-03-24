@@ -39,6 +39,7 @@ const STATUS_STYLES: Record<string, { bg: string; border: string; color: string;
   approved:      { bg: 'var(--green-dim)',      border: 'var(--green-border)',   color: 'var(--green)',        label: 'Approved' },
   rejected:      { bg: 'rgba(180,30,30,0.07)', border: 'rgba(180,30,30,0.18)', color: '#b91c1c',             label: 'Rejected' },
   added_to_cart: { bg: 'rgba(50,80,190,0.07)', border: 'rgba(50,80,190,0.18)', color: '#3850be',             label: 'In Cart' },
+  ordered:       { bg: 'rgba(22,101,52,0.07)', border: 'rgba(22,101,52,0.18)', color: '#166534',             label: 'Ordered' },
 };
 
 /* ─── Comparison Modal ──────────────────────────────── */
@@ -511,6 +512,7 @@ function ShortlistItemCard({
   const [isPinned, setIsPinned] = useState(item.isPinned);
 
   const st = STATUS_STYLES[item.status] ?? STATUS_STYLES.suggested;
+  const isOrdered = item.status === 'ordered';
 
   // Card border: blue when selected for compare, gold when pinned finalist, else default
   const cardBorder = isSelectedForCompare ? '#3850be' : item.isPinned ? 'var(--gold)' : 'var(--border)';
@@ -627,16 +629,16 @@ function ShortlistItemCard({
           </button>
 
           {/* Pin (finalist) */}
-          <button onClick={handleTogglePin} title={item.isPinned ? 'Unpin finalist' : 'Pin as finalist'}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: item.isPinned ? 'var(--gold)' : 'var(--text-muted)', transition: 'color 0.12s' }}>
+          <button onClick={handleTogglePin} disabled={isOrdered} title={isOrdered ? 'Ordered — locked' : item.isPinned ? 'Unpin finalist' : 'Pin as finalist'}
+            style={{ background: 'none', border: 'none', cursor: isOrdered ? 'not-allowed' : 'pointer', padding: 4, color: item.isPinned ? 'var(--gold)' : 'var(--text-muted)', transition: 'color 0.12s', opacity: isOrdered ? 0.4 : 1 }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill={item.isPinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
             </svg>
           </button>
 
           {/* Edit */}
-          <button onClick={() => setEditing(!editing)} title="Edit"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--text-muted)' }}>
+          <button onClick={() => !isOrdered && setEditing(!editing)} disabled={isOrdered} title={isOrdered ? 'Ordered — locked' : 'Edit'}
+            style={{ background: 'none', border: 'none', cursor: isOrdered ? 'not-allowed' : 'pointer', padding: 4, color: 'var(--text-muted)', opacity: isOrdered ? 0.4 : 1 }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
@@ -644,8 +646,8 @@ function ShortlistItemCard({
           </button>
 
           {/* Delete */}
-          <button onClick={() => setConfirmRemove(true)} title="Remove"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--text-muted)' }}>
+          <button onClick={() => !isOrdered && setConfirmRemove(true)} disabled={isOrdered} title={isOrdered ? 'Ordered — locked' : 'Remove'}
+            style={{ background: 'none', border: 'none', cursor: isOrdered ? 'not-allowed' : 'pointer', padding: 4, color: 'var(--text-muted)', opacity: isOrdered ? 0.4 : 1 }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <polyline points="3 6 5 6 21 6" />
               <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />

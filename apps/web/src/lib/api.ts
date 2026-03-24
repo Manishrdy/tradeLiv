@@ -443,7 +443,7 @@ export interface ShortlistItem {
   designerId: string;
   selectedVariant: Record<string, string> | null;
   quantity: number;
-  status: 'suggested' | 'approved' | 'rejected' | 'added_to_cart';
+  status: 'suggested' | 'approved' | 'rejected' | 'added_to_cart' | 'ordered';
   designerNotes: string | null;
   clientNotes: string | null;
   sharedNotes: string | null;
@@ -495,6 +495,19 @@ export interface CartItem {
 export interface CartAddPayload {
   shortlistItemId: string;
   quantity?: number;
+}
+
+export interface ActiveOrder {
+  id: string;
+  status: string;
+  createdAt: string;
+  totalAmount: number | null;
+  _count: { lineItems: number };
+}
+
+export interface CartResponse {
+  items: CartItem[];
+  activeOrders: ActiveOrder[];
 }
 
 /* ─── Order types ──────────────────────────────────── */
@@ -587,7 +600,7 @@ export interface PortalProduct {
 
 export interface PortalShortlistItem {
   id: string;
-  status: 'suggested' | 'approved' | 'rejected' | 'added_to_cart';
+  status: 'suggested' | 'approved' | 'rejected' | 'added_to_cart' | 'ordered';
   quantity: number;
   selectedVariant: Record<string, unknown> | null;
   sharedNotes: string | null;
@@ -941,7 +954,7 @@ export const api = {
 
   // Cart
   getCart: (projectId: string) =>
-    request<CartItem[]>(`/api/orders/projects/${projectId}/cart`),
+    request<CartResponse>(`/api/orders/projects/${projectId}/cart`),
 
   addToCart: (projectId: string, payload: CartAddPayload) =>
     request<CartItem>(`/api/orders/projects/${projectId}/cart`, {
@@ -976,11 +989,6 @@ export const api = {
 
   getOrder: (projectId: string, orderId: string) =>
     request<OrderDetail>(`/api/orders/projects/${projectId}/orders/${orderId}`),
-
-  cancelOrder: (projectId: string, orderId: string) =>
-    request<{ message: string }>(`/api/orders/projects/${projectId}/orders/${orderId}/cancel`, {
-      method: 'PUT',
-    }),
 
   updateBrandPoStatus: (orderId: string, poId: string, status: string) =>
     request<BrandPO>(`/api/orders/${orderId}/brand-pos/${poId}/status`, {
