@@ -192,10 +192,20 @@ export default function OrderDetailPage() {
           {st.label}
         </div>
         <div style={{ flex: 1 }} />
-        {order.status !== 'closed' && (
-          <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontStyle: 'italic' }}>
-            Need help with this order? Contact support.
-          </span>
+        {(order.status === 'paid' || order.status === 'split_to_brands' || order.status === 'closed') && (
+          <Link href={`/projects/${projectId}/orders/${orderId}/tracking`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              background: 'var(--green-dim)', border: '1px solid var(--green-border)',
+              borderRadius: 8, padding: '7px 14px',
+              fontSize: 12, fontWeight: 700, color: 'var(--green)',
+              textDecoration: 'none', transition: 'all 0.15s',
+            }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+            Track Order
+          </Link>
         )}
       </div>
 

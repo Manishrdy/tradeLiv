@@ -421,6 +421,27 @@ export default function OrdersPage() {
                       </svg>
                       Reorder
                     </Link>
+                    {(order.status === 'paid' || order.status === 'split_to_brands' || order.status === 'closed') && (
+                      <Link
+                        href={`/projects/${order.projectId}/orders/${order.id}/tracking`}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 5,
+                          background: 'none', border: '1px solid var(--green-border)',
+                          borderRadius: 6, padding: '3px 10px',
+                          fontSize: 11, fontWeight: 600, color: 'var(--green)',
+                          textDecoration: 'none',
+                          transition: 'all 0.12s',
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--green-dim)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
+                      >
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                        </svg>
+                        Track
+                      </Link>
+                    )}
                     <Link
                       href={`/projects/${order.projectId}/orders/${order.id}`}
                       onClick={(e) => e.stopPropagation()}
