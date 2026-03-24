@@ -42,3 +42,7 @@ coverage/
 
 # TypeScript
 *.tsbuildinfo
+
+# Markdown (except README)
+*.md
+!README.md
