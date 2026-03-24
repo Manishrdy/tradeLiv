@@ -367,9 +367,9 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
       >
         {/* Logo + collapse toggle */}
         <div style={{ padding: isCollapsed ? '22px 0 18px' : '22px 20px 18px', display: 'flex', alignItems: 'center', justifyContent: isCollapsed ? 'center' : 'space-between' }}>
-          <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.04em', color: '#0F0F0F', whiteSpace: 'nowrap', overflow: 'hidden' }}>
-            {isCollapsed ? 'T' : 'Tradeliv'}
-          </span>
+          <Link href="/dashboard" style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.04em', color: '#0F0F0F', whiteSpace: 'nowrap', overflow: 'hidden', textDecoration: 'none' }}>
+            {isCollapsed ? 'T' : 'tradeLiv'}
+          </Link>
           {!isMobile && (
             <button
               onClick={() => setCollapsed((c) => !c)}
@@ -617,7 +617,7 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
             <line x1="3" y1="18" x2="21" y2="18" />
           </svg>
         </button>
-        <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: '-0.04em', color: '#0F0F0F' }}>Tradeliv</span>
+        <Link href="/dashboard" style={{ fontSize: 15, fontWeight: 800, letterSpacing: '-0.04em', color: '#0F0F0F', textDecoration: 'none' }}>tradeLiv</Link>
         <div style={{ width: 28 }} /> {/* spacer */}
       </div>
 

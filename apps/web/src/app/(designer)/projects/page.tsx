@@ -390,25 +390,26 @@ export default function ProjectsPage() {
           )}
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 13 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16 }}>
           {sorted.map((p) => {
             const st = STATUS_STYLES[p.status] ?? STATUS_STYLES.draft;
             const budget = formatBudget(p.budgetMin, p.budgetMax);
             const isSelected = selected.has(p.id);
+            const projectImage = p.imageDataUri || p.imageUrl || null;
             return (
               <div key={p.id} style={{ position: 'relative' }}>
                 {/* Selection checkbox */}
                 <button
                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSelect(p.id); }}
                   style={{
-                    position: 'absolute', top: 14, left: 14, zIndex: 2,
-                    width: 18, height: 18, borderRadius: 4,
-                    border: `1.5px solid ${isSelected ? '#111' : '#D4D1CC'}`,
-                    background: isSelected ? '#111' : 'rgba(255,255,255,0.9)',
+                    position: 'absolute', top: projectImage ? 12 : 14, left: 14, zIndex: 2,
+                    width: 20, height: 20, borderRadius: 5,
+                    border: `1.5px solid ${isSelected ? '#111' : projectImage ? 'rgba(255,255,255,0.6)' : '#D4D1CC'}`,
+                    background: isSelected ? '#111' : projectImage ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.9)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     cursor: 'pointer', transition: 'all 0.12s',
                     opacity: selected.size > 0 || isSelected ? 1 : 0,
-                    padding: 0,
+                    padding: 0, backdropFilter: 'blur(4px)',
                   }}
                   onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
                   onMouseLeave={(e) => { if (selected.size === 0 && !isSelected) e.currentTarget.style.opacity = '0'; }}
@@ -424,15 +425,14 @@ export default function ProjectsPage() {
                   <div
                     className="card"
                     style={{
-                      padding: '20px 22px', cursor: 'pointer',
-                      transition: 'transform 0.15s, box-shadow 0.15s',
+                      padding: 0, cursor: 'pointer', overflow: 'hidden',
+                      transition: 'transform 0.18s cubic-bezier(.22,1,.36,1), box-shadow 0.18s cubic-bezier(.22,1,.36,1)',
                       outline: isSelected ? '2px solid #111' : 'none',
                       outlineOffset: -1,
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.transform = 'translateY(-2px)';
-                      e.currentTarget.style.boxShadow = 'var(--shadow-md)';
-                      // Show checkbox on card hover
+                      e.currentTarget.style.transform = 'translateY(-3px)';
+                      e.currentTarget.style.boxShadow = '0 12px 32px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.04)';
                       const cb = e.currentTarget.parentElement?.querySelector('button') as HTMLButtonElement;
                       if (cb) cb.style.opacity = '1';
                     }}
@@ -443,60 +443,121 @@ export default function ProjectsPage() {
                       if (cb && selected.size === 0 && !isSelected) cb.style.opacity = '0';
                     }}
                   >
-                    {/* Top row */}
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
-                      <div style={{ flex: 1, minWidth: 0, paddingLeft: selected.size > 0 ? 24 : 0, transition: 'padding 0.15s' }}>
-                        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em', marginBottom: 5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {/* Image area */}
+                    {projectImage ? (
+                      <div style={{ position: 'relative', width: '100%', height: 160, overflow: 'hidden', background: '#f0efed' }}>
+                        <img
+                          src={projectImage}
+                          alt={p.name}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                        />
+                        {/* Gradient overlay for status badge */}
+                        <div style={{
+                          position: 'absolute', top: 0, right: 0, padding: '8px 10px',
+                        }}>
+                          <div style={{
+                            display: 'flex', alignItems: 'center', gap: 5,
+                            background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(8px)',
+                            borderRadius: 999, padding: '4px 11px',
+                            fontSize: 10.5, color: st.color, fontWeight: 700, flexShrink: 0,
+                            textTransform: 'capitalize',
+                            boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+                          }}>
+                            <div style={{ width: 5, height: 5, borderRadius: '50%', background: st.dot }} />
+                            {p.status}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{
+                        width: '100%', height: 80,
+                        background: `linear-gradient(135deg, ${st.bg}, #f8f7f6)`,
+                        position: 'relative', overflow: 'hidden',
+                      }}>
+                        {/* Decorative pattern */}
+                        <div style={{
+                          position: 'absolute', inset: 0, opacity: 0.06,
+                          backgroundImage: 'radial-gradient(circle at 20% 50%, #000 1px, transparent 1px), radial-gradient(circle at 80% 30%, #000 1px, transparent 1px)',
+                          backgroundSize: '24px 24px',
+                        }} />
+                        <div style={{
+                          position: 'absolute', top: 8, right: 10,
+                        }}>
+                          <div style={{
+                            display: 'flex', alignItems: 'center', gap: 5,
+                            background: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(8px)',
+                            borderRadius: 999, padding: '4px 11px',
+                            fontSize: 10.5, color: st.color, fontWeight: 700, flexShrink: 0,
+                            textTransform: 'capitalize',
+                          }}>
+                            <div style={{ width: 5, height: 5, borderRadius: '50%', background: st.dot }} />
+                            {p.status}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Content */}
+                    <div style={{ padding: '16px 20px 18px' }}>
+                      {/* Title + client */}
+                      <div style={{ marginBottom: 14, paddingLeft: selected.size > 0 && !projectImage ? 24 : 0, transition: 'padding 0.15s' }}>
+                        <div style={{
+                          fontSize: 15.5, fontWeight: 800, color: 'var(--text-primary)',
+                          letterSpacing: '-0.025em', marginBottom: 6,
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                          lineHeight: 1.2,
+                        }}>
                           {p.name}
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <div style={{
-                            width: 18, height: 18, borderRadius: '50%',
-                            background: 'var(--bg-input)', border: '1px solid var(--border)',
+                            width: 20, height: 20, borderRadius: '50%',
+                            background: 'linear-gradient(135deg, #e8e6e3, #d4d1cc)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: 7.5, fontWeight: 700, color: 'var(--text-muted)', flexShrink: 0,
+                            fontSize: 7.5, fontWeight: 800, color: '#8C8984', flexShrink: 0,
+                            letterSpacing: '0.02em',
                           }}>
                             {initials(p.client.name)}
                           </div>
                           <span style={{ fontSize: 12.5, color: 'var(--text-muted)', fontWeight: 500 }}>{p.client.name}</span>
                         </div>
                       </div>
-                      {/* Status badge — filled pill */}
+
+                      {/* Stats row */}
                       <div style={{
-                        display: 'flex', alignItems: 'center', gap: 5,
-                        background: st.bg, border: `1px solid ${st.border}`,
-                        borderRadius: 999, padding: '4px 11px',
-                        fontSize: 11, color: st.color, fontWeight: 700, flexShrink: 0,
-                        textTransform: 'capitalize',
+                        display: 'flex', gap: 0, paddingTop: 13, borderTop: '1px solid var(--border)',
                       }}>
-                        <div style={{ width: 6, height: 6, borderRadius: '50%', background: st.dot }} />
-                        {p.status}
+                        {[
+                          { label: 'Rooms', value: p._count.rooms },
+                          { label: 'Shortlisted', value: p._count.shortlistItems },
+                          { label: 'Orders', value: p._count.orders },
+                        ].map((stat, i) => (
+                          <div key={stat.label} style={{
+                            flex: 1,
+                            paddingLeft: i > 0 ? 12 : 0,
+                            borderLeft: i > 0 ? '1px solid var(--border)' : 'none',
+                          }}>
+                            <div style={{ fontSize: 16, fontWeight: 900, color: 'var(--text-primary)', letterSpacing: '-0.03em', lineHeight: 1 }}>{stat.value}</div>
+                            <div style={{ fontSize: 9.5, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', marginTop: 3 }}>{stat.label}</div>
+                          </div>
+                        ))}
+                        {budget && (
+                          <div style={{ flex: 1.2, paddingLeft: 12, borderLeft: '1px solid var(--border)', textAlign: 'right' }}>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.01em', lineHeight: 1 }}>{budget}</div>
+                            <div style={{ fontSize: 9.5, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', marginTop: 3 }}>Budget</div>
+                          </div>
+                        )}
                       </div>
-                    </div>
 
-                    {/* Stats row */}
-                    <div style={{ display: 'flex', gap: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
-                      {[
-                        { label: 'Rooms', value: p._count.rooms },
-                        { label: 'Shortlisted', value: p._count.shortlistItems },
-                        { label: 'Orders', value: p._count.orders },
-                      ].map((stat) => (
-                        <div key={stat.label}>
-                          <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>{stat.value}</div>
-                          <div style={{ fontSize: 10.5, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', marginTop: 1 }}>{stat.label}</div>
-                        </div>
-                      ))}
-                      {budget && (
-                        <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{budget}</div>
-                          <div style={{ fontSize: 10.5, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', marginTop: 1 }}>Budget</div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Footer */}
-                    <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-muted)' }}>
-                      Updated {formatDate(p.updatedAt)}
+                      {/* Footer */}
+                      <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: 10.5, color: 'var(--text-muted)', fontWeight: 500 }}>
+                          Updated {formatDate(p.updatedAt)}
+                        </span>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" style={{ opacity: 0.4 }}>
+                          <path d="M9 18l6-6-6-6" />
+                        </svg>
+                      </div>
                     </div>
                   </div>
                 </Link>

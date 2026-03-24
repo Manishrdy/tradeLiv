@@ -15,8 +15,10 @@ import catalogRouter from './routes/catalog';
 import ordersRouter from './routes/orders';
 import adminRouter from './routes/admin';
 import paymentsRouter from './routes/payments';
+import { furnitureCategoriesRouter, adminFurnitureCategoriesRouter } from './routes/furnitureCategories';
 import { stripeWebhookHandler } from './routes/webhooks';
-import { addProjectListener } from './services/projectEvents';
+import { addProjectListener, emitProjectEvent } from './services/projectEvents';
+import { setOnline, setOffline, purgeExpiredMessages } from './services/messageService';
 
 const app = express();
 const PORT = process.env.API_PORT ?? 4000;
@@ -31,7 +33,7 @@ app.use(cookieParser());
 // Stripe webhook needs raw body — must be BEFORE express.json()
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhookHandler);
 
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 app.use((req: Request, res: Response, next: NextFunction) => {
   res.on('finish', () => {
@@ -65,21 +67,31 @@ app.use('/api/catalog', catalogRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/payments', paymentsRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/furniture-categories', furnitureCategoriesRouter);
+app.use('/api/admin/furniture-categories', adminFurnitureCategoriesRouter);
 
 /* ─── SSE: real-time project events ───────────────── */
 app.get('/api/projects/:projectId/events', (req, res) => {
+  const projectId = req.params.projectId;
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     Connection: 'keep-alive',
   });
-  res.write(':\n\n'); // SSE comment to establish connection
-  addProjectListener(req.params.projectId, res);
+  res.write(':\n\n');
+
+  setOnline(projectId, 'designer');
+  emitProjectEvent(projectId, 'presence', { actorType: 'designer', online: true });
+  addProjectListener(projectId, res);
+
+  res.on('close', () => {
+    setOffline(projectId, 'designer');
+    emitProjectEvent(projectId, 'presence', { actorType: 'designer', online: false });
+  });
 });
 
 /* ─── SSE: portal events (public, by portalToken) ── */
 app.get('/api/portal/:portalToken/events', async (req, res) => {
-  // Resolve portalToken → projectId
   const { prisma } = await import('@furnlo/db');
   const project = await prisma.project.findUnique({
     where: { portalToken: req.params.portalToken },
@@ -93,7 +105,15 @@ app.get('/api/portal/:portalToken/events', async (req, res) => {
     Connection: 'keep-alive',
   });
   res.write(':\n\n');
+
+  setOnline(project.id, 'client');
+  emitProjectEvent(project.id, 'presence', { actorType: 'client', online: true });
   addProjectListener(project.id, res);
+
+  res.on('close', () => {
+    setOffline(project.id, 'client');
+    emitProjectEvent(project.id, 'presence', { actorType: 'client', online: false });
+  });
 });
 
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
@@ -103,6 +123,10 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 
 app.listen(PORT, () => {
   logger.info(`Tradeliv API running on port ${PORT}`);
+
+  // Run message TTL cleanup every 6 hours
+  purgeExpiredMessages().catch(() => {});
+  setInterval(() => purgeExpiredMessages().catch(() => {}), 6 * 60 * 60 * 1000);
 });
 
 export default app;

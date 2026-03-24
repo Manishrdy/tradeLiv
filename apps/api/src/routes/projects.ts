@@ -4,6 +4,8 @@ import crypto from 'crypto';
 import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { writeAuditLog } from '../services/auditLog';
+import { emitProjectEvent } from '../services/projectEvents';
+import { createMessage, getMessages, markMessagesRead, getUnreadCount, getProjectPresence } from '../services/messageService';
 import logger from '../config/logger';
 
 const router = Router();
@@ -28,7 +30,15 @@ const projectUpdateSchema = z.object({
   budgetMax: z.number().positive().nullable().optional(),
   stylePreference: z.string().max(200).nullable().optional(),
   status: z.enum(['draft', 'active', 'ordered', 'closed']).optional(),
+  imageUrl: z.string().url().nullable().optional(),
 });
+
+const imageUploadSchema = z.object({
+  imageData: z.string().min(1, 'Image data is required'),
+  mimeType: z.enum(['image/jpeg', 'image/jpg', 'image/png'], { errorMap: () => ({ message: 'Only JPEG/JPG/PNG images are allowed' }) }),
+});
+
+const MAX_IMAGE_SIZE = 300 * 1024; // 300KB max (after compression on client)
 
 const roomSchema = z.object({
   name: z.string().min(1, 'Room name is required').max(100),
@@ -69,11 +79,16 @@ function serializeRoom(r: any) {
 }
 
 function serializeProject(p: any) {
+  const { imageData, ...rest } = p;
   return {
-    ...p,
+    ...rest,
     budgetMin: toNum(p.budgetMin),
     budgetMax: toNum(p.budgetMax),
     rooms: p.rooms ? p.rooms.map(serializeRoom) : undefined,
+    // Convert Bytes to base64 data URI for client consumption
+    imageDataUri: imageData && p.imageMimeType
+      ? `data:${p.imageMimeType};base64,${Buffer.from(imageData).toString('base64')}`
+      : null,
   };
 }
 
@@ -117,6 +132,9 @@ router.get('/', async (req: AuthRequest, res: Response) => {
         portalToken: true,
         budgetMin: true,
         budgetMax: true,
+        imageUrl: true,
+        imageData: true,
+        imageMimeType: true,
         createdAt: true,
         updatedAt: true,
         client: { select: { id: true, name: true, email: true } },
@@ -458,6 +476,237 @@ router.delete('/:id/rooms/:roomId', async (req: AuthRequest, res: Response) => {
     });
 
     res.json({ message: 'Room deleted.' });
+  } catch (err) {
+    logger.error('projects route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── GET /api/projects/:id/messages ───────────────── */
+
+const messageQuerySchema = z.object({
+  after: z.string().datetime().optional(),
+});
+
+router.get('/:id/messages', async (req: AuthRequest, res: Response) => {
+  try {
+    const project = await getOwnedProject(req.params.id as string, req.user!.id);
+    if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
+
+    const parsed = messageQuerySchema.safeParse(req.query);
+    const after = parsed.success ? parsed.data.after : undefined;
+    const messages = await getMessages(project.id, after);
+    res.json(messages);
+  } catch (err) {
+    logger.error('projects route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── POST /api/projects/:id/messages ──────────────── */
+
+const sendMessageSchema = z.object({
+  text: z.string().min(1, 'Message cannot be empty').max(5000),
+});
+
+router.post('/:id/messages', async (req: AuthRequest, res: Response) => {
+  const parsed = sendMessageSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors[0].message }); return; }
+
+  try {
+    const project = await getOwnedProject(req.params.id as string, req.user!.id);
+    if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
+
+    const designer = await prisma.designer.findUnique({
+      where: { id: req.user!.id },
+      select: { fullName: true },
+    });
+
+    const message = await createMessage({
+      projectId: project.id,
+      senderType: 'designer',
+      senderId: req.user!.id,
+      senderName: designer?.fullName ?? 'Designer',
+      text: parsed.data.text,
+    });
+
+    emitProjectEvent(project.id, 'new_message', {
+      id: message.id,
+      senderType: message.senderType,
+      senderName: message.senderName,
+      text: message.text,
+      createdAt: message.createdAt.toISOString(),
+    });
+
+    res.status(201).json(message);
+  } catch (err) {
+    logger.error('projects route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── PUT /api/projects/:id/messages/read ──────────── */
+
+router.put('/:id/messages/read', async (req: AuthRequest, res: Response) => {
+  try {
+    const project = await getOwnedProject(req.params.id as string, req.user!.id);
+    if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
+
+    const count = await markMessagesRead(project.id, 'designer');
+    if (count > 0) {
+      emitProjectEvent(project.id, 'messages_read', { readerType: 'designer', count });
+    }
+    res.json({ markedRead: count });
+  } catch (err) {
+    logger.error('projects route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── GET /api/projects/:id/messages/unread ────────── */
+
+router.get('/:id/messages/unread', async (req: AuthRequest, res: Response) => {
+  try {
+    const project = await getOwnedProject(req.params.id as string, req.user!.id);
+    if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
+
+    const count = await getUnreadCount(project.id, 'designer');
+    res.json({ unread: count });
+  } catch (err) {
+    logger.error('projects route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── GET /api/projects/:id/presence ───────────────── */
+
+router.get('/:id/presence', async (req: AuthRequest, res: Response) => {
+  try {
+    const project = await getOwnedProject(req.params.id as string, req.user!.id);
+    if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
+
+    const presence = getProjectPresence(project.id);
+    res.json(presence);
+  } catch (err) {
+    logger.error('projects route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── POST /api/projects/:id/image ───────────────── */
+
+router.post('/:id/image', async (req: AuthRequest, res: Response) => {
+  const parsed = imageUploadSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0].message });
+    return;
+  }
+
+  try {
+    const existing = await getOwnedProject(req.params.id, req.user!.id);
+    if (!existing) {
+      res.status(404).json({ error: 'Project not found.' });
+      return;
+    }
+
+    const { imageData: base64Data, mimeType } = parsed.data;
+
+    // Decode base64 and check size
+    const buffer = Buffer.from(base64Data, 'base64');
+    if (buffer.length > MAX_IMAGE_SIZE) {
+      res.status(400).json({ error: `Image too large (${Math.round(buffer.length / 1024)}KB). Max ${MAX_IMAGE_SIZE / 1024}KB after compression.` });
+      return;
+    }
+
+    const project = await prisma.project.update({
+      where: { id: req.params.id },
+      data: {
+        imageData: buffer,
+        imageMimeType: mimeType,
+        imageUrl: null, // clear URL when uploading file
+      },
+      include: {
+        client: { select: { id: true, name: true, email: true } },
+        rooms: {
+          orderBy: { createdAt: 'asc' },
+          include: { _count: { select: { shortlistItems: true } } },
+        },
+        _count: { select: { shortlistItems: true, cartItems: true, orders: true } },
+      },
+    });
+
+    res.json(serializeProject(project));
+  } catch (err) {
+    logger.error('projects route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── PUT /api/projects/:id/image-url ────────────── */
+
+router.put('/:id/image-url', async (req: AuthRequest, res: Response) => {
+  const schema = z.object({ imageUrl: z.string().url('Invalid image URL') });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0].message });
+    return;
+  }
+
+  try {
+    const existing = await getOwnedProject(req.params.id, req.user!.id);
+    if (!existing) {
+      res.status(404).json({ error: 'Project not found.' });
+      return;
+    }
+
+    const project = await prisma.project.update({
+      where: { id: req.params.id },
+      data: {
+        imageUrl: parsed.data.imageUrl,
+        imageData: null, // clear uploaded data when using URL
+        imageMimeType: null,
+      },
+      include: {
+        client: { select: { id: true, name: true, email: true } },
+        rooms: {
+          orderBy: { createdAt: 'asc' },
+          include: { _count: { select: { shortlistItems: true } } },
+        },
+        _count: { select: { shortlistItems: true, cartItems: true, orders: true } },
+      },
+    });
+
+    res.json(serializeProject(project));
+  } catch (err) {
+    logger.error('projects route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── DELETE /api/projects/:id/image ─────────────── */
+
+router.delete('/:id/image', async (req: AuthRequest, res: Response) => {
+  try {
+    const existing = await getOwnedProject(req.params.id, req.user!.id);
+    if (!existing) {
+      res.status(404).json({ error: 'Project not found.' });
+      return;
+    }
+
+    const project = await prisma.project.update({
+      where: { id: req.params.id },
+      data: { imageUrl: null, imageData: null, imageMimeType: null },
+      include: {
+        client: { select: { id: true, name: true, email: true } },
+        rooms: {
+          orderBy: { createdAt: 'asc' },
+          include: { _count: { select: { shortlistItems: true } } },
+        },
+        _count: { select: { shortlistItems: true, cartItems: true, orders: true } },
+      },
+    });
+
+    res.json(serializeProject(project));
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
     res.status(500).json({ error: 'An error occurred. Please try again.' });

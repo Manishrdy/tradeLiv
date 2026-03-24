@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
-import { api, PortalProject, PortalShortlistItem, PortalRoom, PortalProduct } from '@/lib/api';
+import { api, PortalProject, PortalShortlistItem, PortalRoom, PortalProduct, ChatMessage } from '@/lib/api';
 
 /* ─── Helpers ─────────────────────────────────────── */
 
@@ -143,14 +143,18 @@ function ProjectProgress({ totalItems, approvedCount, rejectedCount, hasOrders }
 
 function ChatWidget({ portalToken, clientName, designerName }: { portalToken: string; clientName: string; designerName: string }) {
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<{ id: string; senderType: string; senderName: string; text: string; createdAt: string }[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [unread, setUnread] = useState(0);
+  const [designerOnline, setDesignerOnline] = useState(false);
+  const [designerLastSeen, setDesignerLastSeen] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  const sseRef = useRef<EventSource | null>(null);
 
-  // Load messages
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+
+  // Load messages from API
   const loadMessages = useCallback(async () => {
     const r = await api.getPortalMessages(portalToken);
     if (r.data) {
@@ -160,18 +164,64 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
     }
   }, [portalToken]);
 
-  useEffect(() => { loadMessages(); }, [loadMessages]);
-
-  // Poll every 5s when open
-  useEffect(() => {
-    if (open) {
-      loadMessages();
-      pollRef.current = setInterval(loadMessages, 5000);
-      return () => clearInterval(pollRef.current);
-    } else {
-      clearInterval(pollRef.current);
+  // Load presence
+  const loadPresence = useCallback(async () => {
+    const r = await api.getPortalPresence(portalToken);
+    if (r.data) {
+      setDesignerOnline(r.data.designer.online);
+      setDesignerLastSeen(r.data.designer.lastSeen);
     }
-  }, [open, loadMessages]);
+  }, [portalToken]);
+
+  // SSE connection — always on for unread badge + presence
+  useEffect(() => {
+    loadMessages();
+    loadPresence();
+
+    const es = new EventSource(`${apiBase}/api/portal/${portalToken}/events`);
+    sseRef.current = es;
+
+    es.addEventListener('new_message', (e) => {
+      const msg = JSON.parse(e.data) as ChatMessage;
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev, msg];
+      });
+      if (msg.senderType === 'designer') {
+        setUnread((prev) => prev + 1);
+      }
+    });
+
+    es.addEventListener('messages_read', (e) => {
+      const data = JSON.parse(e.data) as { readerType: string };
+      if (data.readerType === 'designer') {
+        // Designer read our messages — update readAt on client messages
+        setMessages((prev) => prev.map((m) =>
+          m.senderType === 'client' && !m.readAt
+            ? { ...m, readAt: new Date().toISOString() }
+            : m
+        ));
+      }
+    });
+
+    es.addEventListener('presence', (e) => {
+      const data = JSON.parse(e.data) as { actorType: string; online: boolean };
+      if (data.actorType === 'designer') {
+        setDesignerOnline(data.online);
+        if (!data.online) setDesignerLastSeen(new Date().toISOString());
+      }
+    });
+
+    return () => { es.close(); };
+  }, [portalToken, apiBase, loadMessages, loadPresence]);
+
+  // Mark messages as read when chat opens
+  useEffect(() => {
+    if (open && unread > 0) {
+      api.markPortalMessagesRead(portalToken);
+      setUnread(0);
+    }
+  }, [open, unread, portalToken]);
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -184,16 +234,30 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
     const r = await api.sendPortalMessage(portalToken, { text: draft.trim(), senderName: clientName });
     setSending(false);
     if (r.data) {
-      setMessages((prev) => [...prev, r.data!]);
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === r.data!.id)) return prev;
+        return [...prev, r.data!];
+      });
       setDraft('');
     }
+  }
+
+  function formatLastSeen(iso: string | null) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const now = new Date();
+    const diffMin = Math.round((now.getTime() - d.getTime()) / 60000);
+    if (diffMin < 1) return 'Just now';
+    if (diffMin < 60) return `${diffMin}m ago`;
+    if (diffMin < 1440) return `${Math.floor(diffMin / 60)}h ago`;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
   return (
     <>
       {/* Floating chat button */}
       <button
-        onClick={() => { setOpen((v) => !v); if (!open) setUnread(0); }}
+        onClick={() => setOpen((v) => !v)}
         style={{
           position: 'fixed', bottom: 24, right: 24, zIndex: 100,
           width: 52, height: 52, borderRadius: '50%',
@@ -237,21 +301,32 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
           border: '1px solid var(--border)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}>
-          {/* Header */}
+          {/* Header with presence */}
           <div style={{
             padding: '14px 18px', borderBottom: '1px solid var(--border)',
             display: 'flex', alignItems: 'center', gap: 10,
           }}>
-            <div style={{
-              width: 32, height: 32, borderRadius: '50%', background: 'var(--bg-input)',
-              border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)',
-            }}>
-              {designerName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}
+            <div style={{ position: 'relative' }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: '50%', background: 'var(--bg-input)',
+                border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)',
+              }}>
+                {designerName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}
+              </div>
+              {/* Online dot */}
+              <span style={{
+                position: 'absolute', bottom: -1, right: -1,
+                width: 10, height: 10, borderRadius: '50%',
+                background: designerOnline ? '#22c55e' : '#9ca3af',
+                border: '2px solid #fff',
+              }} />
             </div>
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{designerName}</div>
-              <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Your designer</div>
+              <div style={{ fontSize: 10.5, color: designerOnline ? '#22c55e' : 'var(--text-muted)' }}>
+                {designerOnline ? 'Online' : designerLastSeen ? `Last seen ${formatLastSeen(designerLastSeen)}` : 'Your designer'}
+              </div>
             </div>
           </div>
 
@@ -262,8 +337,9 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
                 No messages yet. Start a conversation with your designer.
               </div>
             )}
-            {messages.map((m) => {
+            {messages.map((m, idx) => {
               const isClient = m.senderType === 'client';
+              const isLast = idx === messages.length - 1;
               return (
                 <div key={m.id} style={{ display: 'flex', flexDirection: 'column', alignItems: isClient ? 'flex-end' : 'flex-start' }}>
                   <div style={{
@@ -276,8 +352,22 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
                   }}>
                     {m.text}
                   </div>
-                  <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3, paddingLeft: 4, paddingRight: 4 }}>
+                  <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3, paddingLeft: 4, paddingRight: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
                     {m.senderName} · {new Date(m.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                    {/* Seen status for client's own messages */}
+                    {isClient && isLast && (
+                      <span style={{ color: m.readAt ? '#2563eb' : 'var(--text-muted)', marginLeft: 2 }}>
+                        {m.readAt ? (
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M2 12l5 5L18 6" /><path d="M7 12l5 5L23 6" />
+                          </svg>
+                        ) : (
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M5 12l5 5L20 7" />
+                          </svg>
+                        )}
+                      </span>
+                    )}
                   </div>
                 </div>
               );

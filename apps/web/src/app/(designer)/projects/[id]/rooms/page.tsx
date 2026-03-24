@@ -3,15 +3,36 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { api, Room, RoomPayload } from '@/lib/api';
+import { api, Room, RoomPayload, FurnitureCategory } from '@/lib/api';
 
 /* ── Constants ──────────────────────────────────────────── */
 
-const CATEGORY_OPTIONS = [
+// Fallback if API hasn't loaded yet
+const FALLBACK_CATEGORIES = [
   'Sofa', 'Dining Table', 'Bed', 'Desk', 'Storage',
   'Lighting', 'Fan', 'Rug', 'Wardrobe', 'TV Unit',
   'Armchair', 'Side Table', 'Bookshelf', 'Mirror', 'Curtains',
 ];
+
+// Room-type auto-suggest: when room name contains a keyword, suggest these categories
+const ROOM_TYPE_SUGGESTIONS: Record<string, string[]> = {
+  'bedroom':     ['Bed', 'Wardrobe', 'Side Table', 'Lighting', 'Mirror', 'Rug', 'Curtains'],
+  'master':      ['Bed', 'Wardrobe', 'Side Table', 'Lighting', 'Mirror', 'Rug', 'Curtains', 'Armchair'],
+  'living':      ['Sofa', 'TV Unit', 'Side Table', 'Rug', 'Lighting', 'Curtains', 'Bookshelf'],
+  'drawing':     ['Sofa', 'Armchair', 'Side Table', 'Rug', 'Lighting', 'Curtains', 'Mirror'],
+  'dining':      ['Dining Table', 'Lighting', 'Storage', 'Mirror', 'Rug'],
+  'kitchen':     ['Storage', 'Lighting'],
+  'study':       ['Desk', 'Bookshelf', 'Lighting', 'Storage'],
+  'office':      ['Desk', 'Bookshelf', 'Lighting', 'Storage'],
+  'guest':       ['Bed', 'Wardrobe', 'Side Table', 'Lighting', 'Mirror'],
+  'nursery':     ['Bed', 'Storage', 'Rug', 'Lighting', 'Curtains'],
+  'kids':        ['Bed', 'Desk', 'Storage', 'Bookshelf', 'Rug', 'Lighting'],
+  'balcony':     ['Armchair', 'Side Table', 'Lighting'],
+  'patio':       ['Armchair', 'Side Table', 'Lighting'],
+  'foyer':       ['Mirror', 'Lighting', 'Storage', 'Rug'],
+  'library':     ['Bookshelf', 'Armchair', 'Desk', 'Lighting', 'Rug'],
+  'pooja':       ['Storage', 'Lighting'],
+};
 
 const STYLE_OPTIONS = [
   'Modern', 'Contemporary', 'Traditional', 'Minimalist',
@@ -107,6 +128,19 @@ function formatBudget(min: number | null, max: number | null) {
   return `Up to ${fmt(max!)}`;
 }
 
+/* ── Room accent colors ────────────────────────────────── */
+
+const ROOM_COLORS = [
+  '#9E7C3F', '#2C6347', '#4A6FA5', '#8B6F47',
+  '#6B5B73', '#5A7D7C', '#946B54', '#5C6B73',
+];
+
+function roomAccentColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return ROOM_COLORS[Math.abs(hash) % ROOM_COLORS.length];
+}
+
 /* ── Sub-components ─────────────────────────────────────── */
 
 function CategoryChip({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
@@ -190,20 +224,32 @@ function InspirationLinks({
 
 /* ── Room Form ──────────────────────────────────────────── */
 
+function getSuggestedCategories(roomName: string): string[] {
+  const lower = roomName.toLowerCase();
+  for (const [keyword, cats] of Object.entries(ROOM_TYPE_SUGGESTIONS)) {
+    if (lower.includes(keyword)) return cats;
+  }
+  return [];
+}
+
 function RoomForm({
   initial,
   onSave,
   onCancel,
   saving,
   error,
+  availableCategories,
 }: {
   initial: RoomFormState;
   onSave: (f: RoomFormState) => void;
   onCancel: () => void;
   saving: boolean;
   error: string | null;
+  availableCategories: string[];
 }) {
   const [form, setForm] = useState<RoomFormState>(initial);
+  const [customTag, setCustomTag] = useState('');
+  const [suggestApplied, setSuggestApplied] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { nameRef.current?.focus(); }, []);
@@ -219,6 +265,26 @@ function RoomForm({
         : [...form.categoryNeeds, cat],
     );
   };
+
+  const addCustomTag = () => {
+    const tag = customTag.trim();
+    if (tag && !form.categoryNeeds.includes(tag)) {
+      set('categoryNeeds', [...form.categoryNeeds, tag]);
+    }
+    setCustomTag('');
+  };
+
+  // Auto-suggest when room name changes
+  const suggestions = getSuggestedCategories(form.name);
+  const hasSuggestions = suggestions.length > 0 && !suggestApplied && form.categoryNeeds.length === 0;
+
+  const applySuggestions = () => {
+    set('categoryNeeds', [...suggestions]);
+    setSuggestApplied(true);
+  };
+
+  // Custom tags = items in categoryNeeds that aren't in the available list
+  const customTags = form.categoryNeeds.filter((c) => !availableCategories.includes(c));
 
   const areaSqft =
     form.lengthFt && form.widthFt
@@ -306,8 +372,36 @@ function RoomForm({
       {/* Category needs */}
       <div>
         {fieldLabel('Furniture Needed')}
+
+        {/* Auto-suggest banner */}
+        {hasSuggestions && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '8px 12px', marginBottom: 10,
+            background: 'rgba(158, 124, 63, 0.06)', border: '1px solid rgba(158, 124, 63, 0.18)',
+            borderRadius: 8, fontSize: 12.5,
+          }}>
+            <span style={{ color: 'var(--text-secondary)', flex: 1 }}>
+              Auto-suggest for <strong>{form.name}</strong>: {suggestions.join(', ')}
+            </span>
+            <button
+              type="button"
+              onClick={applySuggestions}
+              style={{
+                border: '1px solid rgba(158, 124, 63, 0.3)', borderRadius: 6,
+                background: 'rgba(158, 124, 63, 0.08)', color: '#9E7C3F',
+                padding: '3px 10px', fontSize: 11.5, fontWeight: 700,
+                cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              Apply
+            </button>
+          </div>
+        )}
+
+        {/* Category chips */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {CATEGORY_OPTIONS.map((cat) => (
+          {availableCategories.map((cat) => (
             <CategoryChip
               key={cat}
               label={cat}
@@ -315,6 +409,42 @@ function RoomForm({
               onClick={() => toggleCategory(cat)}
             />
           ))}
+          {/* Custom tags that aren't in the available list */}
+          {customTags.map((cat) => (
+            <CategoryChip
+              key={cat}
+              label={cat}
+              selected={true}
+              onClick={() => toggleCategory(cat)}
+            />
+          ))}
+        </div>
+
+        {/* Custom tag input */}
+        <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+          <input
+            className="input-field"
+            type="text"
+            placeholder="Add custom item…"
+            value={customTag}
+            onChange={(e) => setCustomTag(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomTag(); } }}
+            style={{ flex: 1, fontSize: 12.5 }}
+          />
+          <button
+            type="button"
+            onClick={addCustomTag}
+            disabled={!customTag.trim()}
+            style={{
+              border: '1px dashed var(--border-strong)', borderRadius: 8,
+              background: 'transparent', color: 'var(--text-muted)',
+              padding: '5px 12px', fontSize: 12, fontWeight: 600,
+              cursor: customTag.trim() ? 'pointer' : 'default',
+              opacity: customTag.trim() ? 1 : 0.5,
+            }}
+          >
+            + Add
+          </button>
         </div>
       </div>
 
@@ -432,16 +562,32 @@ function RoomForm({
 
 /* ── Room Card ──────────────────────────────────────────── */
 
+const ROOM_ICONS: Record<string, string> = {
+  'Living Room': '🛋️', 'Bedroom': '🛏️', 'Kitchen': '🍳', 'Bathroom': '🚿',
+  'Dining Room': '🍽️', 'Study': '📚', 'Office': '💼', 'Balcony': '🌿',
+  'Master Bedroom': '🛏️', 'Guest Room': '🛋️', 'Nursery': '🧸', 'Patio': '☀️',
+  'Foyer': '🚪', 'Library': '📖', 'Gym': '🏋️', 'Laundry': '🧺',
+};
+
+function getRoomIcon(name: string) {
+  for (const [key, icon] of Object.entries(ROOM_ICONS)) {
+    if (name.toLowerCase().includes(key.toLowerCase())) return icon;
+  }
+  return '🏠';
+}
+
 function RoomCard({
   room,
   projectId,
   onUpdated,
   onDeleted,
+  availableCategories,
 }: {
   room: Room;
   projectId: string;
   onUpdated: (r: Room) => void;
   onDeleted: (id: string) => void;
+  availableCategories: string[];
 }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -449,8 +595,12 @@ function RoomCard({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [hovered, setHovered] = useState(false);
 
   const budget = formatBudget(room.budgetMin, room.budgetMax);
+  const accent = roomAccentColor(room.name);
+  const shortlistCount = room._count?.shortlistItems ?? 0;
+  const icon = getRoomIcon(room.name);
 
   const handleSave = async (f: RoomFormState) => {
     setSaving(true);
@@ -477,8 +627,8 @@ function RoomCard({
 
   if (editing) {
     return (
-      <div className="card" style={{ padding: '20px 22px' }}>
-        <div style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 18 }}>
+      <div className="card" style={{ padding: '24px 26px', gridColumn: '1 / -1' }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 18 }}>
           Edit: {room.name}
         </div>
         <RoomForm
@@ -487,204 +637,227 @@ function RoomCard({
           onCancel={() => { setEditing(false); setFormError(null); }}
           saving={saving}
           error={formError}
+          availableCategories={availableCategories}
         />
       </div>
     );
   }
 
-  const shortlistCount = room._count?.shortlistItems ?? 0;
+  const cr = room.clientRequirements;
+  const hasReqs = cr && (cr.colorPalette || cr.materialPreferences || cr.functionalConstraints || cr.seatingCapacity != null || (cr.inspirationLinks?.length ?? 0) > 0);
 
   return (
-    <div className="card" style={{ padding: '18px 20px' }}>
-      {/* Header row */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Link
-            href={`/projects/${projectId}/rooms/${room.id}`}
-            style={{ textDecoration: 'none' }}
-          >
-            <div
-              style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em', marginBottom: 3, cursor: 'pointer', transition: 'color 0.12s' }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.color = 'var(--gold)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.color = 'var(--text-primary)'; }}
-            >
-              {room.name}
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ marginLeft: 6, opacity: 0.4, verticalAlign: 'middle' }}>
-                <path d="M5 12h14M12 5l7 7-7 7" />
-              </svg>
+    <Link href={`/projects/${projectId}/rooms/${room.id}`} style={{ textDecoration: 'none', display: 'flex', flexDirection: 'column' as const }}>
+      <div
+        className="card"
+        style={{
+          padding: 0, overflow: 'hidden', position: 'relative', cursor: 'pointer', flex: 1, display: 'flex', flexDirection: 'column' as const,
+          transition: 'transform 0.18s cubic-bezier(.22,1,.36,1), box-shadow 0.18s cubic-bezier(.22,1,.36,1)',
+          transform: hovered ? 'translateY(-2px)' : 'translateY(0)',
+          boxShadow: hovered ? '0 8px 28px rgba(0,0,0,0.08)' : undefined,
+        }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      >
+        {/* Top section — icon + name */}
+        <div style={{
+          padding: '24px 24px 20px',
+          background: `linear-gradient(135deg, ${accent}08, ${accent}03)`,
+          borderBottom: '1px solid var(--border)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{
+              width: 48, height: 48, borderRadius: 14,
+              background: '#fff', border: '1px solid var(--border)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 22, flexShrink: 0,
+              boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+            }}>
+              {icon}
             </div>
-          </Link>
-          <div style={{ display: 'flex', gap: 12, fontSize: 12.5, color: 'var(--text-muted)', fontWeight: 500 }}>
-            {room.areaSqft != null && (
-              <span>{room.areaSqft} sq ft</span>
-            )}
-            {room.lengthFt != null && room.widthFt != null && (
-              <span style={{ color: 'var(--border-strong)' }}>
-                {room.lengthFt} × {room.widthFt}{room.heightFt != null ? ` × ${room.heightFt}` : ''} ft
-              </span>
-            )}
-            {budget && (
-              <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{budget}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                fontSize: 16, fontWeight: 800, color: 'var(--text-primary)',
+                letterSpacing: '-0.02em', lineHeight: 1.25,
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>
+                {room.name}
+              </div>
+              {(room.areaSqft != null || budget) && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginTop: 4, fontSize: 12.5, color: 'var(--text-muted)', fontWeight: 500 }}>
+                  {room.areaSqft != null && <span>{room.areaSqft} sq ft</span>}
+                  {room.areaSqft != null && budget && <span style={{ margin: '0 6px', opacity: 0.4 }}>/</span>}
+                  {budget && <span style={{ fontWeight: 700, color: 'var(--text-secondary)' }}>{budget}</span>}
+                </div>
+              )}
+            </div>
+            {shortlistCount > 0 && (
+              <div style={{
+                background: 'var(--gold-dim)', border: '1px solid var(--gold-border)',
+                borderRadius: 999, padding: '3px 10px',
+                fontSize: 11, fontWeight: 700, color: 'var(--gold)', flexShrink: 0,
+              }}>
+                {shortlistCount} item{shortlistCount !== 1 ? 's' : ''}
+              </div>
             )}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
-          {shortlistCount > 0 && (
-            <span style={{
-              background: 'var(--gold-dim)', border: '1px solid var(--gold-border)',
-              borderRadius: 999, padding: '3px 10px',
-              fontSize: 11, fontWeight: 700, color: 'var(--gold)',
+
+        {/* Bottom section — stats + chips */}
+        <div style={{ padding: '16px 24px 20px', minHeight: 80, flex: 1 }}>
+          {/* Dimensions row */}
+          {room.lengthFt != null && room.widthFt != null && (
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              fontSize: 11.5, color: 'var(--text-muted)', fontWeight: 600,
+              marginBottom: room.categoryNeeds.length > 0 || hasReqs || room.notes ? 14 : 0,
             }}>
-              {shortlistCount} item{shortlistCount !== 1 ? 's' : ''}
-            </span>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+              </svg>
+              {room.lengthFt} × {room.widthFt}{room.heightFt != null ? ` × ${room.heightFt}` : ''} ft
+            </div>
           )}
-          <Link
-            href={`/projects/${projectId}/rooms/${room.id}`}
-            style={{
-              border: '1px solid var(--border)', borderRadius: 8,
-              background: 'transparent', color: 'var(--text-secondary)',
-              padding: '5px 12px', fontSize: 12, fontWeight: 600,
-              textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 5,
-              transition: 'all 0.12s',
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.borderColor = 'var(--border-strong)'; (e.currentTarget as HTMLAnchorElement).style.background = 'var(--bg-input)'; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLAnchorElement).style.background = 'transparent'; }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-            View
-          </Link>
-          <button
-            onClick={() => setEditing(true)}
-            style={{
-              border: '1px solid var(--border)', borderRadius: 8,
-              background: 'transparent', color: 'var(--text-muted)',
-              padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-            }}
-          >
-            Edit
-          </button>
-          <button
-            onClick={() => setConfirmDelete(true)}
-            style={{
-              border: '1px solid rgba(180,30,30,0.2)', borderRadius: 8,
-              background: 'transparent', color: '#b41e1e',
-              padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-            }}
-          >
-            Delete
-          </button>
-        </div>
-      </div>
 
-      {/* Category chips */}
-      {room.categoryNeeds.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10 }}>
-          {room.categoryNeeds.map((cat) => (
-            <span
-              key={cat}
-              style={{
-                border: '1px solid var(--border)', borderRadius: 999,
-                padding: '2px 10px', fontSize: 11.5, color: 'var(--text-muted)', fontWeight: 600,
-              }}
-            >
-              {cat}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Client requirements summary */}
-      {room.clientRequirements && (
-        <div style={{
-          background: 'var(--bg-input)', border: '1px solid var(--border)',
-          borderRadius: 8, padding: '10px 12px',
-          fontSize: 12.5, color: 'var(--text-secondary)',
-          display: 'flex', flexDirection: 'column', gap: 4,
-          marginBottom: 10,
-        }}>
-          {room.clientRequirements.colorPalette && (
-            <div><span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Palette: </span>{room.clientRequirements.colorPalette}</div>
-          )}
-          {room.clientRequirements.materialPreferences && (
-            <div><span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Materials: </span>{room.clientRequirements.materialPreferences}</div>
-          )}
-          {room.clientRequirements.seatingCapacity != null && (
-            <div><span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Seating: </span>{room.clientRequirements.seatingCapacity} persons</div>
-          )}
-          {room.clientRequirements.functionalConstraints && (
-            <div><span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Constraints: </span>{room.clientRequirements.functionalConstraints}</div>
-          )}
-          {room.clientRequirements.inspirationLinks?.length ? (
-            <div>
-              <span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Inspiration: </span>
-              {room.clientRequirements.inspirationLinks.map((link, i) => (
-                <a key={i} href={link} target="_blank" rel="noreferrer"
-                  style={{ color: 'var(--text-secondary)', marginRight: 8, fontSize: 12, textDecoration: 'underline' }}>
-                  Link {i + 1}
-                </a>
+          {/* Category chips */}
+          {room.categoryNeeds.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: hasReqs || room.notes ? 12 : 0 }}>
+              {room.categoryNeeds.map((cat) => (
+                <span
+                  key={cat}
+                  style={{
+                    padding: '3px 10px', borderRadius: 999,
+                    fontSize: 11, fontWeight: 600,
+                    color: 'var(--text-muted)',
+                    background: 'var(--bg-input)',
+                  }}
+                >
+                  {cat}
+                </span>
               ))}
             </div>
-          ) : null}
-        </div>
-      )}
+          )}
 
-      {/* Notes */}
-      {room.notes && (
-        <div style={{ fontSize: 12.5, color: 'var(--text-muted)', fontStyle: 'italic' }}>
-          {room.notes}
-        </div>
-      )}
+          {/* Client reqs hint */}
+          {hasReqs && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              fontSize: 11.5, color: 'var(--text-muted)', fontWeight: 500,
+              marginBottom: room.notes ? 8 : 0,
+            }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+              </svg>
+              Client brief attached
+            </div>
+          )}
 
-      {/* Delete error */}
-      {deleteError && (
+          {/* Notes preview */}
+          {room.notes && (
+            <div style={{
+              fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {room.notes}
+            </div>
+          )}
+        </div>
+
+        {/* Hover action buttons */}
         <div style={{
-          marginTop: 10,
-          background: 'rgba(180,30,30,0.07)', border: '1px solid rgba(180,30,30,0.18)',
-          borderRadius: 8, padding: '8px 12px', fontSize: 12.5, color: '#b41e1e',
+          position: 'absolute', top: 12, right: 12,
+          display: 'flex', gap: 4,
+          opacity: hovered ? 1 : 0,
+          transform: hovered ? 'translateY(0)' : 'translateY(-4px)',
+          transition: 'opacity 0.15s, transform 0.15s',
         }}>
-          {deleteError}
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditing(true); }}
+            style={{
+              width: 30, height: 30, borderRadius: 8,
+              background: 'rgba(255,255,255,0.95)', border: '1px solid var(--border)',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: 'var(--text-muted)', backdropFilter: 'blur(4px)',
+              transition: 'all 0.12s',
+            }}
+            title="Edit"
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--border-strong)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+          </button>
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirmDelete(true); }}
+            style={{
+              width: 30, height: 30, borderRadius: 8,
+              background: 'rgba(255,255,255,0.95)', border: '1px solid var(--border)',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: 'var(--text-muted)', backdropFilter: 'blur(4px)',
+              transition: 'all 0.12s',
+            }}
+            title="Delete"
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(180,30,30,0.3)'; e.currentTarget.style.color = '#b41e1e'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            </svg>
+          </button>
         </div>
-      )}
 
-      {/* Confirm delete */}
-      {confirmDelete && (
-        <div style={{
-          marginTop: 12, padding: '12px 14px',
-          background: 'rgba(180,30,30,0.05)', border: '1px solid rgba(180,30,30,0.15)',
-          borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-        }}>
-          <span style={{ fontSize: 12.5, color: '#b41e1e', fontWeight: 600 }}>
-            Delete this room? This cannot be undone.
-          </span>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              onClick={() => setConfirmDelete(false)}
-              style={{
-                border: '1px solid var(--border)', borderRadius: 6,
-                background: 'transparent', color: 'var(--text-muted)',
-                padding: '4px 12px', fontSize: 12, cursor: 'pointer',
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleDelete}
-              disabled={deleting}
-              style={{
-                border: 'none', borderRadius: 6,
-                background: '#b41e1e', color: '#fff',
-                padding: '4px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-              }}
-            >
-              {deleting ? 'Deleting…' : 'Delete'}
-            </button>
+        {/* Delete error */}
+        {deleteError && (
+          <div onClick={(e) => e.preventDefault()} style={{
+            padding: '0 24px 12px',
+            fontSize: 12.5, color: '#b41e1e',
+          }}>
+            {deleteError}
           </div>
-        </div>
-      )}
-    </div>
+        )}
+
+        {/* Delete confirmation overlay */}
+        {confirmDelete && (
+          <div onClick={(e) => e.preventDefault()} className="anim-scale-in" style={{
+            position: 'absolute', inset: 0, zIndex: 5,
+            background: 'rgba(255,255,255,0.94)', backdropFilter: 'blur(6px)',
+            borderRadius: 12, display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center', gap: 12,
+          }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Delete &ldquo;{room.name}&rdquo;?</div>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>This action cannot be undone.</div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <button
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirmDelete(false); }}
+                style={{
+                  border: '1px solid var(--border)', borderRadius: 8,
+                  background: '#fff', color: 'var(--text-secondary)',
+                  padding: '8px 20px', fontSize: 13, fontWeight: 600,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDelete(); }}
+                disabled={deleting}
+                style={{
+                  border: 'none', borderRadius: 8,
+                  background: '#b41e1e', color: '#fff',
+                  padding: '8px 20px', fontSize: 13, fontWeight: 700,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </Link>
   );
 }
 
@@ -697,11 +870,18 @@ export default function RoomsPage() {
   const [adding, setAdding] = useState(false);
   const [savingNew, setSavingNew] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [categoryNames, setCategoryNames] = useState<string[]>(FALLBACK_CATEGORIES);
 
   useEffect(() => {
     api.getProject(id).then((r) => {
       if (r.data) setRooms(r.data.rooms);
       setLoading(false);
+    });
+    // Fetch dynamic categories
+    api.getFurnitureCategories().then((r) => {
+      if (r.data && r.data.length > 0) {
+        setCategoryNames(r.data.map((c) => c.name));
+      }
     });
   }, [id]);
 
@@ -722,7 +902,7 @@ export default function RoomsPage() {
     setRooms((prev) => prev.filter((r) => r.id !== roomId));
 
   return (
-    <div style={{ padding: '40px 44px', maxWidth: 760 }}>
+    <div style={{ padding: '40px 44px', maxWidth: 960 }}>
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
@@ -757,6 +937,7 @@ export default function RoomsPage() {
             onCancel={() => { setAdding(false); setAddError(null); }}
             saving={savingNew}
             error={addError}
+            availableCategories={categoryNames}
           />
         </div>
       )}
@@ -795,7 +976,7 @@ export default function RoomsPage() {
           </button>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16, gridAutoRows: '1fr' }}>
           {rooms.map((room) => (
             <RoomCard
               key={room.id}
@@ -803,6 +984,7 @@ export default function RoomsPage() {
               projectId={id}
               onUpdated={handleUpdated}
               onDeleted={handleDeleted}
+              availableCategories={categoryNames}
             />
           ))}
         </div>

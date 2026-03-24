@@ -128,6 +128,8 @@ export interface ProjectSummary {
   portalToken: string | null;
   budgetMin: number | null;
   budgetMax: number | null;
+  imageUrl: string | null;
+  imageDataUri: string | null;
   createdAt: string;
   updatedAt: string;
   client: { id: string; name: string; email: string | null };
@@ -168,6 +170,8 @@ export interface ProjectDetail {
   budgetMax: number | null;
   stylePreference: string | null;
   portalToken: string | null;
+  imageUrl: string | null;
+  imageDataUri: string | null;
   createdAt: string;
   updatedAt: string;
   client: {
@@ -225,6 +229,26 @@ export interface AuditLogEntry {
   entityId: string | null;
   payload: Record<string, unknown> | null;
   createdAt: string;
+}
+
+/* ─── Furniture Category types ─────────────────────── */
+
+export interface FurnitureCategory {
+  id: string;
+  name: string;
+  group: string | null;
+  icon: string | null;
+  sortOrder: number;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface FurnitureCategoryPayload {
+  name: string;
+  group?: string | null;
+  icon?: string | null;
+  sortOrder?: number;
+  active?: boolean;
 }
 
 /* ─── Product / Catalog types ──────────────────────── */
@@ -606,10 +630,16 @@ export interface ChatMessage {
   id: string;
   projectId: string;
   senderType: 'designer' | 'client';
+  senderId: string | null;
   senderName: string;
   text: string;
   createdAt: string;
   readAt: string | null;
+}
+
+export interface PresenceStatus {
+  designer: { lastSeen: string; online: boolean };
+  client: { lastSeen: string; online: boolean };
 }
 
 /* ─── Admin types ───────────────────────────────────── */
@@ -805,6 +835,21 @@ export const api = {
   getProjectActivity: (id: string) =>
     request<AuditLogEntry[]>(`/api/projects/${id}/activity`),
 
+  uploadProjectImage: (id: string, imageData: string, mimeType: string) =>
+    request<ProjectDetail>(`/api/projects/${id}/image`, {
+      method: 'POST',
+      body: JSON.stringify({ imageData, mimeType }),
+    }),
+
+  setProjectImageUrl: (id: string, imageUrl: string) =>
+    request<ProjectDetail>(`/api/projects/${id}/image-url`, {
+      method: 'PUT',
+      body: JSON.stringify({ imageUrl }),
+    }),
+
+  deleteProjectImage: (id: string) =>
+    request<ProjectDetail>(`/api/projects/${id}/image`, { method: 'DELETE' }),
+
   // Rooms
   createRoom: (projectId: string, payload: RoomPayload) =>
     request<Room>(`/api/projects/${projectId}/rooms`, { method: 'POST', body: JSON.stringify(payload) }),
@@ -814,6 +859,23 @@ export const api = {
 
   deleteRoom: (projectId: string, roomId: string) =>
     request<{ message: string }>(`/api/projects/${projectId}/rooms/${roomId}`, { method: 'DELETE' }),
+
+  // Furniture Categories
+  getFurnitureCategories: () =>
+    request<FurnitureCategory[]>('/api/furniture-categories'),
+
+  // Admin Furniture Categories
+  getAdminFurnitureCategories: () =>
+    request<FurnitureCategory[]>('/api/admin/furniture-categories'),
+
+  createFurnitureCategory: (payload: FurnitureCategoryPayload) =>
+    request<FurnitureCategory>('/api/admin/furniture-categories', { method: 'POST', body: JSON.stringify(payload) }),
+
+  updateFurnitureCategory: (id: string, payload: FurnitureCategoryPayload) =>
+    request<FurnitureCategory>(`/api/admin/furniture-categories/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+
+  deleteFurnitureCategory: (id: string) =>
+    request<{ message: string }>(`/api/admin/furniture-categories/${id}`, { method: 'DELETE' }),
 
   // Catalog
   getProducts: (params?: { search?: string; category?: string; page?: number; limit?: number; includeInactive?: boolean }) => {
@@ -965,6 +1027,22 @@ export const api = {
 
   markMessagesRead: (projectId: string, senderType: 'designer' | 'client') =>
     request<void>(`/api/projects/${projectId}/messages/read`, { method: 'PUT', body: JSON.stringify({ readerType: senderType }) }),
+
+  getUnreadCount: (projectId: string) =>
+    request<{ unread: number }>(`/api/projects/${projectId}/messages/unread`),
+
+  getProjectPresence: (projectId: string) =>
+    request<PresenceStatus>(`/api/projects/${projectId}/presence`),
+
+  // Portal presence & unread
+  getPortalPresence: (portalToken: string) =>
+    request<PresenceStatus>(`/api/portal/${portalToken}/presence`),
+
+  getPortalUnreadCount: (portalToken: string) =>
+    request<{ unread: number }>(`/api/portal/${portalToken}/messages/unread`),
+
+  markPortalMessagesRead: (portalToken: string) =>
+    request<void>(`/api/portal/${portalToken}/messages/read`, { method: 'PUT' }),
 
   // Admin
   getAdminMe: () =>

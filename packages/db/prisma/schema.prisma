@@ -99,6 +99,9 @@ model Project {
   budgetMax       Decimal?
   stylePreference String?
   portalToken     String?       @unique
+  imageUrl        String?
+  imageData       Bytes?
+  imageMimeType   String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
@@ -109,6 +112,7 @@ model Project {
   cartItems         CartItem[]
   orders            Order[]
   pinnedComparisons PinnedComparison[]
+  messages          Message[]
 }
 
 model Room {
@@ -277,6 +281,22 @@ model Payment {
   order Order @relation(fields: [orderId], references: [id])
 }
 
+model Message {
+  id         String    @id @default(uuid())
+  projectId  String
+  senderType ActorType
+  senderId   String?
+  senderName String
+  text       String
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@index([projectId, createdAt])
+  @@index([projectId, senderType, readAt])
+}
+
 model AuditLog {
   id         String    @id @default(uuid())
   actorType  ActorType
@@ -286,4 +306,24 @@ model AuditLog {
   entityId   String?
   payload    Json?
   createdAt  DateTime  @default(now())
+}
+
+model FurnitureCategory {
+  id        String  @id @default(uuid())
+  name      String  @unique
+  group     String?
+  icon      String?
+  sortOrder Int     @default(0)
+  active    Boolean @default(true)
+  createdAt DateTime @default(now())
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model leads {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
+  name       String
+  email      String    @unique
+  phone      String
+  user_type  String
 }

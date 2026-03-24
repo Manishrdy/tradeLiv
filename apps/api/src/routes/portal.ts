@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '@furnlo/db';
 import { writeAuditLog } from '../services/auditLog';
 import { emitProjectEvent } from '../services/projectEvents';
+import { createMessage, getMessages, markMessagesRead, getUnreadCount, getProjectPresence } from '../services/messageService';
 import logger from '../config/logger';
 
 const router = Router();
@@ -208,6 +209,116 @@ router.put('/:portalToken/shortlist/:itemId', async (req: Request, res: Response
     emitProjectEvent(item.projectId, 'shortlist_updated', { itemId: item.id });
 
     res.json(updated);
+  } catch (err) {
+    logger.error('portal route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── Helpers: resolve portalToken → project ───────── */
+
+async function getProjectByPortalToken(portalToken: string) {
+  return prisma.project.findUnique({
+    where: { portalToken },
+    select: { id: true, client: { select: { name: true } } },
+  });
+}
+
+/* ─── GET /api/portal/:portalToken/messages ────────── */
+
+router.get('/:portalToken/messages', async (req: Request, res: Response) => {
+  try {
+    const project = await getProjectByPortalToken(req.params.portalToken);
+    if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+
+    const after = typeof req.query.after === 'string' ? req.query.after : undefined;
+    const messages = await getMessages(project.id, after);
+    res.json(messages);
+  } catch (err) {
+    logger.error('portal route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── POST /api/portal/:portalToken/messages ───────── */
+
+const portalMessageSchema = z.object({
+  text: z.string().min(1, 'Message cannot be empty').max(5000),
+  senderName: z.string().min(1).max(120),
+});
+
+router.post('/:portalToken/messages', async (req: Request, res: Response) => {
+  const parsed = portalMessageSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors[0].message }); return; }
+
+  try {
+    const project = await getProjectByPortalToken(req.params.portalToken);
+    if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+
+    const message = await createMessage({
+      projectId: project.id,
+      senderType: 'client',
+      senderName: parsed.data.senderName,
+      text: parsed.data.text,
+    });
+
+    emitProjectEvent(project.id, 'new_message', {
+      id: message.id,
+      senderType: message.senderType,
+      senderName: message.senderName,
+      text: message.text,
+      createdAt: message.createdAt.toISOString(),
+    });
+
+    res.status(201).json(message);
+  } catch (err) {
+    logger.error('portal route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── PUT /api/portal/:portalToken/messages/read ───── */
+
+router.put('/:portalToken/messages/read', async (req: Request, res: Response) => {
+  try {
+    const project = await getProjectByPortalToken(req.params.portalToken);
+    if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+
+    const count = await markMessagesRead(project.id, 'client');
+    if (count > 0) {
+      emitProjectEvent(project.id, 'messages_read', { readerType: 'client', count });
+    }
+    res.json({ markedRead: count });
+  } catch (err) {
+    logger.error('portal route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── GET /api/portal/:portalToken/messages/unread ─── */
+
+router.get('/:portalToken/messages/unread', async (req: Request, res: Response) => {
+  try {
+    const project = await getProjectByPortalToken(req.params.portalToken);
+    if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+
+    const count = await getUnreadCount(project.id, 'client');
+    res.json({ unread: count });
+  } catch (err) {
+    logger.error('portal route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── GET /api/portal/:portalToken/presence ────────── */
+
+router.get('/:portalToken/presence', async (req: Request, res: Response) => {
+  try {
+    const project = await getProjectByPortalToken(req.params.portalToken);
+    if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+
+    const presence = getProjectPresence(project.id);
+    res.json(presence);
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
     res.status(500).json({ error: 'An error occurred. Please try again.' });
