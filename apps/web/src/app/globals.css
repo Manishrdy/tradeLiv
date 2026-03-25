@@ -359,3 +359,623 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.10); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.18); }
 
+/* ═══════════════════════════════════════════════════════════
+   Landing Page Styles
+   ═══════════════════════════════════════════════════════════ */
+
+.lp-root {
+  min-height: 100vh;
+  background: var(--bg-base);
+  overflow-x: hidden;
+}
+
+/* ─── Nav ─────────────────────────────────────────────────── */
+.lp-nav {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 100;
+  background: rgba(248,247,244,0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+.lp-nav-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.lp-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.lp-logo-mark {
+  width: 32px; height: 32px;
+  background: #111;
+  color: #fff;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 15px;
+}
+.lp-logo-text {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+.lp-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ─── Hero ────────────────────────────────────────────────── */
+.lp-hero {
+  padding: 140px 24px 80px;
+}
+.lp-hero-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 60px;
+  align-items: center;
+}
+.lp-hero-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gold);
+  background: var(--gold-dim);
+  border: 1px solid var(--gold-border);
+  border-radius: 999px;
+  padding: 5px 14px;
+  margin-bottom: 20px;
+}
+.lp-hero-h1 {
+  font-size: 44px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  color: var(--text-primary);
+  margin: 0 0 20px;
+  animation: fadeSlideUp 0.6s cubic-bezier(0.22,1,0.36,1) both;
+}
+.lp-hero-sub {
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0 0 32px;
+  max-width: 480px;
+  animation: fadeSlideUp 0.6s cubic-bezier(0.22,1,0.36,1) 0.1s both;
+}
+.lp-hero-ctas {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  animation: fadeSlideUp 0.6s cubic-bezier(0.22,1,0.36,1) 0.2s both;
+}
+.lp-hero-visual {
+  position: relative;
+  animation: fadeSlideUp 0.7s cubic-bezier(0.22,1,0.36,1) 0.3s both;
+}
+.lp-hero-visual-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+.lp-hero-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.lp-product-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  animation: floatA 9s ease-in-out infinite;
+}
+.lp-product-card:nth-child(2) {
+  animation: floatB 7s ease-in-out infinite 1s;
+}
+.lp-product-img {
+  height: 140px;
+  background: var(--bg-input);
+  overflow: hidden;
+}
+.lp-hero-pin-badge {
+  position: absolute;
+  bottom: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  border: 1px solid var(--gold-border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gold);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: var(--shadow-md);
+  white-space: nowrap;
+}
+
+/* ─── Sections ────────────────────────────────────────────── */
+.lp-section {
+  padding: 100px 24px;
+}
+.lp-section-alt {
+  background: var(--bg-card);
+}
+.lp-container {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.lp-section-header {
+  text-align: center;
+  margin-bottom: 56px;
+}
+.lp-section-title {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0 0 12px;
+}
+.lp-section-sub {
+  font-size: 16px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* ─── Problem → Solution Cards ────────────────────────────── */
+.lp-solutions-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+.lp-solution-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 32px 28px;
+  box-shadow: var(--shadow-xs);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.lp-solution-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-md);
+}
+.lp-solution-icon {
+  width: 52px; height: 52px;
+  background: var(--gold-dim);
+  border: 1px solid var(--gold-border);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gold);
+  margin-bottom: 20px;
+}
+.lp-solution-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0 0 14px;
+  color: var(--text-primary);
+}
+.lp-solution-before {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin: 0 0 14px;
+  font-style: italic;
+}
+.lp-solution-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 14px 0;
+}
+.lp-solution-after {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* ─── Steps / Walkthrough ─────────────────────────────────── */
+.lp-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 64px;
+}
+.lp-step {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  gap: 24px;
+}
+.lp-step-num {
+  font-size: 36px;
+  font-weight: 800;
+  color: rgba(0,0,0,0.06);
+  letter-spacing: -0.02em;
+  line-height: 1;
+  padding-top: 4px;
+}
+.lp-step-content {
+  max-width: 700px;
+}
+.lp-step-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 10px;
+}
+.lp-step-desc {
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  margin: 0 0 24px;
+}
+
+/* ─── Step Mock UIs ───────────────────────────────────────── */
+.lp-step-mock {
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+}
+.lp-mock-url-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+}
+.lp-mock-extract-btn {
+  margin-left: auto;
+  background: #111;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 14px;
+  border-radius: 6px;
+}
+.lp-mock-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.lp-mock-product-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.lp-mock-thumb {
+  width: 40px; height: 40px;
+  background: var(--bg-input);
+  border-radius: 6px;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+
+/* ─── Compare Mock ────────────────────────────────────────── */
+.lp-mock-compare {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  justify-content: center;
+}
+.lp-mock-compare-col {
+  flex: 1;
+  max-width: 200px;
+  text-align: center;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+.lp-mock-compare-pinned {
+  border-color: var(--gold-border);
+  box-shadow: 0 0 0 3px var(--gold-dim);
+}
+.lp-mock-compare-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gold);
+  margin-bottom: 10px;
+}
+.lp-mock-compare-img {
+  width: 100%; height: 80px;
+  background: var(--bg-input);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  object-fit: cover;
+}
+.lp-mock-compare-vs {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ─── Portal Mock ─────────────────────────────────────────── */
+.lp-mock-portal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.lp-mock-portal-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+}
+.lp-mock-approve-btn {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green);
+  background: var(--green-dim);
+  border: 1px solid var(--green-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  flex-shrink: 0;
+}
+.lp-mock-pending-btn {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  flex-shrink: 0;
+}
+
+/* ─── Order Mock ──────────────────────────────────────────── */
+.lp-mock-order-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.lp-mock-status-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green);
+  background: var(--green-dim);
+  border: 1px solid var(--green-border);
+  border-radius: 6px;
+  padding: 3px 10px;
+}
+.lp-mock-po {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+.lp-mock-po-brand {
+  font-size: 13px;
+  font-weight: 700;
+  min-width: 140px;
+}
+.lp-mock-po-status {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gold);
+  background: var(--gold-dim);
+  border: 1px solid var(--gold-border);
+  border-radius: 6px;
+  padding: 3px 10px;
+  flex-shrink: 0;
+}
+
+/* ─── Dark Section (Built for Designers) ──────────────────── */
+.lp-section-dark {
+  background: #0a0f1a;
+  color: rgba(255,255,255,0.9);
+}
+.lp-dark-inner {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 60px;
+  align-items: center;
+}
+.lp-dark-title {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  margin: 0;
+}
+.lp-dark-features {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.lp-dark-feature {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  color: rgba(255,255,255,0.85);
+}
+.lp-dark-feature svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--gold-light);
+}
+
+/* ─── CTA Section ─────────────────────────────────────────── */
+.lp-section-cta {
+  padding: 80px 24px 60px;
+}
+.lp-cta-title {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0 0 12px;
+}
+.lp-cta-sub {
+  font-size: 16px;
+  color: var(--text-secondary);
+  margin: 0 0 32px;
+}
+.lp-cta-actions {
+  margin-bottom: 24px;
+}
+.lp-cta-checklist {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.lp-cta-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* ─── Footer ──────────────────────────────────────────────── */
+.lp-footer {
+  border-top: 1px solid var(--border);
+  padding: 32px 24px;
+}
+.lp-footer-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.lp-footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lp-footer-links {
+  display: flex;
+  gap: 24px;
+}
+.lp-footer-links a {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+.lp-footer-links a:hover {
+  color: var(--text-primary);
+}
+.lp-footer-copy {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ─── Responsive ──────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .lp-hero-inner {
+    grid-template-columns: 1fr;
+    gap: 48px;
+  }
+  .lp-hero-h1 { font-size: 36px; }
+  .lp-hero-visual { max-width: 500px; }
+  .lp-dark-inner {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+}
+
+@media (max-width: 768px) {
+  .lp-hero { padding: 110px 20px 60px; }
+  .lp-hero-h1 { font-size: 30px; }
+  .lp-hero-sub { font-size: 15px; }
+  .lp-section { padding: 64px 20px; }
+  .lp-section-title { font-size: 26px; }
+  .lp-solutions-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .lp-solution-card { padding: 24px 20px; }
+  .lp-step {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .lp-step-num { font-size: 28px; }
+  .lp-step-title { font-size: 19px; }
+  .lp-mock-compare {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .lp-mock-compare-col { max-width: 100%; }
+  .lp-mock-compare-vs { transform: rotate(90deg); }
+  .lp-mock-po {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .lp-mock-po-status { margin-left: 0; }
+  .lp-dark-title { font-size: 26px; }
+  .lp-cta-title { font-size: 26px; }
+  .lp-cta-checklist { flex-direction: column; align-items: center; gap: 10px; }
+  .lp-footer-inner {
+    flex-direction: column;
+    gap: 16px;
+    text-align: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .lp-hero-h1 { font-size: 26px; }
+  .lp-hero-cards { grid-template-columns: 1fr; }
+  .lp-hero-ctas { flex-direction: column; }
+  .lp-hero-ctas .btn-primary,
+  .lp-hero-ctas .btn-ghost {
+    width: 100%;
+    justify-content: center;
+  }
+  .lp-nav-inner { padding: 0 16px; }
+  .lp-section-title { font-size: 22px; }
+}
+

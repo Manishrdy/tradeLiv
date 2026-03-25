@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
  */
 
 const PUBLIC_PATHS = [
+  '/',
   '/login',
   '/signup',
   '/admin/login',
@@ -28,24 +29,25 @@ const PUBLIC_PREFIXES = [
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Allow public paths
-  if (PUBLIC_PATHS.includes(pathname)) return NextResponse.next();
+  // Allow static files and non-page prefixes
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return NextResponse.next();
-
-  // Allow static files
   if (pathname.includes('.')) return NextResponse.next();
 
   const sessionCookie = request.cookies.get('session');
+  const refreshCookie = request.cookies.get('refresh');
+  const isAuthenticated = !!(sessionCookie?.value || refreshCookie?.value);
 
-  // No access token at all → redirect to login
-  if (!sessionCookie?.value) {
-    // Check if there's a refresh token — if so, let the client-side handle refresh
-    const refreshCookie = request.cookies.get('refresh');
-    if (refreshCookie?.value) {
-      // Allow through — the frontend will call /api/auth/refresh on 401
-      return NextResponse.next();
-    }
+  // Redirect authenticated users away from login/signup pages
+  if (isAuthenticated && PUBLIC_PATHS.includes(pathname)) {
+    const isAdminLogin = pathname === '/admin/login';
+    return NextResponse.redirect(new URL(isAdminLogin ? '/admin' : '/dashboard', request.url));
+  }
 
+  // Allow public paths for unauthenticated users
+  if (PUBLIC_PATHS.includes(pathname)) return NextResponse.next();
+
+  // No tokens at all → redirect to login
+  if (!isAuthenticated) {
     const isAdminRoute = pathname.startsWith('/admin');
     const loginUrl = new URL(isAdminRoute ? '/admin/login' : '/login', request.url);
     loginUrl.searchParams.set('redirect', pathname);
@@ -54,6 +56,10 @@ export function middleware(request: NextRequest) {
 
   // Admin route protection — decode JWT payload (no verification at edge, API handles that)
   if (pathname.startsWith('/admin')) {
+    if (!sessionCookie?.value) {
+      // Only have refresh token — let client-side refresh handle role check
+      return NextResponse.next();
+    }
     try {
       const payload = JSON.parse(
         Buffer.from(sessionCookie.value.split('.')[1], 'base64').toString()
