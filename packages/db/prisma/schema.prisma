@@ -143,23 +143,39 @@ model Room {
 }
 
 model Product {
-  id          String   @id @default(uuid())
-  designerId  String
-  sourceUrl   String
-  productName String
-  brandName   String?
-  price       Decimal?
-  imageUrl    String?
-  productUrl  String?
-  dimensions  Json?
-  material    String?
-  finishes    String[]
-  leadTime    String?
-  metadata    Json?
-  category    String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String   @id @default(uuid())
+  designerId       String
+  sourceUrl        String
+  productName      String
+  brandName        String?
+  category         String?
+  currency         String?  @default("USD")
+
+  // Variant-aware fields
+  variantId        String?          // Platform variant ID (e.g. Shopify variant ID)
+  sku              String?          // ERP-level SKU
+  activeVariant    Json?            // { finish: "X", size: "Y", price: 6200 }
+  images           Json?            // { primary: url, gallery: [], note: "" }
+  pricing          Json?            // [{ finish: "X", size: "Y", price: N }, ...]
+  availableOptions Json?            // [{ type: "finish", values: [...] }, ...]
+  features         String[]         // Top-level feature bullet points
+  materials        Json?            // { primary: "", frame: "", certifications: [] }
+  promotions       String[]         // ["30% off orders of $2,500+"]
+  shipping         String?          // "Free shipping"
+  availability     String?          // "In stock"
+
+  // Kept from original schema
+  price            Decimal?         // Legacy single price — will be removed after backfill
+  imageUrl         String?          // Legacy single image — will be removed after backfill
+  productUrl       String?
+  dimensions       Json?
+  material         String?          // Legacy flat material — will be removed after backfill
+  finishes         String[]         // Legacy flat finishes — will be removed after backfill
+  leadTime         String?
+  metadata         Json?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   designer       Designer        @relation(fields: [designerId], references: [id])
   shortlistItems ShortlistItem[]

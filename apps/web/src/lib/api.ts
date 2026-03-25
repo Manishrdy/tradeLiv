@@ -331,21 +331,47 @@ export interface ProductMetadata {
   [key: string]: unknown;
 }
 
+export interface ProductImages {
+  primary?: string;
+  gallery?: string[];
+  note?: string;
+}
+
+export interface ProductOption {
+  type: string;
+  values: string[];
+}
+
 export interface Product {
   id: string;
   designerId: string;
   productName: string;
   sourceUrl: string;
   brandName: string | null;
-  price: number | null;
+  category: string | null;
   currency: string | null;
+
+  // New variant-aware fields
+  variantId: string | null;
+  sku: string | null;
+  activeVariant: Record<string, string | number> | null;
+  images: ProductImages | null;
+  pricing: Array<Record<string, string | number>> | null;
+  availableOptions: ProductOption[] | null;
+  features: string[];
+  materials: Record<string, string | string[]> | null;
+  promotions: string[];
+  shipping: string | null;
+  availability: string | null;
+
+  // Legacy fields
+  price: number | null;
   imageUrl: string | null;
   productUrl: string | null;
   dimensions: ProductDimensions | null;
   material: string | null;
   finishes: string[];
   leadTime: string | null;
-  category: string | null;
   metadata: ProductMetadata | null;
   isActive: boolean;
   createdAt: string;
@@ -357,14 +383,27 @@ export interface ProductListItem {
   id: string;
   productName: string;
   brandName: string | null;
+  category: string | null;
+  currency: string | null;
+  activeVariant: Record<string, string | number> | null;
+  images: ProductImages | null;
+  pricing: Array<Record<string, string | number>> | null;
+  availableOptions: ProductOption[] | null;
+  features: string[];
+  materials: Record<string, string | string[]> | null;
+  promotions: string[];
+  shipping: string | null;
+  availability: string | null;
+  // Legacy
   price: number | null;
   imageUrl: string | null;
-  category: string | null;
   isActive: boolean;
   sourceUrl: string;
   material: string | null;
   finishes: string[];
   leadTime: string | null;
+  dimensions: ProductDimensions | null;
+  metadata: ProductMetadata | null;
   createdAt: string;
   _count: { shortlistItems: number };
 }
@@ -383,30 +422,61 @@ export interface ProductPayload {
   productName: string;
   sourceUrl: string;
   brandName?: string;
-  price?: number;
+  category?: string;
   currency?: string;
+
+  // New variant-aware fields
+  variantId?: string;
+  sku?: string;
+  activeVariant?: Record<string, string | number>;
+  images?: ProductImages;
+  pricing?: Array<Record<string, string | number>>;
+  availableOptions?: ProductOption[];
+  features?: string[];
+  materials?: Record<string, string | string[]>;
+  promotions?: string[];
+  shipping?: string;
+  availability?: string;
+
+  // Legacy fields
+  price?: number;
   imageUrl?: string;
   productUrl?: string;
   dimensions?: ProductDimensions;
   material?: string;
   finishes?: string[];
   leadTime?: string;
-  category?: string;
   metadata?: ProductMetadata;
 }
 
 export interface ExtractedProduct {
   productName: string;
   brandName?: string;
-  price?: number;
+  category?: string;
   currency?: string;
-  imageUrl?: string;
-  productUrl?: string;
+
+  // New variant-aware fields
+  variantId?: string;
+  sku?: string;
+  activeVariant?: Record<string, string | number>;
+  images?: ProductImages;
+  pricing?: Array<Record<string, string | number>>;
+  availableOptions?: ProductOption[];
+  features?: string[];
+  materials?: Record<string, string | string[]>;
   dimensions?: ProductDimensions;
+  promotions?: string[];
+  shipping?: string;
+  availability?: string;
+  leadTime?: string;
+  productUrl?: string;
+
+  // Legacy fields
+  price?: number;
+  imageUrl?: string;
   material?: string;
   finishes?: string[];
-  leadTime?: string;
-  category?: string;
+  options?: Array<{ name: string; values: string[] }>;
   metadata?: ProductMetadata;
 }
 
@@ -415,6 +485,7 @@ export interface DuplicateProduct {
   productName: string;
   brandName: string | null;
   imageUrl: string | null;
+  images: ProductImages | null;
   isActive: boolean;
 }
 
@@ -442,15 +513,30 @@ export interface ProductUpdatePayload {
   productName?: string;
   sourceUrl?: string;
   brandName?: string | null;
-  price?: number | null;
+  category?: string | null;
   currency?: string | null;
+
+  // New variant-aware fields
+  variantId?: string | null;
+  sku?: string | null;
+  activeVariant?: Record<string, string | number> | null;
+  images?: ProductImages | null;
+  pricing?: Array<Record<string, string | number>> | null;
+  availableOptions?: ProductOption[] | null;
+  features?: string[];
+  materials?: Record<string, string | string[]> | null;
+  promotions?: string[];
+  shipping?: string | null;
+  availability?: string | null;
+
+  // Legacy fields
+  price?: number | null;
   imageUrl?: string | null;
   productUrl?: string | null;
   dimensions?: ProductDimensions | null;
   material?: string | null;
   finishes?: string[];
   leadTime?: string | null;
-  category?: string | null;
   metadata?: ProductMetadata | null;
 }
 
@@ -460,9 +546,20 @@ export interface ShortlistProduct {
   id: string;
   productName: string;
   brandName: string | null;
+  category: string | null;
+  currency: string | null;
+  // New fields
+  activeVariant: Record<string, string | number> | null;
+  images: ProductImages | null;
+  pricing: Array<Record<string, string | number>> | null;
+  availableOptions: ProductOption[] | null;
+  features: string[];
+  materials: Record<string, string | string[]> | null;
+  shipping: string | null;
+  availability: string | null;
+  // Legacy fields
   price: number | null;
   imageUrl: string | null;
-  category: string | null;
   material: string | null;
   dimensions: ProductDimensions | null;
   finishes: string[];

@@ -3,7 +3,11 @@ import puppeteer from 'puppeteer-core';
 import { config } from '../config';
 import logger from '../config/logger';
 
-const client = new Anthropic({ apiKey: config.claudeApiKey });
+let _client: Anthropic | null = null;
+function getClient() {
+  if (!_client) _client = new Anthropic({ apiKey: config.claudeApiKey });
+  return _client;
+}
 
 /* ─── Models ─────────────────────────────────────────── */
 
@@ -39,10 +43,22 @@ export class ExtractionError extends Error {
 export interface ExtractedProductData {
   productName: string;
   brandName?: string;
-  price?: number;
+  category?: string;          // Hierarchical: "Dining > Dining Tables" or flat: "Sofa"
   currency?: string;
-  imageUrl?: string;
-  productUrl?: string;
+
+  // Variant-aware fields
+  variantId?: string;         // Platform variant ID (e.g. Shopify variant ID)
+  sku?: string;               // ERP-level SKU
+  activeVariant?: Record<string, string | number>;  // { finish: "X", size: "Y", price: 6200 }
+  images?: {
+    primary?: string;
+    gallery?: string[];
+    note?: string;
+  };
+  pricing?: Array<Record<string, string | number>>;  // [{ finish: "X", size: "Y", price: N }]
+  availableOptions?: Array<{ type: string; values: string[] }>;
+  features?: string[];
+  materials?: Record<string, string | string[]>;     // { primary: "", frame: "", certifications: [] }
   dimensions?: {
     length?: number;
     width?: number;
@@ -50,15 +66,22 @@ export interface ExtractedProductData {
     depth?: number;
     weight?: number;
     unit?: 'in' | 'cm' | 'ft';
-    raw?: string;  // Original dimension string from page
+    raw?: string;
   };
+  promotions?: string[];
+  shipping?: string;
+  availability?: string;
+  leadTime?: string;
+  productUrl?: string;
+
+  // Legacy fields — kept for backward compat during migration
+  price?: number;
+  imageUrl?: string;
   material?: string;
   finishes?: string[];
-  leadTime?: string;
-  category?: string;
   options?: Array<{
-    name: string;       // e.g. "Color", "Size", "Fabric", "Wood Finish"
-    values: string[];   // e.g. ["Sand", "Cocoa", "Ebony"]
+    name: string;
+    values: string[];
   }>;
   metadata?: {
     description?: string;
@@ -76,7 +99,7 @@ export interface ExtractedProductData {
     legMaterial?: string;
     cushionType?: string;
     fabricType?: string;
-    [key: string]: unknown;  // Allow additional fields
+    [key: string]: unknown;
   };
 }
 
@@ -108,6 +131,13 @@ function getCachedResult(url: string): ExtractionResult | null {
 }
 
 function setCachedResult(url: string, result: ExtractionResult): void {
+  // Log the final normalized extraction result
+  logger.info('Final extraction result', {
+    url,
+    type: result.type,
+    json: JSON.stringify(result, null, 2),
+  });
+
   // Evict stale entries if cache grows beyond 200
   if (extractionCache.size > 200) {
     const now = Date.now();
@@ -199,109 +229,129 @@ const SYSTEM_PROMPT = `You are a furniture product data extractor for an interio
 You receive structured signals extracted from a product page (meta tags, JSON-LD, breadcrumbs, dimensions, body text, etc.).
 Respond with ONLY a valid JSON object. No markdown, no explanation, no extra text.
 
-REQUIRED — always include these four fields:
+REQUIRED — always include these fields:
 - productName: the product name. Use og:title or JSON-LD name. Strip " | Brand" or " - Site Name" suffixes from titles.
-- price: number only (e.g. 1299.00). PRICE PRIORITY ORDER:
-  1. selected_variant_price (if present — this is the EXACT price for the URL's selected variant, always use this first)
-  2. JSON-LD price or itemprop_price
-  3. og:price or product:price:amount meta tags
-  IMPORTANT: og:price and meta tag prices often show the LOWEST variant price, not the selected variant. Always prefer selected_variant_price when available.
-- imageUrl: the main product image as a full https:// URL. Prefer og:image, then JSON-LD image, then twitter:image. CDN URLs with query params (e.g. ?w=800&fmt=webp) are valid — include them exactly. null only if truly no image signal exists.
-- category: ALWAYS infer the furniture category, even if not explicit. Use the product name and breadcrumbs. Must be exactly one of: Sofa, Dining Table, Bed, Desk, Storage, Lighting, Armchair, Side Table, Bookshelf, Mirror, Rug, Wardrobe, TV Unit, Coffee Table, Console Table, Bar Stool, Ottoman, Bench, Dresser, Nightstand, Chair, Table, Outdoor, Accessories
+- category: furniture category. Use breadcrumbs for hierarchical format (e.g. "Dining > Dining Tables", "Bedroom > Beds"). If no breadcrumbs, use one of: Sofa, Dining Table, Bed, Desk, Storage, Lighting, Armchair, Side Table, Bookshelf, Mirror, Rug, Wardrobe, TV Unit, Coffee Table, Console Table, Bar Stool, Ottoman, Bench, Dresser, Nightstand, Chair, Table, Outdoor, Accessories
+- currency: three-letter ISO code (e.g. "USD"). Infer from site domain or currency symbols. Default "USD".
+
+CRITICAL — activeVariant: The selected variant for the URL being scraped.
+Extract finish/fabric/color + size + price for the currently selected variant.
+  - PRICE PRIORITY ORDER:
+    1. selected_variant_price (if present — EXACT price for the URL's variant)
+    2. JSON-LD price or itemprop_price
+    3. og:price or product:price:amount meta tags
+  Example: { "finish": "ANTIQUE BLONDE", "size": "78\\"", "price": 6200.00 }
+
+CRITICAL — pricing: Full pricing matrix of ALL variants with their prices.
+If shopify_pricing_matrix is present, use it DIRECTLY as the pricing array — it is the authoritative, pre-built matrix.
+Otherwise, extract every combination of options and its price from the page.
+Each pricing entry should use the SAME option keys as availableOptions types (lowercased).
+If only one variant/price is available, return a single-entry array.
+Example:
+"pricing": [
+  { "finish": "Walnut", "size": "Queen", "configuration": "Headboard", "price": 1995.00 },
+  { "finish": "Natural", "size": "Queen", "configuration": "Headboard", "price": 1995.00 },
+  { "finish": "Walnut", "size": "King", "configuration": "Headboard", "price": 2195.00 }
+]
+
+CRITICAL — images: Extract product image URLs.
+  - primary: main product image (prefer og:image, then JSON-LD image, then twitter:image). Must start with https://. CDN query params are valid.
+  - gallery: array of additional image URLs if available
+  - note: any relevant note about image availability (e.g. "Full gallery requires headless browser")
+  null only if truly no image signal exists.
+
+CRITICAL — availableOptions: ALL customizable product options/variants as an array.
+Each option has a "type" (the category label) and "values" (array of available choices).
+IMPORTANT: Use the option label EXACTLY as it appears on the page or in shopify_options. Do NOT merge or rename option types.
+For example, if the page has separate "Finish" and "Color" selectors, keep them as two separate entries — do NOT merge them.
+If shopify_options is present, use it as the authoritative source for option types and values.
+Only include options with 2+ values.
+Example: [{ "type": "Finish", "values": ["Walnut", "Natural", "Espresso"] }, { "type": "Size", "values": ["Queen", "King"] }, { "type": "Configuration", "values": ["Headboard", "Frame"] }]
+
+CRITICAL — features: Array of product feature bullet points. Extract from product description, feature lists, or specification sections.
+Do NOT include availability info (colors, sizes, "Available in...") here.
+Example: ["Handcrafted by Italian artisans from solid poplar wood", "Includes two 20\\" leaves"]
+
+CRITICAL — materials: Structured object describing product materials. Use specific keys:
+  - primary: main material (e.g. "Solid poplar wood")
+  - frame: frame material if different
+  - upholstery: upholstery/fabric material
+  - hardware: hardware material (e.g. "Antiqued brass")
+  - finish_coating: finish or coating type
+  - certifications: array of certifications (e.g. ["Sustainably certified", "Crypton® Home"])
+Include only the keys that are relevant to the product.
 
 CRITICAL — dimensions are essential for interior design. Extract them aggressively:
-- ALWAYS scan the full page text for the literal word "Dimensions" or "Overall Dimensions" 
-  before falling back to other dim_* signals. If found, extract values from that line/block first.
+- ALWAYS scan the full page text for "Dimensions" or "Overall Dimensions" first.
 - dimensions: { length, width, height, depth, weight, unit, raw }
   - unit must be "in", "cm", or "ft"
-  - "raw" is the original dimension text from the page (e.g. "22" Width x 5" Depth x 22" Height")
+  - "raw" is the original dimension text from the page
   - DIMENSION SIGNAL PRIORITY ORDER:
-    0. explicit_dimensions_label — If the page contains the word "Dimensions" (or "Dimension") followed by a colon or line break and a measurement string 
-      (e.g. "Dimensions: 90" Width x 100" Depth x 42" Height"), treat this as the authoritative source. Extract width, depth, and height directly from this labeled text. This overrides all other dimension signals.
-      Examples of matching patterns:
-        - "Dimensions: 90" W x 100" D x 42" H"
-        - "Dimensions\n90" Width x 100" Depth x 42" Height"
-        - "Overall Dimensions: 90W x 100D x 42H inches"
-        - "Dimensions: 90 x 100 x 42 in (W x D x H)"
-    1. dim_labelled signals (e.g. "22" Width x 5" Depth x 22" Height") — most reliable, pre-parsed from page
-    2. dim_label signals (e.g. "Width: 22", "Height: 34") — individual labelled measurements
-    3. dim_WxDxH / dim_overall signals — structured W×D×H patterns
-    4. shopify_body_text or spec_sections — dimension text from product details
-    5. dim_LxWxH — plain triplet patterns (less reliable — could be variant names like "22 x 22")
-  - IMPORTANT: Do NOT confuse variant/size names (e.g. "22 x 22" in a pillow size option) with physical product dimensions. Variant titles describe size options, not measurements. Only use dim_* signals and body_text/spec_sections for actual dimensions.
-  - For labelled dimensions (Width/Depth/Height/Diameter), map them directly to the correct fields
-  - NEVER skip dimensions if dim_label, dim_labelled, or spec_sections contain measurement data
+    0. explicit_dimensions_label — most authoritative
+    1. dim_labelled signals — pre-parsed from page
+    2. dim_label signals — individual labelled measurements
+    3. dim_WxDxH / dim_overall — structured patterns
+    4. shopify_body_text or spec_sections
+    5. dim_LxWxH — plain triplet patterns (less reliable)
+  - Do NOT confuse variant/size names with physical dimensions.
+  - NEVER skip dimensions if any dim_* signal exists.
 
-OPTIONAL — include only when clearly present in the signals:
+OPTIONAL — include only when clearly present:
+- variantId: platform variant ID (e.g. Shopify variant ID from URL query param)
+- sku: SKU or product code
 - brandName: manufacturer or brand name
-- currency: three-letter ISO code (e.g. "USD", "GBP", "EUR"). Infer from site domain, currency symbol, or priceCurrency.
-- material: primary material (e.g. "Solid Walnut", "Bouclé Fabric")
-- finishes: array of finish/color option strings
+- promotions: array of active promotions (e.g. ["30% off orders of $2,500 or more"])
+- shipping: shipping info (e.g. "Free shipping")
+- availability: stock status (e.g. "In stock", "Made to order")
 - leadTime: delivery lead time string (e.g. "4–6 weeks")
 - productUrl: canonical product page URL
 
-CRITICAL — options: Extract ALL customizable product options/variants as a generic array.
-Each option has a "name" (the category label) and "values" (array of available choices).
-Different sites label these differently — normalize them:
-  - Color/Colorway/Shade/Finish Color → name: "Color"
-  - Size/Bed Size/Dimensions Option → name: "Size"
-  - Fabric/Upholstery/Material Option → name: "Fabric"
-  - Wood Finish/Frame Finish → name: "Wood Finish"
-  - Configuration/Orientation/Sectional Layout → name: "Configuration"
-  - Cushion/Fill Type → name: "Cushion"
-  - Any other selectable option → use a clear, short name
-Only include options that have 2+ values. Do NOT include options that are just a single default value.
-Example:
-"options": [
-  { "name": "Color", "values": ["Sand", "Cocoa", "Ebony"] },
-  { "name": "Size", "values": ["Queen", "King", "California King"] },
-  { "name": "Fabric", "values": ["Georges Snow", "Linen Cream"] }
-]
-
-IMPORTANT — metadata: Extract ALL useful product details from the page text into a "metadata" object:
+IMPORTANT — metadata: Extract ALL useful product details into a "metadata" object:
 - description: product description (2-3 sentences max)
-- keyFeatures: array of key feature strings. IMPORTANT: Do NOT include availability info here (colors, finishes, sizes, "Available in..."). Those belong in finishes, options, availableColors, or availableSizes fields.
-- assembly: assembly requirements (e.g. "Minimal assembly required", "No assembly")
+- assembly: assembly requirements
 - careInstructions: care/maintenance info
 - warranty: warranty details
 - weightCapacity: weight capacity if mentioned
-- style: design style (e.g. "Mid-Century Modern", "Scandinavian")
+- style: design style (e.g. "Mid-Century Modern")
 - collection: product collection name
-- sku: SKU or product code
-- availableColors: array of available color/finish names (e.g. ["Chestnut", "Honey", "Walnut"]). Extract from variant options, swatches, or product description. This is CRITICAL for comparison.
-- availableSizes: array of available size names (e.g. ["Queen", "King", "California King"]). Extract from variant options or product description.
-- seatHeight: seat height measurement
-- armHeight: arm height measurement
-- seatDepth: seat depth measurement
-- legMaterial: leg material if different from main
-- cushionType: cushion fill/type
-- fabricType: fabric/upholstery type
+- seatHeight, armHeight, seatDepth, legMaterial, cushionType, fabricType
 Include any other relevant product details as additional key-value pairs.
 
 For a SINGLE PRODUCT page respond:
 {
   "type": "single",
   "product": {
-    "productName": "Sven Charme Tan Sofa",
-    "price": 1895.00,
+    "productName": "Tuscany Extension Dining Table",
+    "brandName": "Arhaus",
+    "category": "Dining > Dining Tables",
     "currency": "USD",
-    "imageUrl": "https://cdn.example.com/sven-sofa.jpg?w=800",
-    "category": "Sofa",
-    "brandName": "Article",
-    "productUrl": "https://example.com/products/sven-sofa",
-    "dimensions": { "width": 84, "depth": 38, "height": 34, "unit": "in", "raw": "84\\"W x 38\\"D x 34\\"H" },
-    "options": [
-      { "name": "Color", "values": ["Charme Tan", "Charme Chocolat", "Birch Ivory"] },
-      { "name": "Size", "values": ["3-Seater", "2-Seater"] }
+    "variantId": "45442855010475",
+    "sku": "30T7839EBDKT",
+    "activeVariant": { "finish": "ANTIQUE BLONDE", "size": "78\\"", "price": 6200.00 },
+    "images": { "primary": "https://cdn.example.com/table.jpg?w=800" },
+    "pricing": [
+      { "finish": "ANTIQUE BLONDE", "size": "78\\"", "price": 6200.00 },
+      { "finish": "ANTIQUE BLONDE", "size": "86\\"", "price": 6700.00 },
+      { "finish": "CANALETTO", "size": "78\\"", "price": 6200.00 }
     ],
+    "availableOptions": [
+      { "type": "Finish", "values": ["ANTIQUE BLONDE", "CANALETTO"] },
+      { "type": "Size", "values": ["78\\"", "86\\"", "94\\"", "118\\""] }
+    ],
+    "features": [
+      "Handcrafted by Italian artisans from solid poplar wood",
+      "Finished surfaces coated with multiple layers of lacquer"
+    ],
+    "materials": { "primary": "Solid poplar wood", "hardware": "Antiqued brass", "finish_coating": "Multi-layer lacquer" },
+    "dimensions": { "width": 78, "depth": 40, "height": 30, "unit": "in", "raw": "78\\"W x 40\\"D x 30\\"H" },
+    "promotions": ["30% off orders of $2,500 or more"],
+    "shipping": "Free shipping",
+    "availability": "In stock",
+    "productUrl": "https://www.arhaus.com/products/tuscany-extension-dining-table",
     "metadata": {
-      "description": "Mid-century modern sofa with Italian tanned leather and solid wood frame.",
-      "keyFeatures": ["Kiln-dried hardwood frame", "High-resilience foam cushions", "Italian tanned leather"],
-      "assembly": "Legs only — 5 minutes",
-      "style": "Mid-Century Modern",
-      "weightCapacity": "750 lbs",
-      "seatHeight": "17 in",
-      "seatDepth": "22 in"
+      "description": "Extension dining table handcrafted from solid poplar wood by Italian artisans.",
+      "style": "Traditional",
+      "assembly": "Legs require attachment"
     }
   }
 }
@@ -311,17 +361,18 @@ For a COLLECTION/CATEGORY page (multiple products visible) respond:
   "type": "multiple",
   "totalFound": 24,
   "products": [
-    { "productName": "...", "price": 999.00, "currency": "USD", "imageUrl": "https://...", "category": "Chair", "productUrl": "https://..." }
+    { "productName": "...", "activeVariant": { "price": 999.00 }, "currency": "USD", "images": { "primary": "https://..." }, "category": "Chair", "productUrl": "https://..." }
   ]
 }
 
 Rules:
-- price: numeric only, no currency symbols or commas. ALWAYS prefer selected_variant_price over meta tag prices. Meta tags often show the lowest variant price, not the selected one. null if absent.
-- currency: infer from domain (.co.uk → GBP, .de → EUR) or currency symbols ($ → USD, £ → GBP, € → EUR). Default "USD" if US site.
-- imageUrl: must start with https://. Include CDN query params as-is. Never fabricate a URL.
-- category: always infer from product name or breadcrumbs. Never leave this null.
-- dimensions: THIS IS THE MOST IMPORTANT OPTIONAL FIELD. Use dim_labelled and dim_label signals FIRST — these are the most reliable. Do NOT confuse variant size names (like "22 x 22" in variant titles) with actual product dimensions. Only use properly labelled measurements. Always include "raw" with the original text.
-- metadata: extract ALL useful details. This data helps interior designers make informed decisions. Be thorough.
+- activeVariant.price: numeric only, no currency symbols. ALWAYS prefer selected_variant_price. null if absent.
+- pricing: if shopify_pricing_matrix is present, use it as-is. Otherwise build the full matrix from variant data. If only one price exists, return [{ "price": N }].
+- images.primary: must start with https://. Include CDN query params as-is. Never fabricate a URL.
+- category: always infer. Prefer hierarchical (breadcrumb-based) when possible.
+- dimensions: THIS IS THE MOST IMPORTANT OPTIONAL FIELD. Use dim_labelled and dim_label first. Always include "raw".
+- features: extract ALL feature bullet points. Do NOT include availability info.
+- materials: extract structured material breakdown, not just the primary material string.
 - Output ONLY the JSON object.`;
 
 /* ─── HTML fetch ─────────────────────────────────────── */
@@ -851,7 +902,26 @@ function extractEmbeddedProductJson(html: string, url: string): string[] {
         }
       }
 
-      // Extract variant-specific data
+      // ── Extract product.options (option axes: Configuration, Size, Finish, etc.) ──
+      const optionNames: string[] = [];
+      if (product.options && Array.isArray(product.options)) {
+        const structuredOptions: Array<{ name: string; values: string[] }> = [];
+        for (const opt of product.options) {
+          const name = opt.name ?? opt.label ?? '';
+          const values: string[] = Array.isArray(opt.values)
+            ? opt.values.map((v: any) => typeof v === 'string' ? v : (v?.label ?? v?.value ?? String(v))).filter(Boolean)
+            : [];
+          if (name && values.length > 0) {
+            optionNames.push(name);
+            structuredOptions.push({ name, values });
+          }
+        }
+        if (structuredOptions.length > 0) {
+          lines.push(`shopify_options: ${JSON.stringify(structuredOptions)}`);
+        }
+      }
+
+      // ── Extract variant-specific data + build full pricing matrix ──
       if (product.variants && Array.isArray(product.variants)) {
         // If URL has a variant ID, find the matching variant for accurate price
         if (variantId) {
@@ -870,14 +940,41 @@ function extractEmbeddedProductJson(html: string, url: string): string[] {
           }
         }
 
-        // Also log first few variant options for AI context
-        for (const v of product.variants.slice(0, 8)) {
+        // Build full pricing matrix from ALL variants using option names
+        // Shopify variants have option1, option2, option3 that map to product.options[0], [1], [2]
+        const pricingMatrix: Array<Record<string, string | number>> = [];
+        for (const v of product.variants) {
           const vPrice = v.price ?? v.priceV2?.amount;
           const priceNum = typeof vPrice === 'string' ? parseFloat(vPrice) : Number(vPrice);
           const normalizedPrice = priceNum > 10000 ? priceNum / 100 : priceNum;
-          const title = v.title ?? v.name ?? v.option1 ?? '';
-          lines.push(`variant: ${title} | $${normalizedPrice}`);
-          if (v.weight) lines.push(`variant_weight: ${v.weight}${v.weight_unit ?? 'g'}`);
+          if (isNaN(normalizedPrice) || normalizedPrice <= 0) continue;
+
+          const entry: Record<string, string | number> = {};
+          // Map option1/option2/option3 to their named axes
+          for (let i = 0; i < optionNames.length; i++) {
+            const val = v[`option${i + 1}`];
+            if (val != null) {
+              entry[optionNames[i].toLowerCase()] = String(val);
+            }
+          }
+          entry.price = normalizedPrice;
+          pricingMatrix.push(entry);
+        }
+
+        if (pricingMatrix.length > 0) {
+          lines.push(`shopify_pricing_matrix: ${JSON.stringify(pricingMatrix)}`);
+        }
+
+        // Log first few variant titles for AI context (fallback if no options)
+        if (optionNames.length === 0) {
+          for (const v of product.variants.slice(0, 8)) {
+            const vPrice = v.price ?? v.priceV2?.amount;
+            const priceNum = typeof vPrice === 'string' ? parseFloat(vPrice) : Number(vPrice);
+            const normalizedPrice = priceNum > 10000 ? priceNum / 100 : priceNum;
+            const title = v.title ?? v.name ?? v.option1 ?? '';
+            lines.push(`variant: ${title} | $${normalizedPrice}`);
+            if (v.weight) lines.push(`variant_weight: ${v.weight}${v.weight_unit ?? 'g'}`);
+          }
         }
       }
 
@@ -1016,6 +1113,94 @@ function extractBodyText(html: string): string {
 }
 
 /* ─── Full signal extraction ────────────────────────── */
+
+/* ─── Deterministic Shopify data overlay ─────────────── */
+// Parses shopify_options and shopify_pricing_matrix from signal text
+// and returns structured data that should override LLM output.
+
+interface ShopifyStructuredData {
+  availableOptions: Array<{ type: string; values: string[] }>;
+  pricing: Array<Record<string, string | number>>;
+}
+
+function extractShopifyStructuredData(signals: string): ShopifyStructuredData | null {
+  let options: Array<{ type: string; values: string[] }> | null = null;
+  let pricing: Array<Record<string, string | number>> | null = null;
+
+  // Extract shopify_options
+  const optionsMatch = signals.match(/^shopify_options:\s*(\[.+\])$/m);
+  if (optionsMatch) {
+    try {
+      const parsed = JSON.parse(optionsMatch[1]);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        options = parsed
+          .filter((o: any) => o.name && Array.isArray(o.values) && o.values.length > 0)
+          .map((o: any) => ({
+            type: String(o.name).charAt(0).toUpperCase() + String(o.name).slice(1),
+            values: o.values.map((v: any) => String(v)),
+          }));
+      }
+    } catch { /* ignore parse failure */ }
+  }
+
+  // Extract shopify_pricing_matrix
+  const pricingMatch = signals.match(/^shopify_pricing_matrix:\s*(\[.+\])$/m);
+  if (pricingMatch) {
+    try {
+      const parsed = JSON.parse(pricingMatch[1]);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        pricing = parsed.filter(
+          (entry: any) => entry && typeof entry === 'object' && typeof entry.price === 'number' && entry.price > 0,
+        );
+      }
+    } catch { /* ignore parse failure */ }
+  }
+
+  if (!options && !pricing) return null;
+  return {
+    availableOptions: options ?? [],
+    pricing: pricing ?? [],
+  };
+}
+
+// Merges deterministic Shopify data into an extraction result, overriding
+// LLM-generated availableOptions and pricing when structured data is available.
+function applyShopifyOverlay(product: ExtractedProductData, shopify: ShopifyStructuredData): void {
+  // Override availableOptions with Shopify source (authoritative)
+  if (shopify.availableOptions.length > 0) {
+    product.availableOptions = shopify.availableOptions;
+    // Re-derive legacy fields
+    product.options = shopify.availableOptions.map(o => ({ name: o.type, values: o.values }));
+    const finishOpt = shopify.availableOptions.find(o => ['Finish', 'Color', 'Fabric'].includes(o.type));
+    if (finishOpt) product.finishes = finishOpt.values;
+  }
+
+  // Override pricing with Shopify source (authoritative)
+  if (shopify.pricing.length > 0) {
+    product.pricing = shopify.pricing;
+
+    // Ensure activeVariant is consistent with pricing
+    if (product.activeVariant) {
+      // Find a pricing entry that matches activeVariant's non-price keys
+      const avKeys = Object.keys(product.activeVariant).filter(k => k !== 'price');
+      const match = shopify.pricing.find(entry =>
+        avKeys.every(k => {
+          const av = String(product.activeVariant![k]).toLowerCase();
+          const ev = String(entry[k] ?? '').toLowerCase();
+          return av === ev;
+        }),
+      );
+      if (match) {
+        product.activeVariant = { ...match };
+      }
+    }
+
+    // Derive legacy price from activeVariant
+    if (product.activeVariant?.price != null) {
+      product.price = Number(product.activeVariant.price);
+    }
+  }
+}
 
 function extractSignals(html: string, url: string): string {
   const lines: string[] = [`url: ${url}`];
@@ -1409,7 +1594,7 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
     });
 
     try {
-      const response = await client.messages.create({
+      const response = await getClient().messages.create({
         model: MODEL_FAST,
         max_tokens: 2048,
         system: SYSTEM_PROMPT,
@@ -1427,6 +1612,20 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
         if (parsed) {
           logger.info('Direct extraction succeeded', { url: sourceUrl });
           const result = buildResult(parsed, sourceUrl, preCategory);
+
+          // Deterministic Shopify overlay: override pricing/options with structured data
+          const shopifyData = extractShopifyStructuredData(signals);
+          if (shopifyData) {
+            const products = result.type === 'single' ? [result.product].filter(Boolean) : (result.products ?? []);
+            for (const p of products) {
+              if (p) applyShopifyOverlay(p, shopifyData);
+            }
+            logger.info('Shopify structured data applied deterministically', {
+              url: sourceUrl,
+              optionCount: shopifyData.availableOptions.length,
+              pricingEntries: shopifyData.pricing.length,
+            });
+          }
 
           // Deterministic fallback from extracted signals before using web search.
           const product = result.type === 'single' ? result.product : result.products?.[0];
@@ -1511,7 +1710,7 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
       });
 
       try {
-        const response = await client.messages.create({
+        const response = await getClient().messages.create({
           model: MODEL_FAST,
           max_tokens: 2048,
           system: SYSTEM_PROMPT,
@@ -1574,7 +1773,7 @@ async function extractWithWebSearch(sourceUrl: string): Promise<ExtractionResult
   const MAX_TURNS = 4;
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
-    const response = await client.messages.create({
+    const response = await getClient().messages.create({
       model: MODEL_SEARCH,
       max_tokens: 3072,
       system: SYSTEM_PROMPT,
@@ -1671,9 +1870,6 @@ function buildResult(parsed: any, sourceUrl: string, preCategory?: string | null
     if (parsed.length === 0) throw new ExtractionError('No products found on this page.', 'NO_PRODUCTS');
     if (parsed.length === 1) {
       const result: ExtractionResult = { type: 'single', product: normalizeProduct(parsed[0], sourceUrl, preCategory) };
-      console.log('\n═══ EXTRACTED PRODUCT JSON ═══');
-      console.log(JSON.stringify(result, null, 2));
-      console.log('═══════════════════════════════\n');
       return result;
     }
     const multiResult: ExtractionResult = {
@@ -1681,9 +1877,6 @@ function buildResult(parsed: any, sourceUrl: string, preCategory?: string | null
       totalFound: parsed.length,
       products: parsed.map((p) => normalizeProduct(p, sourceUrl, preCategory)),
     };
-    console.log('\n═══ EXTRACTED PRODUCTS JSON ═══');
-    console.log(JSON.stringify(multiResult, null, 2));
-    console.log('════════════════════════════════\n');
     return multiResult;
   }
 
@@ -1695,9 +1888,6 @@ function buildResult(parsed: any, sourceUrl: string, preCategory?: string | null
       totalFound: parsed.totalFound ?? parsed.products.length,
       products: parsed.products.map((p: any) => normalizeProduct(p, sourceUrl, preCategory)),
     };
-    console.log('\n═══ EXTRACTED PRODUCTS JSON ═══');
-    console.log(JSON.stringify(multiResult, null, 2));
-    console.log('════════════════════════════════\n');
     return multiResult;
   }
 
@@ -1725,21 +1915,12 @@ function normalizeProduct(
     result.brandName = raw.brandName.trim();
   }
 
-  if (raw.price != null) {
-    const p =
-      typeof raw.price === 'string'
-        ? parseFloat(raw.price.replace(/[^0-9.]/g, ''))
-        : Number(raw.price);
-    if (!isNaN(p) && p > 0) result.price = p;
-  }
-
   // Currency
   if (raw.currency && typeof raw.currency === 'string') {
     const c = raw.currency.trim().toUpperCase();
     if (/^[A-Z]{3}$/.test(c)) result.currency = c;
   }
   if (!result.currency) {
-    // Infer from URL domain
     try {
       const hostname = new URL(sourceUrl).hostname;
       if (hostname.endsWith('.co.uk') || hostname.endsWith('.uk')) result.currency = 'GBP';
@@ -1753,12 +1934,198 @@ function normalizeProduct(
     }
   }
 
-  if (raw.imageUrl && typeof raw.imageUrl === 'string' && raw.imageUrl.startsWith('https://')) {
-    result.imageUrl = raw.imageUrl;
-  } else if (raw.imageUrl && typeof raw.imageUrl === 'string' && raw.imageUrl.startsWith('http://')) {
-    result.imageUrl = raw.imageUrl;
+  // Category: use AI result, fall back to deterministic pre-match
+  if (raw.category && typeof raw.category === 'string') {
+    result.category = raw.category.trim();
+  } else if (preCategory) {
+    result.category = preCategory;
   }
 
+  // ── New variant-aware fields ──
+
+  // variantId
+  if (raw.variantId && typeof raw.variantId === 'string') {
+    result.variantId = raw.variantId.trim();
+  } else if (raw.variant_id && typeof raw.variant_id === 'string') {
+    result.variantId = raw.variant_id.trim();
+  } else {
+    // Try to extract from URL query param
+    try {
+      const url = new URL(sourceUrl);
+      const vid = url.searchParams.get('variant');
+      if (vid) result.variantId = vid;
+    } catch { /* ignore */ }
+  }
+
+  // SKU
+  if (raw.sku && typeof raw.sku === 'string') {
+    result.sku = raw.sku.trim();
+  } else if (raw.metadata?.sku && typeof raw.metadata.sku === 'string') {
+    result.sku = raw.metadata.sku.trim();
+  }
+
+  // activeVariant
+  if (raw.activeVariant && typeof raw.activeVariant === 'object' && !Array.isArray(raw.activeVariant)) {
+    const av = { ...raw.activeVariant } as Record<string, string | number>;
+    // Ensure price is numeric
+    if (av.price != null) {
+      const p = typeof av.price === 'string'
+        ? parseFloat(String(av.price).replace(/[^0-9.]/g, ''))
+        : Number(av.price);
+      av.price = !isNaN(p) && p > 0 ? p : 0;
+    }
+    result.activeVariant = av;
+  } else if (raw.active_variant && typeof raw.active_variant === 'object') {
+    result.activeVariant = raw.active_variant;
+  }
+
+  // images
+  if (raw.images && typeof raw.images === 'object' && !Array.isArray(raw.images)) {
+    const imgs: ExtractedProductData['images'] = {};
+    if (raw.images.primary && typeof raw.images.primary === 'string' && raw.images.primary.startsWith('http')) {
+      imgs.primary = raw.images.primary;
+    }
+    if (Array.isArray(raw.images.gallery)) {
+      imgs.gallery = raw.images.gallery.filter((u: unknown) => typeof u === 'string' && String(u).startsWith('http'));
+    }
+    if (raw.images.note && typeof raw.images.note === 'string') {
+      imgs.note = raw.images.note;
+    }
+    if (Object.keys(imgs).length > 0) result.images = imgs;
+  }
+  // Fallback: build images from legacy imageUrl field
+  if (!result.images?.primary) {
+    const imgUrl = raw.imageUrl ?? raw.images?.primary;
+    if (imgUrl && typeof imgUrl === 'string' && imgUrl.startsWith('http')) {
+      result.images = { ...(result.images || {}), primary: imgUrl };
+    }
+  }
+
+  // pricing — full variant price matrix
+  if (Array.isArray(raw.pricing) && raw.pricing.length > 0) {
+    result.pricing = raw.pricing
+      .filter((entry: any) => entry && typeof entry === 'object')
+      .map((entry: any) => {
+        const normalized: Record<string, string | number> = {};
+        for (const [k, v] of Object.entries(entry)) {
+          if (k === 'price') {
+            const p = typeof v === 'string' ? parseFloat(String(v).replace(/[^0-9.]/g, '')) : Number(v);
+            normalized.price = !isNaN(p) ? p : 0;
+          } else if (typeof v === 'string' || typeof v === 'number') {
+            normalized[k] = v;
+          }
+        }
+        return normalized;
+      });
+  }
+
+  // If no pricing array but we have activeVariant or legacy price, build one
+  if (!result.pricing || result.pricing.length === 0) {
+    if (result.activeVariant?.price != null) {
+      result.pricing = [{ ...result.activeVariant }];
+    } else if (raw.price != null) {
+      const p = typeof raw.price === 'string'
+        ? parseFloat(raw.price.replace(/[^0-9.]/g, ''))
+        : Number(raw.price);
+      if (!isNaN(p) && p > 0) {
+        result.pricing = [{ price: p }];
+      }
+    }
+  }
+
+  // If no activeVariant but we have pricing, use first entry
+  if (!result.activeVariant && result.pricing && result.pricing.length > 0) {
+    result.activeVariant = { ...result.pricing[0] };
+  }
+
+  // availableOptions
+  if (Array.isArray(raw.availableOptions) && raw.availableOptions.length > 0) {
+    const opts: Array<{ type: string; values: string[] }> = [];
+    for (const opt of raw.availableOptions) {
+      if (opt && (typeof opt.type === 'string' || typeof opt.name === 'string') && Array.isArray(opt.values)) {
+        const values = opt.values.filter((v: unknown) => typeof v === 'string' && v.length > 0);
+        if (values.length >= 2) {
+          opts.push({ type: (opt.type || opt.name).trim(), values });
+        }
+      }
+    }
+    if (opts.length > 0) result.availableOptions = opts;
+  }
+  // Fallback: build from legacy options array
+  if (!result.availableOptions && Array.isArray(raw.options) && raw.options.length > 0) {
+    const opts: Array<{ type: string; values: string[] }> = [];
+    for (const opt of raw.options) {
+      if (opt && typeof opt.name === 'string' && Array.isArray(opt.values)) {
+        const values = opt.values.filter((v: unknown) => typeof v === 'string' && v.length > 0);
+        if (values.length >= 2) {
+          opts.push({ type: opt.name.trim(), values });
+        }
+      }
+    }
+    if (opts.length > 0) result.availableOptions = opts;
+  }
+  // Fallback: build from metadata availableColors/availableSizes and finishes
+  if (!result.availableOptions) {
+    const autoOpts: Array<{ type: string; values: string[] }> = [];
+    const md = raw.metadata;
+    if (md) {
+      if (Array.isArray(md.availableColors) && md.availableColors.length >= 2) {
+        autoOpts.push({ type: 'Color', values: md.availableColors.filter((v: unknown) => typeof v === 'string') });
+      }
+      if (Array.isArray(md.availableSizes) && md.availableSizes.length >= 2) {
+        autoOpts.push({ type: 'Size', values: md.availableSizes.filter((v: unknown) => typeof v === 'string') });
+      }
+    }
+    if (!autoOpts.some(o => o.type === 'Color') && Array.isArray(raw.finishes) && raw.finishes.length >= 2) {
+      autoOpts.push({ type: 'Color', values: raw.finishes.filter((f: unknown) => typeof f === 'string') });
+    }
+    if (autoOpts.length > 0) result.availableOptions = autoOpts;
+  }
+
+  // features
+  if (Array.isArray(raw.features) && raw.features.length > 0) {
+    result.features = raw.features.filter((f: unknown) => typeof f === 'string' && f.length > 0);
+  }
+  // Fallback: promote from metadata.keyFeatures
+  if (!result.features || result.features.length === 0) {
+    if (raw.metadata?.keyFeatures && Array.isArray(raw.metadata.keyFeatures)) {
+      result.features = raw.metadata.keyFeatures.filter((f: unknown) => typeof f === 'string');
+    }
+  }
+
+  // materials — structured object
+  if (raw.materials && typeof raw.materials === 'object' && !Array.isArray(raw.materials)) {
+    result.materials = {};
+    for (const [k, v] of Object.entries(raw.materials)) {
+      if (typeof v === 'string' && v.length > 0) {
+        result.materials[k] = v.trim();
+      } else if (Array.isArray(v)) {
+        result.materials[k] = v.filter((s: unknown) => typeof s === 'string');
+      }
+    }
+    if (Object.keys(result.materials).length === 0) result.materials = undefined;
+  }
+  // Fallback: build from legacy material string
+  if (!result.materials && raw.material && typeof raw.material === 'string') {
+    result.materials = { primary: raw.material.trim() };
+  }
+
+  // promotions
+  if (Array.isArray(raw.promotions) && raw.promotions.length > 0) {
+    result.promotions = raw.promotions.filter((p: unknown) => typeof p === 'string' && p.length > 0);
+  }
+
+  // shipping
+  if (raw.shipping && typeof raw.shipping === 'string') {
+    result.shipping = raw.shipping.trim();
+  }
+
+  // availability
+  if (raw.availability && typeof raw.availability === 'string') {
+    result.availability = raw.availability.trim();
+  }
+
+  // productUrl
   const pUrl = raw.productUrl ?? raw.product_url;
   if (pUrl && typeof pUrl === 'string' && pUrl.startsWith('http')) {
     result.productUrl = pUrl;
@@ -1766,7 +2133,7 @@ function normalizeProduct(
     result.productUrl = sourceUrl;
   }
 
-  // Dimensions — aggressive normalization
+  // Dimensions — aggressive normalization (unchanged logic)
   if (raw.dimensions && typeof raw.dimensions === 'object') {
     const d = raw.dimensions;
     const dims: ExtractedProductData['dimensions'] = {};
@@ -1781,53 +2148,31 @@ function normalizeProduct(
     if (normalized && Object.keys(normalized).length > 0) result.dimensions = normalized;
   }
 
-  if (raw.material && typeof raw.material === 'string') result.material = raw.material.trim();
-
-  if (Array.isArray(raw.finishes) && raw.finishes.length > 0) {
-    result.finishes = raw.finishes.filter((f: unknown) => typeof f === 'string' && f.length > 0);
-  }
-
   if (raw.leadTime && typeof raw.leadTime === 'string') result.leadTime = raw.leadTime.trim();
 
-  // Category: use AI result, fall back to deterministic pre-match
-  if (raw.category && typeof raw.category === 'string') {
-    result.category = raw.category.trim();
-  } else if (preCategory) {
-    result.category = preCategory;
+  // ── Legacy fields for backward compat ──
+
+  // price — derive from activeVariant for legacy consumers
+  if (result.activeVariant?.price != null) {
+    result.price = Number(result.activeVariant.price);
+  } else if (raw.price != null) {
+    const p = typeof raw.price === 'string'
+      ? parseFloat(raw.price.replace(/[^0-9.]/g, ''))
+      : Number(raw.price);
+    if (!isNaN(p) && p > 0) result.price = p;
   }
 
-  // Options — generic product variants/customizations
-  if (Array.isArray(raw.options) && raw.options.length > 0) {
-    const opts: ExtractedProductData['options'] = [];
-    for (const opt of raw.options) {
-      if (opt && typeof opt.name === 'string' && Array.isArray(opt.values)) {
-        const values = opt.values.filter((v: unknown) => typeof v === 'string' && v.length > 0);
-        if (values.length >= 2) {
-          opts.push({ name: opt.name.trim(), values });
-        }
-      }
-    }
-    if (opts.length > 0) result.options = opts;
+  // imageUrl — derive from images.primary for legacy consumers
+  if (result.images?.primary) {
+    result.imageUrl = result.images.primary;
   }
 
-  // Backward compat: if AI still returns availableColors/availableSizes in metadata, promote to options
-  if (!result.options) {
-    const autoOpts: ExtractedProductData['options'] = [];
-    const md = raw.metadata;
-    if (md) {
-      if (Array.isArray(md.availableColors) && md.availableColors.length >= 2) {
-        autoOpts.push({ name: 'Color', values: md.availableColors.filter((v: unknown) => typeof v === 'string') });
-      }
-      if (Array.isArray(md.availableSizes) && md.availableSizes.length >= 2) {
-        autoOpts.push({ name: 'Size', values: md.availableSizes.filter((v: unknown) => typeof v === 'string') });
-      }
-    }
-    // Also promote finishes if no color option exists
-    if (!autoOpts.some(o => o.name === 'Color') && Array.isArray(raw.finishes) && raw.finishes.length >= 2) {
-      autoOpts.push({ name: 'Color', values: raw.finishes.filter((f: unknown) => typeof f === 'string') });
-    }
-    if (autoOpts.length > 0) result.options = autoOpts;
+  // material — derive from materials.primary for legacy consumers
+  if (result.materials?.primary && typeof result.materials.primary === 'string') {
+    result.material = result.materials.primary;
   }
+
+  // finishes + legacy options are derived after cross-validation (below)
 
   // Metadata — AI-analyzed product summary
   if (raw.metadata && typeof raw.metadata === 'object') {
@@ -1864,6 +2209,76 @@ function normalizeProduct(
     }
 
     if (Object.keys(metadata).length > 0) result.metadata = metadata;
+  }
+
+  // ── Cross-validation: ensure availableOptions, activeVariant, and pricing are consistent ──
+
+  // Collect all option keys that appear in pricing entries (excluding 'price')
+  const pricingOptionKeys = new Set<string>();
+  if (result.pricing) {
+    for (const entry of result.pricing) {
+      for (const key of Object.keys(entry)) {
+        if (key !== 'price') pricingOptionKeys.add(key);
+      }
+    }
+  }
+
+  // Collect all option keys from activeVariant (excluding 'price')
+  const activeVariantKeys = new Set<string>();
+  if (result.activeVariant) {
+    for (const key of Object.keys(result.activeVariant)) {
+      if (key !== 'price') activeVariantKeys.add(key);
+    }
+  }
+
+  // Build a map of existing availableOptions by lowercase type
+  const existingOptionTypes = new Map<string, { type: string; values: Set<string> }>();
+  if (result.availableOptions) {
+    for (const opt of result.availableOptions) {
+      existingOptionTypes.set(opt.type.toLowerCase(), { type: opt.type, values: new Set(opt.values) });
+    }
+  }
+
+  // Merge option keys from pricing and activeVariant into availableOptions
+  const allOptionKeys = new Set([...pricingOptionKeys, ...activeVariantKeys]);
+  for (const key of allOptionKeys) {
+    const existing = existingOptionTypes.get(key.toLowerCase());
+    // Collect all values for this key from pricing entries
+    const valuesFromPricing = new Set<string>();
+    if (result.pricing) {
+      for (const entry of result.pricing) {
+        const val = entry[key];
+        if (val != null && typeof val === 'string') valuesFromPricing.add(val);
+      }
+    }
+    // Add value from activeVariant
+    if (result.activeVariant?.[key] != null && typeof result.activeVariant[key] === 'string') {
+      valuesFromPricing.add(result.activeVariant[key] as string);
+    }
+
+    if (existing) {
+      // Merge any new values into existing option
+      for (const v of valuesFromPricing) existing.values.add(v);
+    } else if (valuesFromPricing.size >= 2) {
+      // New option type discovered from pricing/activeVariant — add it
+      // Capitalize the key for display (e.g., "finish" → "Finish")
+      const displayType = key.charAt(0).toUpperCase() + key.slice(1);
+      existingOptionTypes.set(key.toLowerCase(), { type: displayType, values: valuesFromPricing });
+    }
+  }
+
+  // Rebuild availableOptions from the merged map
+  if (existingOptionTypes.size > 0) {
+    result.availableOptions = Array.from(existingOptionTypes.values())
+      .filter(opt => opt.values.size >= 2)
+      .map(opt => ({ type: opt.type, values: Array.from(opt.values) }));
+  }
+
+  // Re-derive legacy fields after cross-validation
+  if (result.availableOptions) {
+    const finishOpt = result.availableOptions.find(o => ['Finish', 'Color', 'Fabric'].includes(o.type));
+    if (finishOpt) result.finishes = finishOpt.values;
+    result.options = result.availableOptions.map(o => ({ name: o.type, values: o.values }));
   }
 
   return result;

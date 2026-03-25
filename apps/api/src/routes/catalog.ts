@@ -30,15 +30,37 @@ const productCreateSchema = z.object({
   productName: z.string().min(1, 'Product name is required').max(200),
   sourceUrl: z.string().url('Invalid URL').max(2000),
   brandName: z.string().max(200).optional(),
-  price: z.number().positive().optional(),
+  category: z.string().max(200).optional(),
   currency: z.string().length(3).optional(),
+
+  // New variant-aware fields
+  variantId: z.string().max(200).optional(),
+  sku: z.string().max(200).optional(),
+  activeVariant: z.record(z.union([z.string(), z.number()])).optional(),
+  images: z.object({
+    primary: z.string().url().optional().or(z.literal('')),
+    gallery: z.array(z.string().url()).optional(),
+    note: z.string().max(500).optional(),
+  }).optional(),
+  pricing: z.array(z.record(z.union([z.string(), z.number()]))).optional(),
+  availableOptions: z.array(z.object({
+    type: z.string().max(100),
+    values: z.array(z.string().max(200)).max(100),
+  })).optional(),
+  features: z.array(z.string().max(500)).max(50).optional().default([]),
+  materials: z.record(z.union([z.string(), z.array(z.string())])).optional(),
+  promotions: z.array(z.string().max(500)).max(20).optional().default([]),
+  shipping: z.string().max(200).optional(),
+  availability: z.string().max(200).optional(),
+
+  // Legacy fields (kept for backward compat)
+  price: z.number().positive().optional(),
   imageUrl: z.string().url('Invalid image URL').max(2000).optional().or(z.literal('')),
   productUrl: z.string().url('Invalid product URL').max(2000).optional().or(z.literal('')),
   dimensions: dimensionsSchema,
   material: z.string().max(200).optional(),
   finishes: z.array(z.string().max(100)).max(20).optional().default([]),
   leadTime: z.string().max(100).optional(),
-  category: z.string().max(100).optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -46,15 +68,37 @@ const productUpdateSchema = z.object({
   productName: z.string().min(1).max(200).optional(),
   sourceUrl: z.string().url('Invalid URL').max(2000).optional(),
   brandName: z.string().max(200).nullable().optional(),
-  price: z.number().positive().nullable().optional(),
+  category: z.string().max(200).nullable().optional(),
   currency: z.string().length(3).nullable().optional(),
+
+  // New variant-aware fields
+  variantId: z.string().max(200).nullable().optional(),
+  sku: z.string().max(200).nullable().optional(),
+  activeVariant: z.record(z.union([z.string(), z.number()])).nullable().optional(),
+  images: z.object({
+    primary: z.string().url().optional().or(z.literal('')),
+    gallery: z.array(z.string().url()).optional(),
+    note: z.string().max(500).optional(),
+  }).nullable().optional(),
+  pricing: z.array(z.record(z.union([z.string(), z.number()]))).nullable().optional(),
+  availableOptions: z.array(z.object({
+    type: z.string().max(100),
+    values: z.array(z.string().max(200)).max(100),
+  })).nullable().optional(),
+  features: z.array(z.string().max(500)).max(50).optional(),
+  materials: z.record(z.union([z.string(), z.array(z.string())])).nullable().optional(),
+  promotions: z.array(z.string().max(500)).max(20).optional(),
+  shipping: z.string().max(200).nullable().optional(),
+  availability: z.string().max(200).nullable().optional(),
+
+  // Legacy fields (kept for backward compat)
+  price: z.number().positive().nullable().optional(),
   imageUrl: z.string().url('Invalid image URL').max(2000).nullable().optional().or(z.literal('')),
   productUrl: z.string().url('Invalid product URL').max(2000).nullable().optional().or(z.literal('')),
   dimensions: dimensionsSchema.nullable(),
   material: z.string().max(200).nullable().optional(),
   finishes: z.array(z.string().max(100)).max(20).optional(),
   leadTime: z.string().max(100).nullable().optional(),
-  category: z.string().max(100).nullable().optional(),
   metadata: z.record(z.unknown()).nullable().optional(),
 });
 
@@ -89,6 +133,8 @@ function serializeProduct(p: any) {
   return {
     ...p,
     price: toNum(p.price),
+    // Ensure legacy imageUrl is populated from images.primary if missing
+    imageUrl: p.imageUrl || p.images?.primary || null,
   };
 }
 
@@ -209,15 +255,29 @@ router.get('/products', async (req: AuthRequest, res: Response) => {
           id: true,
           productName: true,
           brandName: true,
+          category: true,
+          currency: true,
+          variantId: true,
+          sku: true,
+          activeVariant: true,
+          images: true,
+          pricing: true,
+          availableOptions: true,
+          features: true,
+          materials: true,
+          promotions: true,
+          shipping: true,
+          availability: true,
+          // Legacy fields
           price: true,
           imageUrl: true,
-          category: true,
           isActive: true,
           sourceUrl: true,
           material: true,
           finishes: true,
           leadTime: true,
           metadata: true,
+          dimensions: true,
           createdAt: true,
           _count: { select: { shortlistItems: true } },
         },
@@ -299,6 +359,23 @@ router.post('/products', async (req: AuthRequest, res: Response) => {
         productName: data.productName,
         sourceUrl: data.sourceUrl,
         brandName: data.brandName || null,
+        category: data.category || null,
+        currency: data.currency || 'USD',
+
+        // New variant-aware fields
+        variantId: data.variantId || null,
+        sku: data.sku || null,
+        activeVariant: data.activeVariant ?? undefined,
+        images: data.images ?? undefined,
+        pricing: data.pricing ?? undefined,
+        availableOptions: data.availableOptions ?? undefined,
+        features: data.features ?? [],
+        materials: data.materials ?? undefined,
+        promotions: data.promotions ?? [],
+        shipping: data.shipping || null,
+        availability: data.availability || null,
+
+        // Legacy fields
         price: data.price ?? null,
         imageUrl: data.imageUrl || null,
         productUrl: data.productUrl || null,
@@ -306,7 +383,6 @@ router.post('/products', async (req: AuthRequest, res: Response) => {
         material: data.material || null,
         finishes: data.finishes ?? [],
         leadTime: data.leadTime || null,
-        category: data.category || null,
         metadata: data.metadata ? (data.metadata as any) : undefined,
       },
     });
@@ -518,7 +594,7 @@ router.post('/extract', async (req: AuthRequest, res: Response) => {
     try {
       const duplicate = await prisma.product.findFirst({
         where: { designerId, sourceUrl: parsed.data.sourceUrl },
-        select: { id: true, productName: true, brandName: true, imageUrl: true, isActive: true },
+        select: { id: true, productName: true, brandName: true, imageUrl: true, images: true, isActive: true },
       });
 
       if (duplicate) {
@@ -576,7 +652,7 @@ router.post('/extract/batch', async (req: AuthRequest, res: Response) => {
         // Duplicate check per URL
         const duplicate = await prisma.product.findFirst({
           where: { designerId, sourceUrl: url },
-          select: { id: true, productName: true, brandName: true, imageUrl: true, isActive: true },
+          select: { id: true, productName: true, brandName: true, imageUrl: true, images: true, isActive: true },
         });
         if (duplicate) {
           return { url, type: 'duplicate' as const, duplicateProduct: duplicate };

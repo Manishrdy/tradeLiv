@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, ProductPayload, ExtractedProduct, DuplicateProduct, ProductMetadata } from '@/lib/api';
+import { api, ProductPayload, ExtractedProduct, DuplicateProduct, ProductMetadata, ProductImages, ProductOption } from '@/lib/api';
 
 const EXTRACT_STEPS = [
   'Visiting page…',
@@ -36,6 +36,19 @@ interface BatchFormState {
   dimDepth: string;
   dimUnit: 'in' | 'cm' | 'ft';
   metadata?: ProductMetadata;
+  // New variant-aware fields
+  variantId?: string;
+  sku?: string;
+  activeVariant?: Record<string, string | number>;
+  images?: ProductImages;
+  pricing?: Array<Record<string, string | number>>;
+  availableOptions?: ProductOption[];
+  features?: string[];
+  materials?: Record<string, string | string[]>;
+  promotions?: string[];
+  shipping?: string;
+  availability?: string;
+  // UI state
   isDuplicate: boolean;
   duplicateProductId?: string;
   extractError?: string;
@@ -47,17 +60,18 @@ interface BatchFormState {
 }
 
 function extractedToBatchForm(data: ExtractedProduct, url: string): BatchFormState {
+  const activePrice = data.activeVariant?.price ?? data.price;
   return {
     tempId: Math.random().toString(36).slice(2),
     sourceUrl: url,
     productName: data.productName ?? '',
     brandName: data.brandName ?? '',
-    price: data.price != null ? String(data.price) : '',
+    price: activePrice != null ? String(activePrice) : '',
     currency: data.currency ?? 'USD',
-    imageUrl: data.imageUrl ?? '',
+    imageUrl: data.images?.primary ?? data.imageUrl ?? '',
     productUrl: data.productUrl ?? '',
     category: data.category ?? '',
-    material: data.material ?? '',
+    material: (typeof data.materials?.primary === 'string' ? data.materials.primary : data.material) ?? '',
     leadTime: data.leadTime ?? '',
     finishes: data.finishes ?? [],
     finishInput: '',
@@ -67,6 +81,18 @@ function extractedToBatchForm(data: ExtractedProduct, url: string): BatchFormSta
     dimDepth: data.dimensions?.depth != null ? String(data.dimensions.depth) : '',
     dimUnit: (data.dimensions?.unit as 'in' | 'cm' | 'ft') ?? 'in',
     metadata: data.metadata,
+    // New variant-aware fields
+    variantId: data.variantId,
+    sku: data.sku,
+    activeVariant: data.activeVariant,
+    images: data.images,
+    pricing: data.pricing,
+    availableOptions: data.availableOptions,
+    features: data.features,
+    materials: data.materials,
+    promotions: data.promotions,
+    shipping: data.shipping,
+    availability: data.availability,
     isDuplicate: false,
     saving: false,
     saved: false,
@@ -657,6 +683,18 @@ export default function NewProductPage() {
   const [dimUnit, setDimUnit] = useState<'in' | 'cm' | 'ft'>('in');
   const [currency, setCurrency] = useState('USD');
   const [singleMetadata, setSingleMetadata] = useState<ProductMetadata | undefined>();
+  // New variant-aware state (passed through to API, not individually edited in form)
+  const [singleVariantId, setSingleVariantId] = useState<string | undefined>();
+  const [singleSku, setSingleSku] = useState<string | undefined>();
+  const [singleActiveVariant, setSingleActiveVariant] = useState<Record<string, string | number> | undefined>();
+  const [singleImages, setSingleImages] = useState<ProductImages | undefined>();
+  const [singlePricing, setSinglePricing] = useState<Array<Record<string, string | number>> | undefined>();
+  const [singleAvailableOptions, setSingleAvailableOptions] = useState<ProductOption[] | undefined>();
+  const [singleFeatures, setSingleFeatures] = useState<string[] | undefined>();
+  const [singleMaterials, setSingleMaterials] = useState<Record<string, string | string[]> | undefined>();
+  const [singlePromotions, setSinglePromotions] = useState<string[] | undefined>();
+  const [singleShipping, setSingleShipping] = useState<string | undefined>();
+  const [singleAvailability, setSingleAvailability] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -685,12 +723,13 @@ export default function NewProductPage() {
     if (url) setSourceUrl(url);
     setProductName(data.productName ?? '');
     setBrandName(data.brandName ?? '');
-    setPrice(data.price != null ? String(data.price) : '');
+    const activePrice = data.activeVariant?.price ?? data.price;
+    setPrice(activePrice != null ? String(activePrice) : '');
     setCurrency(data.currency ?? 'USD');
-    setImageUrl(data.imageUrl ?? '');
+    setImageUrl(data.images?.primary ?? data.imageUrl ?? '');
     setProductUrl(data.productUrl ?? '');
     setCategory(data.category ?? '');
-    setMaterial(data.material ?? '');
+    setMaterial((typeof data.materials?.primary === 'string' ? data.materials.primary : data.material) ?? '');
     setLeadTime(data.leadTime ?? '');
     setFinishes(data.finishes ?? []);
     if (data.dimensions) {
@@ -701,6 +740,18 @@ export default function NewProductPage() {
       if (data.dimensions.unit) setDimUnit(data.dimensions.unit as 'in' | 'cm' | 'ft');
     }
     setSingleMetadata(data.metadata);
+    // Set new variant-aware fields
+    setSingleVariantId(data.variantId);
+    setSingleSku(data.sku);
+    setSingleActiveVariant(data.activeVariant);
+    setSingleImages(data.images);
+    setSinglePricing(data.pricing);
+    setSingleAvailableOptions(data.availableOptions);
+    setSingleFeatures(data.features);
+    setSingleMaterials(data.materials);
+    setSinglePromotions(data.promotions);
+    setSingleShipping(data.shipping);
+    setSingleAvailability(data.availability);
     setExtracted(true);
     setCollectionProducts(null);
     setCollectionSearch('');
@@ -857,11 +908,24 @@ export default function NewProductPage() {
       productName: form.productName.trim(),
       sourceUrl: form.sourceUrl.trim(),
       brandName: form.brandName.trim() || undefined,
-      price: form.price ? parseFloat(form.price) : undefined,
+      category: form.category.trim() || undefined,
       currency: form.currency || undefined,
+      // New variant-aware fields
+      variantId: form.variantId || undefined,
+      sku: form.sku || undefined,
+      activeVariant: form.activeVariant || undefined,
+      images: form.images || (form.imageUrl.trim() ? { primary: form.imageUrl.trim() } : undefined),
+      pricing: form.pricing || undefined,
+      availableOptions: form.availableOptions || undefined,
+      features: form.features && form.features.length > 0 ? form.features : undefined,
+      materials: form.materials || (form.material.trim() ? { primary: form.material.trim() } : undefined),
+      promotions: form.promotions && form.promotions.length > 0 ? form.promotions : undefined,
+      shipping: form.shipping || undefined,
+      availability: form.availability || undefined,
+      // Legacy fields
+      price: form.price ? parseFloat(form.price) : undefined,
       imageUrl: form.imageUrl.trim() || undefined,
       productUrl: form.productUrl.trim() || undefined,
-      category: form.category.trim() || undefined,
       material: form.material.trim() || undefined,
       leadTime: form.leadTime.trim() || undefined,
       finishes: form.finishes.length > 0 ? form.finishes : undefined,
@@ -926,10 +990,25 @@ export default function NewProductPage() {
 
     const payload: ProductPayload = {
       productName: productName.trim(), sourceUrl: sourceUrl.trim(),
-      brandName: brandName.trim() || undefined, price: price ? parseFloat(price) : undefined,
+      brandName: brandName.trim() || undefined,
+      category: category.trim() || undefined,
       currency: currency || undefined,
+      // New variant-aware fields
+      variantId: singleVariantId || undefined,
+      sku: singleSku || undefined,
+      activeVariant: singleActiveVariant || undefined,
+      images: singleImages || (imageUrl.trim() ? { primary: imageUrl.trim() } : undefined),
+      pricing: singlePricing || undefined,
+      availableOptions: singleAvailableOptions || undefined,
+      features: singleFeatures && singleFeatures.length > 0 ? singleFeatures : undefined,
+      materials: singleMaterials || (material.trim() ? { primary: material.trim() } : undefined),
+      promotions: singlePromotions && singlePromotions.length > 0 ? singlePromotions : undefined,
+      shipping: singleShipping || undefined,
+      availability: singleAvailability || undefined,
+      // Legacy fields
+      price: price ? parseFloat(price) : undefined,
       imageUrl: imageUrl.trim() || undefined, productUrl: productUrl.trim() || undefined,
-      category: category.trim() || undefined, material: material.trim() || undefined,
+      material: material.trim() || undefined,
       leadTime: leadTime.trim() || undefined,
       finishes: finishes.length > 0 ? finishes : undefined, dimensions,
       metadata: singleMetadata && Object.keys(singleMetadata).length > 0 ? singleMetadata : undefined,
@@ -1273,10 +1352,235 @@ export default function NewProductPage() {
       {!batchActive && (
         <div className="card" style={{ padding: 32 }}>
           <form onSubmit={handleSubmit} noValidate>
-            <SectionHeading>Product information</SectionHeading>
-            <Field label="Product Name *">
-              <input className="input-field" type="text" placeholder="e.g. Eames Lounge Chair" value={productName} onChange={(e) => setProductName(e.target.value)} />
-            </Field>
+
+            {/* ── Product hero: image + basic info (Amazon-style) ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: imageUrl ? '200px 1fr' : '1fr', gap: 24, marginBottom: 24 }}>
+              {/* Image preview */}
+              {imageUrl && (
+                <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg-input)', aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <img src={imageUrl} alt="Product preview" style={{ width: '100%', height: '100%', objectFit: 'contain' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                </div>
+              )}
+
+              <div>
+                {/* Brand */}
+                {brandName && <div style={{ fontSize: 12, color: '#3850be', fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.03em' }}>{brandName}</div>}
+
+                {/* Product name */}
+                <input
+                  className="input-field"
+                  type="text"
+                  placeholder="Product Name *"
+                  value={productName}
+                  onChange={(e) => setProductName(e.target.value)}
+                  style={{ fontSize: 18, fontWeight: 700, border: 'none', padding: '0 0 8px', background: 'none', color: 'var(--text-primary)', letterSpacing: '-0.02em' }}
+                />
+
+                {/* Category */}
+                {category && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>{category}</div>}
+
+                {/* Price display — large */}
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 6 }}>
+                  <span style={{ fontSize: 28, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.03em' }}>
+                    {price ? `$${parseFloat(price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                  </span>
+                  {singlePricing && singlePricing.length > 1 && (() => {
+                    const prices = singlePricing.map(e => Number(e.price)).filter(n => !isNaN(n) && n > 0);
+                    const min = Math.min(...prices);
+                    const max = Math.max(...prices);
+                    return min !== max ? (
+                      <span style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 500 }}>
+                        ${min.toLocaleString()} – ${max.toLocaleString()} across {singlePricing.length} variants
+                      </span>
+                    ) : null;
+                  })()}
+                </div>
+
+                {/* Badges row: promotions, shipping, availability */}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                  {singlePromotions?.map((p, i) => (
+                    <span key={i} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: 'rgba(220,170,50,0.12)', color: '#b8860b', fontWeight: 600 }}>{p}</span>
+                  ))}
+                  {singleShipping && (
+                    <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: 'rgba(34,139,34,0.1)', color: '#228b22', fontWeight: 600 }}>{singleShipping}</span>
+                  )}
+                  {singleAvailability && (
+                    <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: 'rgba(34,139,34,0.1)', color: '#228b22', fontWeight: 600 }}>{singleAvailability}</span>
+                  )}
+                  {leadTime && (
+                    <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: 'rgba(50,80,190,0.08)', color: '#3850be', fontWeight: 600 }}>{leadTime}</span>
+                  )}
+                </div>
+
+                {singleSku && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>SKU: {singleSku}</div>}
+              </div>
+            </div>
+
+            {/* ── Variant selectors (Amazon-style chips) ── */}
+            {singleAvailableOptions && singleAvailableOptions.length > 0 && (
+              <div style={{ marginBottom: 20, padding: '16px 20px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 14 }}>
+                  Select Variant
+                </div>
+
+                {singleAvailableOptions.map((option) => {
+                  // Determine which value is currently selected from activeVariant
+                  const optKey = option.type.toLowerCase();
+                  const currentSelection = singleActiveVariant
+                    ? String(singleActiveVariant[optKey] ?? singleActiveVariant[option.type] ?? '')
+                    : '';
+
+                  return (
+                    <div key={option.type} style={{ marginBottom: 14 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>
+                        {option.type}: <span style={{ fontWeight: 700 }}>{currentSelection || 'Not selected'}</span>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {option.values.map((val) => {
+                          const isSelected = currentSelection.toUpperCase() === val.toUpperCase();
+                          return (
+                            <button
+                              key={val}
+                              type="button"
+                              onClick={() => {
+                                // Update activeVariant with new selection
+                                const updatedVariant = { ...(singleActiveVariant || {}) };
+                                // Try both lowercase and original case keys
+                                if (optKey in updatedVariant) updatedVariant[optKey] = val;
+                                else if (option.type in updatedVariant) updatedVariant[option.type] = val;
+                                else updatedVariant[optKey] = val;
+
+                                // Find matching price from pricing matrix
+                                if (singlePricing && singlePricing.length > 1) {
+                                  const match = singlePricing.find(entry => {
+                                    return Object.entries(updatedVariant).every(([k, v]) => {
+                                      if (k === 'price') return true;
+                                      const entryVal = entry[k] ?? entry[k.charAt(0).toUpperCase() + k.slice(1)];
+                                      return !entryVal || String(entryVal).toUpperCase() === String(v).toUpperCase();
+                                    });
+                                  });
+                                  if (match?.price != null) {
+                                    updatedVariant.price = Number(match.price);
+                                    setPrice(String(match.price));
+                                  }
+                                }
+
+                                setSingleActiveVariant(updatedVariant);
+                              }}
+                              style={{
+                                padding: '7px 16px',
+                                borderRadius: 8,
+                                fontSize: 12.5,
+                                fontWeight: isSelected ? 700 : 500,
+                                cursor: 'pointer',
+                                transition: 'all 0.12s',
+                                border: isSelected ? '2px solid var(--gold)' : '1px solid var(--border-strong)',
+                                background: isSelected ? 'rgba(168,113,10,0.06)' : 'var(--bg-card)',
+                                color: isSelected ? 'var(--gold)' : 'var(--text-secondary)',
+                                boxShadow: isSelected ? '0 0 0 1px var(--gold)' : 'none',
+                              }}
+                            >
+                              {val}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* ── Features ── */}
+            {singleFeatures && singleFeatures.length > 0 && (
+              <div style={{ marginBottom: 20, padding: '16px 20px', borderRadius: 12, border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>
+                  About this item
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.65, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {singleFeatures.map((f, i) => <li key={i}>{f}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {/* ── Materials ── */}
+            {singleMaterials && Object.keys(singleMaterials).length > 0 && (
+              <div style={{ marginBottom: 20, padding: '16px 20px', borderRadius: 12, border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>
+                  Materials & Construction
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  {Object.entries(singleMaterials).map(([key, val]) => (
+                    <div key={key} style={{ padding: '8px 12px', borderRadius: 8, background: 'var(--bg-input)', fontSize: 12.5 }}>
+                      <div style={{ fontSize: 10.5, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 3 }}>{key.replace(/_/g, ' ')}</div>
+                      <div style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{Array.isArray(val) ? val.join(', ') : val}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Pricing matrix table (collapsible) ── */}
+            {singlePricing && singlePricing.length > 1 && (
+              <div style={{ marginBottom: 20, padding: '16px 20px', borderRadius: 12, border: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>All Variants & Pricing</div>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', background: 'var(--bg-input)', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>{singlePricing.length}</span>
+                </div>
+                <div style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg-input)' }}>
+                        {Object.keys(singlePricing[0]).filter(k => k !== 'price').map(k => (
+                          <th key={k} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', fontSize: 10.5, letterSpacing: '0.04em', borderBottom: '1px solid var(--border)' }}>{k}</th>
+                        ))}
+                        <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', fontSize: 10.5, letterSpacing: '0.04em', borderBottom: '1px solid var(--border)' }}>Price</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {singlePricing.map((entry, i) => {
+                        // Check if this row matches the current active variant
+                        const isActive = singleActiveVariant && Object.entries(entry).every(([k, v]) => {
+                          if (k === 'price') return true;
+                          const av = singleActiveVariant[k] ?? singleActiveVariant[k.toLowerCase()];
+                          return av != null && String(av).toUpperCase() === String(v).toUpperCase();
+                        });
+                        return (
+                          <tr
+                            key={i}
+                            onClick={() => {
+                              const newVariant: Record<string, string | number> = {};
+                              for (const [k, v] of Object.entries(entry)) newVariant[k] = v;
+                              setSingleActiveVariant(newVariant);
+                              if (entry.price != null) setPrice(String(entry.price));
+                            }}
+                            style={{
+                              cursor: 'pointer',
+                              background: isActive ? 'rgba(168,113,10,0.06)' : i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.015)',
+                              borderLeft: isActive ? '3px solid var(--gold)' : '3px solid transparent',
+                              transition: 'all 0.1s',
+                            }}
+                            onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLTableRowElement).style.background = 'rgba(0,0,0,0.03)'; }}
+                            onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLTableRowElement).style.background = i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.015)'; }}
+                          >
+                            {Object.entries(entry).filter(([k]) => k !== 'price').map(([k, v]) => (
+                              <td key={k} style={{ padding: '8px 12px', color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)', fontWeight: isActive ? 600 : 400 }}>{String(v)}</td>
+                            ))}
+                            <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: isActive ? 'var(--gold)' : 'var(--text-primary)', borderBottom: '1px solid var(--border)' }}>
+                              ${Number(entry.price).toLocaleString()}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ── Editable fields ── */}
+            <SectionHeading>Edit Details</SectionHeading>
+
             <Field label="Source URL *">
               <input className="input-field" type="url" placeholder="https://vendor.com/product-page" value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} />
             </Field>
@@ -1296,11 +1600,6 @@ export default function NewProductPage() {
                 The image URL could not be verified and was removed. You can add one manually below.
               </div>
             )}
-            {imageUrl && (
-              <div style={{ marginBottom: 14, borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)', height: 160, background: 'var(--bg-input)' }}>
-                <img src={imageUrl} alt="Product preview" style={{ width: '100%', height: '100%', objectFit: 'contain' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-              </div>
-            )}
             <Field label="Image URL" optional><input className="input-field" type="url" placeholder="https://images.vendor.com/product.jpg" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} /></Field>
             <Field label="Product Page URL" optional><input className="input-field" type="url" placeholder="https://vendor.com/product" value={productUrl} onChange={(e) => setProductUrl(e.target.value)} /></Field>
 
@@ -1315,21 +1614,6 @@ export default function NewProductPage() {
               <Field label="Depth"><input className="input-field" type="number" placeholder="0" min="0" step="0.1" value={dimDepth} onChange={(e) => setDimDepth(e.target.value)} /></Field>
               <Field label="Unit"><select className="select-field" value={dimUnit} onChange={(e) => setDimUnit(e.target.value as 'in' | 'cm' | 'ft')}><option value="in">in</option><option value="cm">cm</option><option value="ft">ft</option></select></Field>
             </div>
-
-            <SectionHeading>Finishes <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10.5, opacity: 0.7 }}>(optional)</span></SectionHeading>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-              <input className="input-field" type="text" placeholder="Add a finish…" value={finishInput} onChange={(e) => setFinishInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addFinish(); } }} style={{ flex: 1 }} />
-              <button type="button" className="btn-ghost" onClick={addFinish} style={{ flexShrink: 0, fontSize: 12 }}>Add</button>
-            </div>
-            {finishes.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
-                {finishes.map((f) => (
-                  <span key={f} className="tag-chip" style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }} onClick={() => setFinishes(finishes.filter((x) => x !== f))}>
-                    {f}<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                  </span>
-                ))}
-              </div>
-            )}
 
             <Field label="Lead Time" optional><input className="input-field" type="text" placeholder="e.g. 4-6 weeks" value={leadTime} onChange={(e) => setLeadTime(e.target.value)} /></Field>
 

@@ -6,9 +6,37 @@ import { api, ProductListItem } from '@/lib/api';
 
 /* ── Helpers ───────────────────────────────────────── */
 
+const currFmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 });
+
 function formatPrice(price: number | null) {
   if (price == null) return '—';
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(price);
+  return currFmt.format(price);
+}
+
+/** Derive display price from new pricing fields, falling back to legacy price */
+function getDisplayPrice(p: ProductListItem): number | null {
+  if (p.activeVariant?.price != null) return Number(p.activeVariant.price);
+  if (p.pricing && p.pricing.length > 0 && p.pricing[0].price != null) return Number(p.pricing[0].price);
+  return p.price;
+}
+
+/** Format price range from pricing matrix */
+function formatPriceRange(p: ProductListItem): string {
+  if (p.pricing && p.pricing.length > 1) {
+    const prices = p.pricing.map(e => Number(e.price)).filter(n => !isNaN(n) && n > 0);
+    if (prices.length > 1) {
+      const min = Math.min(...prices);
+      const max = Math.max(...prices);
+      if (min !== max) return `${currFmt.format(min)} – ${currFmt.format(max)}`;
+    }
+  }
+  return formatPrice(getDisplayPrice(p));
+}
+
+/** Resolve primary image URL from new images field, falling back to legacy */
+function getImageUrl(p: ProductListItem): string | undefined {
+  const imgs = p.images as { primary?: string } | null;
+  return imgs?.primary || p.imageUrl || undefined;
 }
 
 function formatDate(iso: string) {
@@ -110,8 +138,8 @@ function CompareModal({ items, onClose, onRemove }: { items: ProductListItem[]; 
             <div key={p.id} style={{ borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
               {/* Image */}
               <div style={{ height: 140, background: 'var(--bg-input)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {p.imageUrl ? (
-                  <img src={p.imageUrl} alt={p.productName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                {getImageUrl(p) ? (
+                  <img src={getImageUrl(p)} alt={p.productName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 ) : (
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--border-strong)" strokeWidth="1.4">
                     <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
@@ -125,7 +153,7 @@ function CompareModal({ items, onClose, onRemove }: { items: ProductListItem[]; 
                 </div>
                 {[
                   { label: 'Brand', value: p.brandName },
-                  { label: 'Price', value: formatPrice(p.price) },
+                  { label: 'Price', value: formatPriceRange(p) },
                   { label: 'Category', value: p.category },
                   { label: 'Material', value: p.material },
                   { label: 'Lead Time', value: p.leadTime },
@@ -247,8 +275,8 @@ export default function CatalogPage() {
 
   // Filter by price range + favorites
   let displayed = products;
-  if (priceMin) displayed = displayed.filter((p) => (p.price ?? 0) >= Number(priceMin));
-  if (priceMax) displayed = displayed.filter((p) => (p.price ?? Infinity) <= Number(priceMax));
+  if (priceMin) displayed = displayed.filter((p) => (getDisplayPrice(p) ?? 0) >= Number(priceMin));
+  if (priceMax) displayed = displayed.filter((p) => (getDisplayPrice(p) ?? Infinity) <= Number(priceMax));
   if (showFavOnly) displayed = displayed.filter((p) => favorites.has(p.id));
 
   const compareItems = products.filter((p) => compareIds.has(p.id));
@@ -513,9 +541,9 @@ export default function CatalogPage() {
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         overflow: 'hidden', position: 'relative',
                       }}>
-                        {p.imageUrl ? (
+                        {getImageUrl(p) ? (
                           <img
-                            src={p.imageUrl}
+                            src={getImageUrl(p)}
                             alt={p.productName}
                             style={{ width: '100%', height: '100%', objectFit: 'cover', transition: 'transform 0.3s' }}
                             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
@@ -528,9 +556,9 @@ export default function CatalogPage() {
                           </svg>
                         )}
                         {/* Zoom button */}
-                        {p.imageUrl && (
+                        {getImageUrl(p) && (
                           <button
-                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setZoomImg({ src: p.imageUrl!, alt: p.productName }); }}
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setZoomImg({ src: getImageUrl(p)!, alt: p.productName }); }}
                             style={{
                               position: 'absolute', bottom: 8, right: 8,
                               width: 28, height: 28, borderRadius: 6,
@@ -574,7 +602,7 @@ export default function CatalogPage() {
                         )}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                           <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
-                            {formatPrice(p.price)}
+                            {formatPriceRange(p)}
                           </div>
                           {p.category && (
                             <span style={{
@@ -683,8 +711,8 @@ export default function CatalogPage() {
                       background: 'var(--bg-input)', overflow: 'hidden',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                     }}>
-                      {p.imageUrl ? (
-                        <img src={p.imageUrl} alt={p.productName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      {getImageUrl(p) ? (
+                        <img src={getImageUrl(p)} alt={p.productName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       ) : (
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--border-strong)" strokeWidth="1.4"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>
                       )}
@@ -700,7 +728,7 @@ export default function CatalogPage() {
                     </div>
                     {/* Price */}
                     <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', flexShrink: 0 }}>
-                      {formatPrice(p.price)}
+                      {formatPriceRange(p)}
                     </div>
                     {/* Inactive badge */}
                     {!p.isActive && (
