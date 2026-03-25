@@ -670,4 +670,465 @@ router.get('/enhanced-stats', async (_req: AuthRequest, res: Response) => {
   }
 });
 
+/* ─── Platform Health ─────────────────────────────── */
+
+router.get('/health', async (_req: AuthRequest, res: Response) => {
+  try {
+    // DB connectivity + latency
+    const dbStart = Date.now();
+    await prisma.$queryRaw`SELECT 1`;
+    const dbLatency = Date.now() - dbStart;
+
+    // Active users (designers with sessions pinged in last 15 min / 24h)
+    const now = new Date();
+    const fifteenMinAgo = new Date(now.getTime() - 15 * 60 * 1000);
+    const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+
+    const [active15, active24, errors1h, errors24h, designerCount, projectCount, orderCount, productCount] = await Promise.all([
+      prisma.designerSession.groupBy({ by: ['designerId'], where: { lastPing: { gte: fifteenMinAgo }, endedAt: null } }).then((r) => r.length),
+      prisma.designerSession.groupBy({ by: ['designerId'], where: { lastPing: { gte: twentyFourHoursAgo } } }).then((r) => r.length),
+      prisma.auditLog.count({ where: { action: { contains: 'error' }, createdAt: { gte: oneHourAgo } } }),
+      prisma.auditLog.count({ where: { action: { contains: 'error' }, createdAt: { gte: twentyFourHoursAgo } } }),
+      prisma.designer.count(),
+      prisma.project.count(),
+      prisma.order.count(),
+      prisma.product.count(),
+    ]);
+
+    const mem = process.memoryUsage();
+
+    res.json({
+      db: { connected: true, latencyMs: dbLatency },
+      api: { uptimeSeconds: Math.floor(process.uptime()), memoryMB: Math.round(mem.rss / 1024 / 1024) },
+      activeUsers: { last15min: active15, last24h: active24 },
+      errors: { last1h: errors1h, last24h: errors24h },
+      counts: { designers: designerCount, projects: projectCount, orders: orderCount, products: productCount },
+    });
+  } catch (err) {
+    logger.error('admin health error', { err });
+    res.json({
+      db: { connected: false, latencyMs: -1 },
+      api: { uptimeSeconds: Math.floor(process.uptime()), memoryMB: 0 },
+      activeUsers: { last15min: 0, last24h: 0 },
+      errors: { last1h: 0, last24h: 0 },
+      counts: { designers: 0, projects: 0, orders: 0, products: 0 },
+    });
+  }
+});
+
+/* ─── Platform Config ─────────────────────────────── */
+
+router.get('/config', async (_req: AuthRequest, res: Response) => {
+  try {
+    // Auto-seed defaults if empty
+    const count = await prisma.platformConfig.count();
+    if (count === 0) {
+      await prisma.platformConfig.createMany({
+        data: [
+          { key: 'platform_name', value: 'Tradeliv', type: 'string', label: 'Platform Name', group: 'general', sortOrder: 0 },
+          { key: 'support_email', value: 'support@tradeliv.com', type: 'string', label: 'Support Email', group: 'general', sortOrder: 1 },
+          { key: 'tax_rate', value: '0.08', type: 'number', label: 'Tax Rate (%)', group: 'tax', sortOrder: 0 },
+          { key: 'default_currency', value: 'usd', type: 'string', label: 'Default Currency', group: 'payment', sortOrder: 0 },
+          { key: 'payment_terms_days', value: '30', type: 'number', label: 'Payment Terms (days)', group: 'payment', sortOrder: 1 },
+          { key: 'commission_percentage', value: '10', type: 'number', label: 'Commission (%)', group: 'commission', sortOrder: 0 },
+        ],
+      });
+    }
+
+    const configs = await prisma.platformConfig.findMany({
+      orderBy: [{ group: 'asc' }, { sortOrder: 'asc' }],
+    });
+    res.json(configs);
+  } catch (err) {
+    logger.error('admin config error', { err });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+const configUpdateSchema = z.object({ value: z.string() });
+
+router.put('/config/:key', requireSuperAdmin, async (req: AuthRequest, res: Response) => {
+  const parsed = configUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0].message });
+    return;
+  }
+
+  try {
+    const existing = await prisma.platformConfig.findUnique({ where: { key: req.params.key } });
+    if (!existing) {
+      res.status(404).json({ error: 'Config key not found.' });
+      return;
+    }
+
+    const config = await prisma.platformConfig.update({
+      where: { key: req.params.key },
+      data: { value: parsed.data.value, updatedBy: req.user!.id },
+    });
+
+    writeAuditLog({
+      actorType: 'admin', actorId: req.user!.id,
+      action: 'config_updated', entityType: 'platform_config', entityId: req.params.key,
+      payload: { from: existing.value, to: parsed.data.value },
+    });
+
+    res.json(config);
+  } catch (err) {
+    logger.error('admin config error', { err });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+const configCreateSchema = z.object({
+  key: z.string().min(1),
+  value: z.string(),
+  type: z.enum(['string', 'number', 'boolean', 'json']).default('string'),
+  label: z.string().min(1),
+  group: z.string().default('general'),
+  sortOrder: z.number().int().default(0),
+});
+
+router.post('/config', requireSuperAdmin, async (req: AuthRequest, res: Response) => {
+  const parsed = configCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0].message });
+    return;
+  }
+
+  try {
+    const existing = await prisma.platformConfig.findUnique({ where: { key: parsed.data.key } });
+    if (existing) {
+      res.status(409).json({ error: 'Config key already exists.' });
+      return;
+    }
+
+    const config = await prisma.platformConfig.create({ data: parsed.data });
+
+    writeAuditLog({
+      actorType: 'admin', actorId: req.user!.id,
+      action: 'config_created', entityType: 'platform_config', entityId: parsed.data.key,
+    });
+
+    res.status(201).json(config);
+  } catch (err) {
+    logger.error('admin config error', { err });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── Analytics: Revenue ──────────────────────────── */
+
+router.get('/analytics/revenue', async (req: AuthRequest, res: Response) => {
+  const months = Math.min(Number(req.query.months) || 12, 24);
+
+  try {
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - months);
+
+    // Monthly revenue trends
+    const orders = await prisma.order.findMany({
+      where: {
+        status: { in: ['paid', 'split_to_brands', 'closed'] },
+        createdAt: { gte: cutoff },
+      },
+      select: { totalAmount: true, createdAt: true, designerId: true },
+    });
+
+    const monthMap: Record<string, { revenue: number; orderCount: number }> = {};
+    for (const o of orders) {
+      const key = `${o.createdAt.getFullYear()}-${String(o.createdAt.getMonth() + 1).padStart(2, '0')}`;
+      if (!monthMap[key]) monthMap[key] = { revenue: 0, orderCount: 0 };
+      monthMap[key].revenue += Number(o.totalAmount ?? 0);
+      monthMap[key].orderCount += 1;
+    }
+
+    const trends = Object.entries(monthMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([period, data]) => ({ period, ...data }));
+
+    // Designer-wise revenue
+    const designerMap: Record<string, { revenue: number; orderCount: number }> = {};
+    for (const o of orders) {
+      if (!designerMap[o.designerId]) designerMap[o.designerId] = { revenue: 0, orderCount: 0 };
+      designerMap[o.designerId].revenue += Number(o.totalAmount ?? 0);
+      designerMap[o.designerId].orderCount += 1;
+    }
+
+    const designerIds = Object.keys(designerMap);
+    const designers = designerIds.length > 0
+      ? await prisma.designer.findMany({
+          where: { id: { in: designerIds } },
+          select: { id: true, fullName: true },
+        })
+      : [];
+    const nameMap = Object.fromEntries(designers.map((d) => [d.id, d.fullName]));
+
+    const designerRevenue = Object.entries(designerMap)
+      .map(([designerId, data]) => ({ designerId, designerName: nameMap[designerId] ?? 'Unknown', ...data }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    const totalRevenue = orders.reduce((sum, o) => sum + Number(o.totalAmount ?? 0), 0);
+
+    res.json({
+      trends,
+      designerRevenue,
+      totals: {
+        totalRevenue,
+        avgOrderValue: orders.length > 0 ? Math.round(totalRevenue / orders.length) : 0,
+        totalOrders: orders.length,
+      },
+    });
+  } catch (err) {
+    logger.error('admin analytics error', { err });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── Analytics: Products ─────────────────────────── */
+
+router.get('/analytics/products', async (_req: AuthRequest, res: Response) => {
+  try {
+    // Most shortlisted products
+    const shortlistGroups = await prisma.shortlistItem.groupBy({
+      by: ['productId'],
+      _count: { id: true },
+      orderBy: { _count: { id: 'desc' } },
+      take: 20,
+    });
+
+    const productIds = shortlistGroups.map((g) => g.productId);
+    const products = productIds.length > 0
+      ? await prisma.product.findMany({
+          where: { id: { in: productIds } },
+          select: { id: true, productName: true, brandName: true },
+        })
+      : [];
+    const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
+
+    const mostShortlisted = shortlistGroups.map((g) => ({
+      productId: g.productId,
+      productName: productMap[g.productId]?.productName ?? 'Unknown',
+      brandName: productMap[g.productId]?.brandName ?? null,
+      count: g._count.id,
+    }));
+
+    // Approval rates
+    const statusGroups = await prisma.shortlistItem.groupBy({
+      by: ['status'],
+      _count: { id: true },
+    });
+    const totalShortlist = statusGroups.reduce((s, g) => s + g._count.id, 0);
+    const approvalRates = statusGroups.map((g) => ({
+      status: g.status,
+      count: g._count.id,
+      percentage: totalShortlist > 0 ? Math.round((g._count.id / totalShortlist) * 100) : 0,
+    }));
+
+    // Popular brands
+    const brandGroups = await prisma.product.groupBy({
+      by: ['brandName'],
+      where: { brandName: { not: null } },
+      _count: { id: true },
+      orderBy: { _count: { id: 'desc' } },
+      take: 15,
+    });
+
+    const popularBrands = brandGroups.map((g) => ({
+      brandName: g.brandName ?? 'Unknown',
+      productCount: g._count.id,
+    }));
+
+    res.json({ mostShortlisted, approvalRates, popularBrands });
+  } catch (err) {
+    logger.error('admin analytics error', { err });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── Analytics: Clients ──────────────────────────── */
+
+router.get('/analytics/clients', async (_req: AuthRequest, res: Response) => {
+  try {
+    // Projects per client
+    const clientProjectGroups = await prisma.project.groupBy({
+      by: ['clientId'],
+      _count: { id: true },
+      orderBy: { _count: { id: 'desc' } },
+      take: 20,
+    });
+
+    const clientIds = clientProjectGroups.map((g) => g.clientId);
+    const clients = clientIds.length > 0
+      ? await prisma.client.findMany({
+          where: { id: { in: clientIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const clientMap = Object.fromEntries(clients.map((c) => [c.id, c.name]));
+
+    const projectsPerClient = clientProjectGroups.map((g) => ({
+      clientId: g.clientId,
+      clientName: clientMap[g.clientId] ?? 'Unknown',
+      projectCount: g._count.id,
+    }));
+
+    // Top clients by order value
+    const ordersWithClients = await prisma.order.findMany({
+      where: { status: { in: ['paid', 'split_to_brands', 'closed'] } },
+      select: {
+        totalAmount: true,
+        project: { select: { clientId: true } },
+      },
+    });
+
+    const clientOrderMap: Record<string, { total: number; count: number }> = {};
+    for (const o of ordersWithClients) {
+      const cid = o.project.clientId;
+      if (!clientOrderMap[cid]) clientOrderMap[cid] = { total: 0, count: 0 };
+      clientOrderMap[cid].total += Number(o.totalAmount ?? 0);
+      clientOrderMap[cid].count += 1;
+    }
+
+    // Fetch names for order clients
+    const orderClientIds = Object.keys(clientOrderMap);
+    const orderClients = orderClientIds.length > 0
+      ? await prisma.client.findMany({
+          where: { id: { in: orderClientIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const orderClientMap = Object.fromEntries(orderClients.map((c) => [c.id, c.name]));
+
+    const topClients = Object.entries(clientOrderMap)
+      .map(([clientId, data]) => ({
+        clientId,
+        clientName: orderClientMap[clientId] ?? clientMap[clientId] ?? 'Unknown',
+        totalOrderValue: data.total,
+        orderCount: data.count,
+        avgOrderValue: data.count > 0 ? Math.round(data.total / data.count) : 0,
+      }))
+      .sort((a, b) => b.totalOrderValue - a.totalOrderValue)
+      .slice(0, 20);
+
+    const [totalClients, totalProjectsCount] = await Promise.all([
+      prisma.client.count(),
+      prisma.project.count(),
+    ]);
+
+    const allOrderValues = Object.values(clientOrderMap);
+    const totalOrderValue = allOrderValues.reduce((s, v) => s + v.total, 0);
+    const totalOrderCount = allOrderValues.reduce((s, v) => s + v.count, 0);
+
+    res.json({
+      projectsPerClient,
+      topClients,
+      overview: {
+        totalClients,
+        avgProjectsPerClient: totalClients > 0 ? Math.round((totalProjectsCount / totalClients) * 10) / 10 : 0,
+        avgOrderValue: totalOrderCount > 0 ? Math.round(totalOrderValue / totalOrderCount) : 0,
+      },
+    });
+  } catch (err) {
+    logger.error('admin analytics error', { err });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── Time Tracking ───────────────────────────────── */
+
+router.get('/time-tracking', async (req: AuthRequest, res: Response) => {
+  const { from, to, designerId } = req.query;
+
+  try {
+    const where: Record<string, unknown> = {};
+    if (from && typeof from === 'string') where.startedAt = { gte: new Date(from) };
+    if (to && typeof to === 'string') {
+      where.startedAt = { ...(where.startedAt as Record<string, unknown> || {}), lte: new Date(to) };
+    }
+    if (designerId && typeof designerId === 'string') where.designerId = designerId;
+
+    // Auto-close stale sessions (no ping for 5+ min, still open)
+    const staleThreshold = new Date(Date.now() - 5 * 60 * 1000);
+    await prisma.designerSession.updateMany({
+      where: { endedAt: null, lastPing: { lt: staleThreshold } },
+      data: { endedAt: staleThreshold },
+    });
+
+    // Compute durations for sessions missing them
+    const nodurations = await prisma.designerSession.findMany({
+      where: { endedAt: { not: null }, durationMs: null },
+      select: { id: true, startedAt: true, endedAt: true },
+    });
+    for (const s of nodurations) {
+      if (s.endedAt) {
+        await prisma.designerSession.update({
+          where: { id: s.id },
+          data: { durationMs: s.endedAt.getTime() - s.startedAt.getTime() },
+        });
+      }
+    }
+
+    const sessions = await prisma.designerSession.findMany({
+      where,
+      select: { designerId: true, durationMs: true, startedAt: true, endedAt: true, lastPing: true },
+    });
+
+    // Aggregate per designer
+    const designerAgg: Record<string, { totalMs: number; count: number; lastActive: Date }> = {};
+    for (const s of sessions) {
+      const dur = s.durationMs ?? (s.endedAt ? s.endedAt.getTime() - s.startedAt.getTime() : Date.now() - s.startedAt.getTime());
+      if (!designerAgg[s.designerId]) designerAgg[s.designerId] = { totalMs: 0, count: 0, lastActive: s.lastPing };
+      designerAgg[s.designerId].totalMs += dur;
+      designerAgg[s.designerId].count += 1;
+      if (s.lastPing > designerAgg[s.designerId].lastActive) {
+        designerAgg[s.designerId].lastActive = s.lastPing;
+      }
+    }
+
+    const dIds = Object.keys(designerAgg);
+    const dNames = dIds.length > 0
+      ? await prisma.designer.findMany({ where: { id: { in: dIds } }, select: { id: true, fullName: true } })
+      : [];
+    const dNameMap = Object.fromEntries(dNames.map((d) => [d.id, d.fullName]));
+
+    const designers = Object.entries(designerAgg)
+      .map(([did, data]) => ({
+        designerId: did,
+        designerName: dNameMap[did] ?? 'Unknown',
+        totalTimeMs: data.totalMs,
+        sessionCount: data.count,
+        avgSessionMs: data.count > 0 ? Math.round(data.totalMs / data.count) : 0,
+        lastActive: data.lastActive.toISOString(),
+      }))
+      .sort((a, b) => b.totalTimeMs - a.totalTimeMs);
+
+    const activeSessions = await prisma.designerSession.count({ where: { endedAt: null, lastPing: { gte: staleThreshold } } });
+
+    res.json({
+      designers,
+      activeSessions,
+      totalTimeAllMs: designers.reduce((s, d) => s + d.totalTimeMs, 0),
+    });
+  } catch (err) {
+    logger.error('admin time-tracking error', { err });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+router.get('/time-tracking/:designerId', async (req: AuthRequest, res: Response) => {
+  try {
+    const sessions = await prisma.designerSession.findMany({
+      where: { designerId: req.params.designerId },
+      orderBy: { startedAt: 'desc' },
+      take: 50,
+      select: { id: true, startedAt: true, endedAt: true, durationMs: true, lastPing: true },
+    });
+    res.json(sessions);
+  } catch (err) {
+    logger.error('admin time-tracking error', { err });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
 export default router;

@@ -64,15 +64,19 @@ model Designer {
   status       DesignerStatus @default(pending_review)
   isAdmin      Boolean        @default(false)
   isSuperAdmin Boolean        @default(false)
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  failedLoginAttempts Int            @default(0)
+  lockedUntil         DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
 
-  clients           Client[]
-  projects          Project[]
-  products          Product[]
-  shortlistItems    ShortlistItem[]
-  pinnedComparisons PinnedComparison[]
-  orders            Order[]
+  clients             Client[]
+  projects            Project[]
+  products            Product[]
+  shortlistItems      ShortlistItem[]
+  pinnedComparisons   PinnedComparison[]
+  orders              Order[]
+  sessions            DesignerSession[]
+  refreshTokens       RefreshToken[]
 }
 
 model Client {
@@ -317,6 +321,51 @@ model FurnitureCategory {
   sortOrder Int     @default(0)
   active    Boolean @default(true)
   createdAt DateTime @default(now())
+}
+
+model PlatformConfig {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  type      String   @default("string")
+  label     String
+  group     String   @default("general")
+  sortOrder Int      @default(0)
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+}
+
+model RefreshToken {
+  id          String   @id @default(uuid())
+  designerId  String
+  tokenHash   String   @unique
+  family      String
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime @default(now())
+  userAgent   String?
+  ipAddress   String?
+
+  designer Designer @relation(fields: [designerId], references: [id], onDelete: Cascade)
+
+  @@index([designerId])
+  @@index([family])
+  @@index([expiresAt])
+}
+
+model DesignerSession {
+  id         String    @id @default(uuid())
+  designerId String
+  startedAt  DateTime  @default(now())
+  endedAt    DateTime?
+  durationMs Int?
+  lastPing   DateTime  @default(now())
+  userAgent  String?
+
+  designer Designer @relation(fields: [designerId], references: [id])
+
+  @@index([designerId, startedAt])
+  @@index([designerId, lastPing])
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.

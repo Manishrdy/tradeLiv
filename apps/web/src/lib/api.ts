@@ -2,9 +2,41 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 type ApiResponse<T> = { data: T; error?: never } | { data?: never; error: string };
 
+/* ─── Token refresh logic ──────────────────────────── */
+
+let refreshPromise: Promise<boolean> | null = null;
+
+async function attemptTokenRefresh(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_URL}/api/auth/refresh`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Deduplicated refresh — if multiple 401s fire concurrently,
+ * only one refresh request is made.
+ */
+function refreshToken(): Promise<boolean> {
+  if (!refreshPromise) {
+    refreshPromise = attemptTokenRefresh().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
+/* ─── Core request wrapper with auto-refresh ───────── */
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
   try {
-    const res = await fetch(`${API_URL}${path}`, {
+    let res = await fetch(`${API_URL}${path}`, {
       ...options,
       credentials: 'include',
       headers: {
@@ -12,6 +44,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<ApiR
         ...options.headers,
       },
     });
+
+    // On 401 (expired access token), try to refresh and retry once
+    if (res.status === 401 && !path.includes('/api/auth/refresh') && !path.includes('/api/auth/login')) {
+      const refreshed = await refreshToken();
+      if (refreshed) {
+        res = await fetch(`${API_URL}${path}`, {
+          ...options,
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...options.headers,
+          },
+        });
+      }
+    }
 
     let body: Record<string, unknown> = {};
     const contentType = res.headers.get('content-type') ?? '';
@@ -788,6 +835,75 @@ export interface AdminDesignerDetail extends AdminDesigner {
   }[];
 }
 
+/* ─── Platform Health types ────────────────────────── */
+
+export interface PlatformHealth {
+  db: { connected: boolean; latencyMs: number };
+  api: { uptimeSeconds: number; memoryMB: number };
+  activeUsers: { last15min: number; last24h: number };
+  errors: { last1h: number; last24h: number };
+  counts: { designers: number; projects: number; orders: number; products: number };
+}
+
+/* ─── Platform Config types ────────────────────────── */
+
+export interface PlatformConfigEntry {
+  id: string;
+  key: string;
+  value: string;
+  type: string;
+  label: string;
+  group: string;
+  sortOrder: number;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
+/* ─── Analytics types ──────────────────────────────── */
+
+export interface RevenueAnalytics {
+  trends: { period: string; revenue: number; orderCount: number }[];
+  designerRevenue: { designerId: string; designerName: string; revenue: number; orderCount: number }[];
+  totals: { totalRevenue: number; avgOrderValue: number; totalOrders: number };
+}
+
+export interface ProductAnalytics {
+  mostShortlisted: { productId: string; productName: string; brandName: string | null; count: number }[];
+  approvalRates: { status: string; count: number; percentage: number }[];
+  popularBrands: { brandName: string; productCount: number }[];
+}
+
+export interface ClientAnalytics {
+  projectsPerClient: { clientId: string; clientName: string; projectCount: number }[];
+  topClients: { clientId: string; clientName: string; totalOrderValue: number; orderCount: number; avgOrderValue: number }[];
+  overview: { totalClients: number; avgProjectsPerClient: number; avgOrderValue: number };
+}
+
+/* ─── Time Tracking types ──────────────────────────── */
+
+export interface DesignerTimeEntry {
+  designerId: string;
+  designerName: string;
+  totalTimeMs: number;
+  sessionCount: number;
+  avgSessionMs: number;
+  lastActive: string;
+}
+
+export interface TimeTrackingSummary {
+  designers: DesignerTimeEntry[];
+  activeSessions: number;
+  totalTimeAllMs: number;
+}
+
+export interface DesignerSessionDetail {
+  id: string;
+  startedAt: string;
+  endedAt: string | null;
+  durationMs: number | null;
+  lastPing: string;
+}
+
 /* ─── API methods ───────────────────────────────────── */
 
 export const api = {
@@ -803,6 +919,12 @@ export const api = {
 
   logout: () =>
     request<{ message: string }>('/api/auth/logout', { method: 'POST' }),
+
+  logoutAll: () =>
+    request<{ message: string }>('/api/auth/logout-all', { method: 'POST' }),
+
+  changePassword: (payload: { currentPassword: string; newPassword: string }) =>
+    request<{ message: string }>('/api/auth/change-password', { method: 'PUT', body: JSON.stringify(payload) }),
 
   getMe: () =>
     request<DesignerProfile>('/api/auth/me'),
@@ -1143,4 +1265,55 @@ export const api = {
   // Admin enhanced stats
   getAdminEnhancedStats: () =>
     request<AdminEnhancedStats>('/api/admin/enhanced-stats'),
+
+  // Admin health
+  getAdminHealth: () =>
+    request<PlatformHealth>('/api/admin/health'),
+
+  // Admin config
+  getAdminConfig: () =>
+    request<PlatformConfigEntry[]>('/api/admin/config'),
+
+  updateAdminConfig: (key: string, value: string) =>
+    request<PlatformConfigEntry>(`/api/admin/config/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
+
+  createAdminConfig: (payload: { key: string; value: string; type: string; label: string; group: string; sortOrder?: number }) =>
+    request<PlatformConfigEntry>('/api/admin/config', { method: 'POST', body: JSON.stringify(payload) }),
+
+  // Admin analytics
+  getAdminRevenueAnalytics: (params?: { months?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.months) qs.set('months', String(params.months));
+    const q = qs.toString();
+    return request<RevenueAnalytics>(`/api/admin/analytics/revenue${q ? `?${q}` : ''}`);
+  },
+
+  getAdminProductAnalytics: () =>
+    request<ProductAnalytics>('/api/admin/analytics/products'),
+
+  getAdminClientAnalytics: () =>
+    request<ClientAnalytics>('/api/admin/analytics/clients'),
+
+  // Admin time tracking
+  getAdminTimeTracking: (params?: { designerId?: string; from?: string; to?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.designerId) qs.set('designerId', params.designerId);
+    if (params?.from) qs.set('from', params.from);
+    if (params?.to) qs.set('to', params.to);
+    const q = qs.toString();
+    return request<TimeTrackingSummary>(`/api/admin/time-tracking${q ? `?${q}` : ''}`);
+  },
+
+  getAdminDesignerSessions: (designerId: string) =>
+    request<DesignerSessionDetail[]>(`/api/admin/time-tracking/${designerId}`),
+
+  // Session tracking (designer-facing)
+  startSession: () =>
+    request<{ sessionId: string }>('/api/sessions/start', { method: 'POST' }),
+
+  heartbeatSession: (sessionId: string) =>
+    request<{ ok: boolean }>(`/api/sessions/${sessionId}/heartbeat`, { method: 'PUT' }),
+
+  endSession: (sessionId: string) =>
+    request<{ ok: boolean }>(`/api/sessions/${sessionId}/end`, { method: 'PUT' }),
 };

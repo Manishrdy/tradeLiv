@@ -247,6 +247,32 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
   // Close mobile sidebar on route change
   useEffect(() => { setMobileOpen(false); setCmdkOpen(false); }, [pathname]);
 
+  // Session tracking — heartbeat every 60s
+  useEffect(() => {
+    let sessionId: string | null = null;
+    let heartbeatInterval: NodeJS.Timeout | null = null;
+
+    api.startSession().then((r) => {
+      if (r.data) {
+        sessionId = r.data.sessionId;
+        heartbeatInterval = setInterval(() => {
+          if (sessionId) api.heartbeatSession(sessionId);
+        }, 60000);
+      }
+    });
+
+    const endSession = () => {
+      if (sessionId) api.endSession(sessionId);
+    };
+    window.addEventListener('beforeunload', endSession);
+
+    return () => {
+      window.removeEventListener('beforeunload', endSession);
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+      endSession();
+    };
+  }, []);
+
   // Offline detection (#100)
   useEffect(() => {
     const goOffline = () => setIsOffline(true);
