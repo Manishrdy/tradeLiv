@@ -68,6 +68,16 @@ export interface ExtractedProductData {
     unit?: 'in' | 'cm' | 'ft';
     raw?: string;
   };
+  secondaryDimensions?: {
+    seatHeight?: number;
+    seatDepth?: number;
+    seatWidth?: number;
+    armHeight?: number;
+    clearance?: number;
+    diameter?: number;
+    unit?: 'in' | 'cm' | 'ft';
+    [key: string]: number | string | undefined;
+  };
   promotions?: string[];
   shipping?: string;
   availability?: string;
@@ -103,11 +113,20 @@ export interface ExtractedProductData {
   };
 }
 
+export interface ExtractionMeta {
+  method: 'direct' | 'browser' | 'search';
+  completenessScore: number;
+  shopifyOverlay: boolean;    // true if Shopify structured data was used
+  browserReExtracted: boolean; // true if browser re-extraction improved result
+  missingFields: string[];     // fields that couldn't be extracted
+}
+
 export interface ExtractionResult {
   type: 'single' | 'multiple';
   product?: ExtractedProductData;
   products?: ExtractedProductData[];
   totalFound?: number;
+  extractionMeta?: ExtractionMeta;
 }
 
 /* ─── Extraction cache (10 min TTL) ─────────────────── */
@@ -179,47 +198,104 @@ function pLimit(concurrency: number) {
 
 export const batchLimiter = pLimit(2);
 
-/* ─── Category keyword matcher ──────────────────────── */
+/* ─── Canonical category taxonomy ──────────────────── */
 
-const CATEGORY_KEYWORDS: Record<string, string[]> = {
-  Sofa: ['sofa', 'couch', 'sectional', 'loveseat', 'settee', 'sleeper sofa', 'futon'],
-  'Dining Table': ['dining table', 'dining set', 'dinner table', 'kitchen table'],
-  Bed: ['bed', 'bedframe', 'bed frame', 'headboard', 'platform bed', 'canopy bed', 'bunk bed'],
-  Desk: ['desk', 'writing desk', 'standing desk', 'computer desk', 'work table'],
-  Storage: ['storage', 'cabinet', 'credenza', 'sideboard', 'buffet', 'hutch', 'shelf unit'],
-  Lighting: ['lamp', 'chandelier', 'pendant', 'sconce', 'floor lamp', 'table lamp', 'light fixture'],
-  Armchair: ['armchair', 'arm chair', 'accent chair', 'lounge chair', 'club chair', 'wingback'],
-  'Side Table': ['side table', 'end table', 'accent table', 'occasional table'],
-  Bookshelf: ['bookshelf', 'bookcase', 'book shelf', 'book case', 'étagère', 'etagere'],
-  Mirror: ['mirror', 'wall mirror', 'floor mirror', 'vanity mirror'],
-  Rug: ['rug', 'carpet', 'area rug', 'runner'],
-  Wardrobe: ['wardrobe', 'armoire', 'closet'],
-  'TV Unit': ['tv unit', 'tv stand', 'media console', 'entertainment center', 'tv cabinet'],
-  'Coffee Table': ['coffee table', 'cocktail table'],
-  'Console Table': ['console table', 'entry table', 'entryway table', 'hall table', 'sofa table'],
-  'Bar Stool': ['bar stool', 'barstool', 'counter stool', 'bar chair'],
-  Ottoman: ['ottoman', 'pouf', 'pouffe', 'footstool', 'footrest'],
-  Bench: ['bench', 'entryway bench', 'storage bench', 'dining bench'],
-  Dresser: ['dresser', 'chest of drawers', 'tallboy'],
-  Nightstand: ['nightstand', 'night stand', 'bedside table', 'night table'],
-  Chair: ['chair', 'dining chair', 'side chair', 'folding chair', 'stacking chair'],
-  Table: ['table'],
-  Outdoor: ['outdoor', 'patio', 'garden furniture', 'adirondack'],
-  Accessories: ['accessory', 'vase', 'throw', 'pillow', 'blanket', 'planter', 'basket'],
-};
+// Hierarchical taxonomy: parent > child.
+// Each leaf maps keywords used for inference AND normalization of LLM output.
+const CATEGORY_TAXONOMY: Array<{
+  canonical: string;       // "Living Room > Sofas"
+  leaf: string;            // "Sofas" — used for flat display when parent is unknown
+  keywords: string[];      // Match against, sorted longest-first internally
+}> = [
+  // Living Room
+  { canonical: 'Living Room > Sofas', leaf: 'Sofas', keywords: ['sofa', 'couch', 'sectional', 'loveseat', 'settee', 'sleeper sofa', 'futon'] },
+  { canonical: 'Living Room > Armchairs', leaf: 'Armchairs', keywords: ['armchair', 'arm chair', 'accent chair', 'lounge chair', 'club chair', 'wingback'] },
+  { canonical: 'Living Room > Coffee Tables', leaf: 'Coffee Tables', keywords: ['coffee table', 'cocktail table'] },
+  { canonical: 'Living Room > Side Tables', leaf: 'Side Tables', keywords: ['side table', 'end table', 'accent table', 'occasional table'] },
+  { canonical: 'Living Room > Console Tables', leaf: 'Console Tables', keywords: ['console table', 'entry table', 'entryway table', 'hall table', 'sofa table'] },
+  { canonical: 'Living Room > TV Units', leaf: 'TV Units', keywords: ['tv unit', 'tv stand', 'media console', 'entertainment center', 'tv cabinet'] },
+  { canonical: 'Living Room > Ottomans', leaf: 'Ottomans', keywords: ['ottoman', 'pouf', 'pouffe', 'footstool', 'footrest'] },
+  // Dining
+  { canonical: 'Dining > Dining Tables', leaf: 'Dining Tables', keywords: ['dining table', 'dining set', 'dinner table', 'kitchen table'] },
+  { canonical: 'Dining > Dining Chairs', leaf: 'Dining Chairs', keywords: ['dining chair', 'side chair'] },
+  { canonical: 'Dining > Bar Stools', leaf: 'Bar Stools', keywords: ['bar stool', 'barstool', 'counter stool', 'bar chair'] },
+  { canonical: 'Dining > Benches', leaf: 'Benches', keywords: ['dining bench', 'bench'] },
+  { canonical: 'Dining > Buffets & Sideboards', leaf: 'Buffets & Sideboards', keywords: ['credenza', 'sideboard', 'buffet', 'hutch'] },
+  // Bedroom
+  { canonical: 'Bedroom > Beds', leaf: 'Beds', keywords: ['bed', 'bedframe', 'bed frame', 'headboard', 'platform bed', 'canopy bed', 'bunk bed'] },
+  { canonical: 'Bedroom > Nightstands', leaf: 'Nightstands', keywords: ['nightstand', 'night stand', 'bedside table', 'night table'] },
+  { canonical: 'Bedroom > Dressers', leaf: 'Dressers', keywords: ['dresser', 'chest of drawers', 'tallboy'] },
+  { canonical: 'Bedroom > Wardrobes', leaf: 'Wardrobes', keywords: ['wardrobe', 'armoire', 'closet'] },
+  // Office
+  { canonical: 'Office > Desks', leaf: 'Desks', keywords: ['desk', 'writing desk', 'standing desk', 'computer desk', 'work table'] },
+  { canonical: 'Office > Office Chairs', leaf: 'Office Chairs', keywords: ['office chair', 'task chair', 'desk chair', 'executive chair'] },
+  // Storage
+  { canonical: 'Storage > Shelving', leaf: 'Shelving', keywords: ['bookshelf', 'bookcase', 'book shelf', 'book case', 'étagère', 'etagere', 'shelf unit'] },
+  { canonical: 'Storage > Cabinets', leaf: 'Cabinets', keywords: ['storage', 'cabinet', 'storage cabinet'] },
+  // Lighting
+  { canonical: 'Lighting > Table Lamps', leaf: 'Table Lamps', keywords: ['table lamp', 'desk lamp'] },
+  { canonical: 'Lighting > Floor Lamps', leaf: 'Floor Lamps', keywords: ['floor lamp', 'standing lamp'] },
+  { canonical: 'Lighting > Chandeliers', leaf: 'Chandeliers', keywords: ['chandelier'] },
+  { canonical: 'Lighting > Pendants', leaf: 'Pendants', keywords: ['pendant', 'pendant light'] },
+  { canonical: 'Lighting > Sconces', leaf: 'Sconces', keywords: ['sconce', 'wall sconce', 'wall lamp'] },
+  { canonical: 'Lighting > Lighting', leaf: 'Lighting', keywords: ['lamp', 'light fixture'] },
+  // Decor & Accessories
+  { canonical: 'Decor > Mirrors', leaf: 'Mirrors', keywords: ['mirror', 'wall mirror', 'floor mirror', 'vanity mirror'] },
+  { canonical: 'Decor > Rugs', leaf: 'Rugs', keywords: ['rug', 'carpet', 'area rug', 'runner'] },
+  { canonical: 'Decor > Accessories', leaf: 'Accessories', keywords: ['accessory', 'vase', 'throw', 'pillow', 'blanket', 'planter', 'basket'] },
+  // Outdoor
+  { canonical: 'Outdoor > Outdoor Furniture', leaf: 'Outdoor Furniture', keywords: ['outdoor', 'patio', 'garden furniture', 'adirondack'] },
+  // Generic fallbacks (must be LAST — short keywords match broadly)
+  { canonical: 'Chairs', leaf: 'Chairs', keywords: ['chair', 'folding chair', 'stacking chair'] },
+  { canonical: 'Tables', leaf: 'Tables', keywords: ['table'] },
+];
+
+// Build a flat lookup sorted by keyword length descending for inference
+const _sortedTaxonomyEntries = CATEGORY_TAXONOMY.flatMap(entry =>
+  entry.keywords.map(kw => ({ keyword: kw, canonical: entry.canonical, leaf: entry.leaf }))
+).sort((a, b) => b.keyword.length - a.keyword.length);
 
 function inferCategoryFromText(text: string): string | null {
   const lower = text.toLowerCase();
-  // Check more specific (multi-word) categories first by sorting by keyword length desc
-  const entries = Object.entries(CATEGORY_KEYWORDS).sort(
-    (a, b) => Math.max(...b[1].map((k) => k.length)) - Math.max(...a[1].map((k) => k.length)),
-  );
-  for (const [category, keywords] of entries) {
-    for (const kw of keywords) {
-      if (lower.includes(kw)) return category;
-    }
+  for (const { keyword, canonical } of _sortedTaxonomyEntries) {
+    if (lower.includes(keyword)) return canonical;
   }
   return null;
+}
+
+// Normalize a free-text category (from LLM) to canonical taxonomy.
+// If the LLM already returned a hierarchical format like "Bedroom > Beds", validate it.
+// Otherwise, match against keywords to find the canonical form.
+function normalizeCategoryToTaxonomy(raw: string): string {
+  const trimmed = raw.trim();
+
+  // If it already matches a canonical form exactly, keep it
+  if (CATEGORY_TAXONOMY.some(e => e.canonical === trimmed)) return trimmed;
+
+  // If it's hierarchical (contains ">"), check if the leaf matches
+  if (trimmed.includes('>')) {
+    const leaf = trimmed.split('>').pop()?.trim().toLowerCase() ?? '';
+    for (const entry of CATEGORY_TAXONOMY) {
+      if (entry.leaf.toLowerCase() === leaf || entry.canonical.toLowerCase() === trimmed.toLowerCase()) {
+        return entry.canonical;
+      }
+    }
+    // Hierarchical but not in taxonomy — try matching the leaf against keywords
+    for (const { keyword, canonical } of _sortedTaxonomyEntries) {
+      if (leaf.includes(keyword)) return canonical;
+    }
+    // Unknown hierarchy — keep as-is (the LLM might know something we don't)
+    return trimmed;
+  }
+
+  // Flat category — match against keywords
+  const lower = trimmed.toLowerCase();
+  for (const { keyword, canonical } of _sortedTaxonomyEntries) {
+    if (lower.includes(keyword)) return canonical;
+  }
+
+  // No match — return as-is
+  return trimmed;
 }
 
 /* ─── System prompt ──────────────────────────────────── */
@@ -1202,6 +1278,198 @@ function applyShopifyOverlay(product: ExtractedProductData, shopify: ShopifyStru
   }
 }
 
+/* ─── Extraction completeness scoring ─────────────────── */
+
+interface CompletenessResult {
+  score: number;          // 0-100
+  missingCritical: string[];  // Fields worth retrying for
+}
+
+function computeCompleteness(product: ExtractedProductData | undefined): CompletenessResult {
+  if (!product) return { score: 0, missingCritical: ['product'] };
+
+  const missing: string[] = [];
+  let score = 0;
+  const total = 100;
+
+  // Required (30 pts)
+  if (product.productName && product.productName !== 'Unknown Product') score += 10;
+  else missing.push('productName');
+  if (product.category) score += 10;
+  else missing.push('category');
+  if (product.currency) score += 10;
+
+  // Critical (40 pts) — these are worth retrying for
+  if (product.activeVariant?.price != null && Number(product.activeVariant.price) > 0) score += 10;
+  else missing.push('pricing');
+  if (product.images?.primary) score += 5;
+  else missing.push('images');
+  if (hasPrimaryDimensions(product.dimensions)) score += 10;
+  else missing.push('dimensions');
+  if (product.materials && Object.keys(product.materials).length > 0) score += 5;
+  else missing.push('materials');
+  if (product.availableOptions && product.availableOptions.length > 0) score += 5;
+  if (product.features && product.features.length > 0) score += 5;
+  else missing.push('features');
+
+  // Optional (30 pts)
+  if (product.brandName) score += 5;
+  if (product.shipping) score += 5;
+  if (product.availability) score += 5;
+  if (product.metadata?.description) score += 5;
+  if (product.pricing && product.pricing.length > 1) score += 5;
+  if (product.promotions && product.promotions.length > 0) score += 5;
+
+  return { score: Math.min(score, total), missingCritical: missing };
+}
+
+/* ─── Product image gallery extraction from HTML ─────── */
+
+function extractProductGalleryImages(html: string): string[] {
+  const urls = new Set<string>();
+
+  // 1. data-zoom-image, data-large, data-src on product images
+  const dataImgRegex = /(?:data-zoom-image|data-large|data-full|data-srcset|data-src)\s*=\s*["']([^"']+)["']/gi;
+  let match: RegExpExecArray | null;
+  while ((match = dataImgRegex.exec(html)) !== null) {
+    const url = match[1].split(',')[0].trim().split(/\s+/)[0]; // handle srcset format
+    if (url.startsWith('http') && /\.(jpg|jpeg|png|webp|avif)/i.test(url)) {
+      urls.add(url);
+    }
+  }
+
+  // 2. Images inside product gallery/carousel containers
+  const galleryContainerRegex =
+    /<(?:div|ul|section)[^>]*(?:class|id|data-[\w-]*)=["'][^"']*(?:product-gallery|product-images|product-photos|product-media|gallery|carousel|slider|swiper|pdp-image|product-image-container)[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|ul|section)>/gi;
+  while ((match = galleryContainerRegex.exec(html)) !== null) {
+    const containerHtml = match[1];
+    const imgRegex = /(?:src|data-src|data-lazy-src)\s*=\s*["']([^"']+)["']/gi;
+    let imgMatch: RegExpExecArray | null;
+    while ((imgMatch = imgRegex.exec(containerHtml)) !== null) {
+      const imgUrl = imgMatch[1].trim();
+      if (imgUrl.startsWith('http') && /\.(jpg|jpeg|png|webp|avif)/i.test(imgUrl)) {
+        urls.add(imgUrl);
+      }
+    }
+  }
+
+  // 3. srcset on <source> or <img> tags within <picture> elements
+  const pictureRegex = /<picture[^>]*>([\s\S]*?)<\/picture>/gi;
+  while ((match = pictureRegex.exec(html)) !== null) {
+    const srcsetRegex = /srcset\s*=\s*["']([^"']+)["']/gi;
+    let srcMatch: RegExpExecArray | null;
+    while ((srcMatch = srcsetRegex.exec(match[1])) !== null) {
+      // srcset: "url 800w, url 1200w" — take the largest
+      const entries = srcMatch[1].split(',').map(s => s.trim().split(/\s+/)[0]);
+      for (const entry of entries) {
+        if (entry.startsWith('http') && /\.(jpg|jpeg|png|webp|avif)/i.test(entry)) {
+          urls.add(entry);
+        }
+      }
+    }
+  }
+
+  // Deduplicate and limit
+  return Array.from(urls).slice(0, 20);
+}
+
+/* ─── Post-extraction validation ─────────────────────── */
+// Category-aware sanity checks for dimensions and prices.
+// Invalid values are nullified rather than kept, since bad data is worse than no data.
+
+interface DimensionRange { min: number; max: number }
+interface CategoryValidation {
+  // Dimension ranges in inches
+  width?: DimensionRange;
+  height?: DimensionRange;
+  depth?: DimensionRange;
+  priceRange?: DimensionRange;  // min/max USD price
+}
+
+const CATEGORY_VALIDATION: Record<string, CategoryValidation> = {
+  Sofas:          { width: { min: 50, max: 150 }, height: { min: 25, max: 48 }, depth: { min: 25, max: 55 }, priceRange: { min: 200, max: 30000 } },
+  Armchairs:      { width: { min: 20, max: 50 },  height: { min: 25, max: 48 }, depth: { min: 20, max: 45 }, priceRange: { min: 100, max: 15000 } },
+  Beds:           { width: { min: 38, max: 90 },  height: { min: 10, max: 70 }, depth: { min: 74, max: 90 }, priceRange: { min: 100, max: 20000 } },
+  'Dining Tables': { width: { min: 24, max: 180 }, height: { min: 26, max: 36 }, depth: { min: 20, max: 60 }, priceRange: { min: 100, max: 25000 } },
+  'Coffee Tables': { width: { min: 24, max: 72 },  height: { min: 12, max: 24 }, depth: { min: 14, max: 42 }, priceRange: { min: 50, max: 10000 } },
+  Desks:          { width: { min: 30, max: 84 },  height: { min: 26, max: 52 }, depth: { min: 16, max: 40 }, priceRange: { min: 50, max: 10000 } },
+  'Dining Chairs': { width: { min: 14, max: 28 },  height: { min: 28, max: 48 }, depth: { min: 16, max: 28 }, priceRange: { min: 30, max: 5000 } },
+  'Bar Stools':   { width: { min: 14, max: 24 },  height: { min: 24, max: 48 }, depth: { min: 14, max: 24 }, priceRange: { min: 30, max: 3000 } },
+  Nightstands:    { width: { min: 14, max: 34 },  height: { min: 18, max: 36 }, depth: { min: 12, max: 26 }, priceRange: { min: 30, max: 5000 } },
+  Dressers:       { width: { min: 30, max: 80 },  height: { min: 28, max: 48 }, depth: { min: 14, max: 26 }, priceRange: { min: 100, max: 10000 } },
+  Shelving:       { width: { min: 16, max: 80 },  height: { min: 24, max: 96 }, depth: { min: 8, max: 24 },  priceRange: { min: 30, max: 8000 } },
+};
+
+function validateExtraction(product: ExtractedProductData): void {
+  if (!product.category) return;
+
+  // Extract the leaf category for matching
+  const leaf = product.category.includes('>')
+    ? product.category.split('>').pop()?.trim() ?? ''
+    : product.category.trim();
+
+  const rules = CATEGORY_VALIDATION[leaf];
+  if (!rules) return; // No validation rules for this category
+
+  // Validate dimensions
+  if (product.dimensions) {
+    const dims = product.dimensions;
+    const unit = dims.unit ?? 'in';
+
+    // Convert to inches for comparison
+    const toInches = (val: number): number => {
+      if (unit === 'cm') return val / 2.54;
+      if (unit === 'ft') return val * 12;
+      return val;
+    };
+
+    let invalidated = false;
+
+    if (dims.width != null && rules.width) {
+      const inchesVal = toInches(dims.width);
+      if (inchesVal < rules.width.min * 0.5 || inchesVal > rules.width.max * 2) {
+        logger.warn('Dimension validation: width out of range', {
+          category: leaf, width: dims.width, unit, expected: rules.width,
+        });
+        invalidated = true;
+      }
+    }
+    if (dims.height != null && rules.height) {
+      const inchesVal = toInches(dims.height);
+      if (inchesVal < rules.height.min * 0.5 || inchesVal > rules.height.max * 2) {
+        logger.warn('Dimension validation: height out of range', {
+          category: leaf, height: dims.height, unit, expected: rules.height,
+        });
+        invalidated = true;
+      }
+    }
+    if (dims.depth != null && rules.depth) {
+      const inchesVal = toInches(dims.depth);
+      if (inchesVal < rules.depth.min * 0.5 || inchesVal > rules.depth.max * 2) {
+        logger.warn('Dimension validation: depth out of range', {
+          category: leaf, depth: dims.depth, unit, expected: rules.depth,
+        });
+        invalidated = true;
+      }
+    }
+
+    // If dimensions are wildly out of range (using 0.5x / 2x tolerance), nullify them
+    if (invalidated) {
+      product.dimensions = { raw: dims.raw, unit: dims.unit };
+    }
+  }
+
+  // Validate price (warn only, don't nullify — prices vary too much)
+  if (rules.priceRange && product.activeVariant?.price != null) {
+    const price = Number(product.activeVariant.price);
+    if (price > 0 && (price < rules.priceRange.min * 0.1 || price > rules.priceRange.max * 5)) {
+      logger.warn('Price validation: price out of expected range', {
+        category: leaf, price, expected: rules.priceRange,
+      });
+    }
+  }
+}
+
 function extractSignals(html: string, url: string): string {
   const lines: string[] = [`url: ${url}`];
 
@@ -1256,13 +1524,15 @@ function extractSignals(html: string, url: string): string {
       if (Array.isArray(g)) graphNodes.push(...g);
     }
 
-    // Product node
+    // Product node — send as structured JSON to preserve hierarchy
     if (!foundProduct) {
       const product = findJsonLdNode(parsed, ['Product', 'ProductGroup']);
       if (product) {
         foundProduct = true;
         const { price, currency } = resolveOfferPrice(product.offers, graphNodes);
-        const slim: Record<string, unknown> = {
+
+        // Build rich structured object instead of flat key-value
+        const structured: Record<string, unknown> = {
           name: product.name,
           image: resolveImage(product.image),
           price,
@@ -1279,8 +1549,33 @@ function extractSignals(html: string, url: string): string {
           description:
             typeof product.description === 'string' ? product.description.slice(0, 500) : undefined,
         };
-        Object.keys(slim).forEach((k) => slim[k] === undefined && delete slim[k]);
-        lines.push(`json_ld_product: ${JSON.stringify(slim)}`);
+
+        // Preserve full offers array for variant pricing
+        if (product.offers) {
+          const offers = Array.isArray(product.offers) ? product.offers : [product.offers];
+          const offerData = offers.slice(0, 50).map((o: any) => ({
+            price: o.price ?? o.lowPrice,
+            priceCurrency: o.priceCurrency,
+            availability: o.availability,
+            sku: o.sku,
+            name: o.name,
+            url: o.url,
+          })).filter((o: any) => o.price != null);
+          if (offerData.length > 0) structured.offers = offerData;
+        }
+
+        // Preserve image array for gallery
+        if (product.image) {
+          const images = Array.isArray(product.image) ? product.image : [product.image];
+          const imageUrls = images
+            .map((img: any) => typeof img === 'string' ? img : (img?.contentUrl ?? img?.url ?? img?.['@id']))
+            .filter((u: any) => typeof u === 'string' && u.startsWith('http'))
+            .slice(0, 20);
+          if (imageUrls.length > 1) structured.gallery = imageUrls;
+        }
+
+        Object.keys(structured).forEach((k) => structured[k] === undefined && delete structured[k]);
+        lines.push(`json_ld_product: ${JSON.stringify(structured)}`);
       }
     }
 
@@ -1345,6 +1640,12 @@ function extractSignals(html: string, url: string): string {
 
   const dataCurrency = html.match(/\bdata-currency=["']([A-Z]{3})["']/i);
   if (dataCurrency) lines.push(`data_currency: ${dataCurrency[1].toUpperCase()}`);
+
+  // ── Product image gallery extraction ────────────────
+  const galleryImages = extractProductGalleryImages(html);
+  if (galleryImages.length > 0) {
+    lines.push(`product_gallery_images: ${JSON.stringify(galleryImages)}`);
+  }
 
   // Extract likely specs once and reuse for regex scanning + context lines.
   const specSections = extractSpecSections(html);
@@ -1433,7 +1734,24 @@ function parseDimensionsFromText(text: string): ExtractedProductData['dimensions
     });
   }
 
-  // Pattern 3: Overall/Dimensions: n x n x n (with unit after)
+  // Pattern 3: Individual labeled lines — Width: n", Depth: n", Height: n"
+  // PROMOTED: These are the most reliable after explicit W/D/H labels because each
+  // axis is unambiguously named, unlike positional triples that guess W/D/H from order.
+  const wMatch = t.match(/\bwidth\s*[:=]\s*(\d+(?:\.\d+)?)\s*["″]?/i);
+  const dMatch = t.match(/\bdepth\s*[:=]\s*(\d+(?:\.\d+)?)\s*["″]?/i);
+  const hMatch = t.match(/\bheight\s*[:=]\s*(\d+(?:\.\d+)?)\s*["″]?/i);
+  if (wMatch && hMatch) {
+    const dims: ExtractedProductData['dimensions'] = {
+      width: Number(wMatch[1]),
+      height: Number(hMatch[1]),
+      unit: 'in',
+      raw: [wMatch[0], dMatch?.[0], hMatch[0]].filter(Boolean).join(', '),
+    };
+    if (dMatch) dims.depth = Number(dMatch[1]);
+    return finalize(dims);
+  }
+
+  // Pattern 4: Overall/Dimensions: n x n x n (with unit after)
   // e.g. "Dimensions: 90 x 100 x 42 in" or "Overall: 90 x 100 x 42 inches"
   const overallTriple =
     /(?:overall|dimensions?)\s*[:.]?\s*(\d+(?:\.\d+)?)\s*["″]?\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]?\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]?\s*(?:in(?:ches)?|cm|ft)?/i;
@@ -1449,7 +1767,7 @@ function parseDimensionsFromText(text: string): ExtractedProductData['dimensions
     });
   }
 
-  // Pattern 4: Plain n" x n" x n" (3 numbers with quotes separated by x)
+  // Pattern 5: Plain n" x n" x n" (3 numbers with quotes separated by x)
   // e.g. 90" x 100" x 42"
   const plainQuoteTriple =
     /(\d+(?:\.\d+)?)\s*["″]\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]\s*[x×X]\s*(\d+(?:\.\d+)?)\s*["″]/;
@@ -1461,7 +1779,7 @@ function parseDimensionsFromText(text: string): ExtractedProductData['dimensions
     });
   }
 
-  // Pattern 5: Plain n x n x n followed by unit (no quotes)
+  // Pattern 6: Plain n x n x n followed by unit (no quotes)
   // e.g. 90 x 100 x 42 in   or   90 x 100 x 42 inches
   // Require unit to avoid false positives on random "a x b x c" text
   const plainTripleWithUnit =
@@ -1476,22 +1794,6 @@ function parseDimensionsFromText(text: string): ExtractedProductData['dimensions
       width: Number(m[1]), depth: Number(m[2]), height: Number(m[3]),
       unit, raw: m[0].trim(),
     });
-  }
-
-  // Pattern 6: Individual labeled lines — Width: n", Depth: n", Height: n"
-  // Use word boundaries (\b) to avoid "h" in "Width" matching the height pattern
-  const wMatch = t.match(/\bwidth\s*[:=]\s*(\d+(?:\.\d+)?)\s*["″]?/i);
-  const dMatch = t.match(/\bdepth\s*[:=]\s*(\d+(?:\.\d+)?)\s*["″]?/i);
-  const hMatch = t.match(/\bheight\s*[:=]\s*(\d+(?:\.\d+)?)\s*["″]?/i);
-  if (wMatch && hMatch) {
-    const dims: ExtractedProductData['dimensions'] = {
-      width: Number(wMatch[1]),
-      height: Number(hMatch[1]),
-      unit: 'in',
-      raw: [wMatch[0], dMatch?.[0], hMatch[0]].filter(Boolean).join(', '),
-    };
-    if (dMatch) dims.depth = Number(dMatch[1]);
-    return finalize(dims);
   }
 
   // Pattern 7: Handle mixed fractions in labeled forms, e.g. 68-1/2" W x 85" D x 54" H
@@ -1647,9 +1949,18 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
             }
           }
 
-          // If still missing, try headless browser to get JS-rendered content
-          if (!hasDims) {
-            logger.info('Dimensions missing — attempting headless browser fetch', { url: sourceUrl });
+          // Completeness check — trigger browser fallback for incomplete extractions,
+          // not just missing dimensions
+          const completeness = computeCompleteness(product);
+          const needsBrowserFallback = !hasDims || completeness.score < 50;
+
+          if (needsBrowserFallback) {
+            logger.info('Extraction incomplete — attempting headless browser fetch', {
+              url: sourceUrl,
+              completenessScore: completeness.score,
+              missingCritical: completeness.missingCritical,
+              hasDims,
+            });
             const rendered = await fetchRenderedContent(sourceUrl);
             if (rendered) {
               logger.info('Browser-rendered content extracted', {
@@ -1660,22 +1971,67 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
                 fullBodyTextLen: rendered.fullBodyText.length,
               });
 
-              // Try parsing dimensions from the targeted dimension text first, then product text, then full body
-              const textsToTry = [rendered.dimensionText, rendered.productText, rendered.fullBodyText].filter(Boolean);
-              for (const text of textsToTry) {
-                const browserDims = parseDimensionsFromText(text);
-                if (browserDims) {
-                  if (result.type === 'single' && result.product) {
-                    result.product.dimensions = browserDims;
-                  } else if (result.type === 'multiple' && result.products?.[0]) {
-                    result.products[0].dimensions = browserDims;
-                  }
-                  hasDims = true;
-                  logger.info('Dimensions recovered via headless browser', {
-                    url: sourceUrl,
-                    dims: browserDims,
+              // If score is very low, re-extract the full product from browser content
+              if (completeness.score < 50 && rendered.productText.length > 200) {
+                try {
+                  const reExtractResponse = await getClient().messages.create({
+                    model: MODEL_FAST,
+                    max_tokens: 2048,
+                    system: SYSTEM_PROMPT,
+                    messages: [{
+                      role: 'user',
+                      content: `Extract product data from this page content rendered by a headless browser.\n\nPRICE: Look for price patterns like "$1,234" or "Price: 1234".\n\nDIMENSIONS (HIGHEST PRIORITY):\nDimension-specific text found on the page:\n${rendered.dimensionText || '(none found)'}\n\nFull product area text:\n${rendered.productText.slice(0, 15_000)}`,
+                    }],
                   });
-                  break;
+                  const reTextBlock = reExtractResponse.content.find((b) => b.type === 'text') as any;
+                  if (reTextBlock?.text) {
+                    const reParsed = tryParseJson(reTextBlock.text);
+                    if (reParsed) {
+                      const reResult = buildResult(reParsed, sourceUrl, preCategory);
+                      const reProduct = reResult.type === 'single' ? reResult.product : reResult.products?.[0];
+                      const reCompleteness = computeCompleteness(reProduct);
+                      // Only use re-extraction if it's actually better
+                      if (reCompleteness.score > completeness.score && reProduct && product) {
+                        logger.info('Browser re-extraction improved completeness', {
+                          url: sourceUrl,
+                          before: completeness.score,
+                          after: reCompleteness.score,
+                        });
+                        // Merge: keep original fields if re-extraction is missing them
+                        if (!reProduct.brandName && product.brandName) reProduct.brandName = product.brandName;
+                        if (!reProduct.images?.primary && product.images?.primary) reProduct.images = product.images;
+                        if (!reProduct.availableOptions && product.availableOptions) reProduct.availableOptions = product.availableOptions;
+                        if (!reProduct.pricing && product.pricing) reProduct.pricing = product.pricing;
+                        if (!reProduct.activeVariant && product.activeVariant) reProduct.activeVariant = product.activeVariant;
+                        // Replace the product in result
+                        if (result.type === 'single') result.product = reProduct;
+                        else if (result.products?.[0]) result.products[0] = reProduct;
+                        // Re-apply Shopify overlay if available
+                        if (shopifyData) applyShopifyOverlay(reProduct, shopifyData);
+                        hasDims = hasPrimaryDimensions(reProduct.dimensions);
+                      }
+                    }
+                  }
+                } catch (err: any) {
+                  logger.warn('Browser re-extraction failed', { url: sourceUrl, err: err?.message });
+                }
+              }
+
+              // Try parsing dimensions from the targeted dimension text first, then product text, then full body
+              if (!hasDims) {
+                const textsToTry = [rendered.dimensionText, rendered.productText, rendered.fullBodyText].filter(Boolean);
+                for (const text of textsToTry) {
+                  const browserDims = parseDimensionsFromText(text);
+                  if (browserDims) {
+                    const targetProduct = result.type === 'single' ? result.product : result.products?.[0];
+                    if (targetProduct) targetProduct.dimensions = browserDims;
+                    hasDims = true;
+                    logger.info('Dimensions recovered via headless browser', {
+                      url: sourceUrl,
+                      dims: browserDims,
+                    });
+                    break;
+                  }
                 }
               }
             }
@@ -1684,6 +2040,17 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
           if (!hasDims) {
             logger.info('Dimensions not found after all extraction attempts', { url: sourceUrl });
           }
+
+          // Attach extraction metadata
+          const finalProduct = result.type === 'single' ? result.product : result.products?.[0];
+          const finalCompleteness = computeCompleteness(finalProduct);
+          result.extractionMeta = {
+            method: needsBrowserFallback ? 'browser' : 'direct',
+            completenessScore: finalCompleteness.score,
+            shopifyOverlay: !!shopifyData,
+            browserReExtracted: needsBrowserFallback && completeness.score < 50,
+            missingFields: finalCompleteness.missingCritical,
+          };
 
           setCachedResult(sourceUrl, result);
           return result;
@@ -1743,6 +2110,15 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
               }
             }
 
+            const browserCompleteness = computeCompleteness(product);
+            result.extractionMeta = {
+              method: 'browser',
+              completenessScore: browserCompleteness.score,
+              shopifyOverlay: false,
+              browserReExtracted: false,
+              missingFields: browserCompleteness.missingCritical,
+            };
+
             setCachedResult(sourceUrl, result);
             return result;
           }
@@ -1756,6 +2132,15 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
   // Stage 3: Final fallback — web search (when both static + browser fetch fail)
   logger.info('Falling back to web search', { url: sourceUrl });
   const result = await extractWithWebSearch(sourceUrl);
+  const searchProduct = result.type === 'single' ? result.product : result.products?.[0];
+  const searchCompleteness = computeCompleteness(searchProduct);
+  result.extractionMeta = {
+    method: 'search',
+    completenessScore: searchCompleteness.score,
+    shopifyOverlay: false,
+    browserReExtracted: false,
+    missingFields: searchCompleteness.missingCritical,
+  };
   setCachedResult(sourceUrl, result);
   return result;
 }
@@ -1934,11 +2319,11 @@ function normalizeProduct(
     }
   }
 
-  // Category: use AI result, fall back to deterministic pre-match
+  // Category: use AI result, fall back to deterministic pre-match, then normalize to taxonomy
   if (raw.category && typeof raw.category === 'string') {
-    result.category = raw.category.trim();
+    result.category = normalizeCategoryToTaxonomy(raw.category);
   } else if (preCategory) {
-    result.category = preCategory;
+    result.category = normalizeCategoryToTaxonomy(preCategory);
   }
 
   // ── New variant-aware fields ──
@@ -2150,6 +2535,43 @@ function normalizeProduct(
 
   if (raw.leadTime && typeof raw.leadTime === 'string') result.leadTime = raw.leadTime.trim();
 
+  // ── Secondary dimensions: promote from metadata and raw ──
+  const secDimKeys: Record<string, string> = {
+    seatHeight: 'seatHeight', seat_height: 'seatHeight',
+    seatDepth: 'seatDepth', seat_depth: 'seatDepth',
+    seatWidth: 'seatWidth', seat_width: 'seatWidth',
+    armHeight: 'armHeight', arm_height: 'armHeight',
+    clearance: 'clearance',
+    diameter: 'diameter',
+  };
+  const secDims: ExtractedProductData['secondaryDimensions'] = {};
+  // From raw.secondaryDimensions if LLM returned them directly
+  if (raw.secondaryDimensions && typeof raw.secondaryDimensions === 'object') {
+    for (const [k, v] of Object.entries(raw.secondaryDimensions)) {
+      if (v != null && !isNaN(Number(v)) && Number(v) > 0) {
+        secDims[k] = Number(v);
+      }
+    }
+  }
+  // Promote from metadata string fields (e.g., "seatHeight": "18 inches")
+  const md = raw.metadata;
+  if (md && typeof md === 'object') {
+    for (const [rawKey, normalizedKey] of Object.entries(secDimKeys)) {
+      if (secDims[normalizedKey] != null) continue; // already set
+      const val = md[rawKey];
+      if (typeof val === 'string') {
+        const numMatch = val.match(/(\d+(?:\.\d+)?)/);
+        if (numMatch) secDims[normalizedKey] = Number(numMatch[1]);
+      } else if (typeof val === 'number' && val > 0) {
+        secDims[normalizedKey] = val;
+      }
+    }
+  }
+  if (Object.keys(secDims).length > 0) {
+    if (!secDims.unit && result.dimensions?.unit) secDims.unit = result.dimensions.unit;
+    result.secondaryDimensions = secDims;
+  }
+
   // ── Legacy fields for backward compat ──
 
   // price — derive from activeVariant for legacy consumers
@@ -2210,6 +2632,9 @@ function normalizeProduct(
 
     if (Object.keys(metadata).length > 0) result.metadata = metadata;
   }
+
+  // ── Post-extraction validation: sanity-check dimensions and prices by category ──
+  validateExtraction(result);
 
   // ── Cross-validation: ensure availableOptions, activeVariant, and pricing are consistent ──
 
