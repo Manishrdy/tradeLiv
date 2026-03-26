@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import puppeteer from 'puppeteer-core';
 import { config } from '../config';
 import logger from '../config/logger';
+import { enqueueClaudeCall } from './claudeRateLimit';
 
 let _client: Anthropic | null = null;
 function getClient() {
@@ -2158,17 +2159,17 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
     });
 
     try {
-      const response = await getClient().messages.create({
-        model: MODEL_FAST,
-        max_tokens: 2048,
-        system: SYSTEM_PROMPT,
-        messages: [
-          {
-            role: 'user',
-            content: `Extract product data from these page signals.\n\nPRICE: If "selected_variant_price" is present, use that — it's the exact price for the URL's variant. Do NOT use og:price or meta tag prices when selected_variant_price exists.\n\nDIMENSIONS (HIGHEST PRIORITY): Look for "explicit_dimensions_label" signals FIRST — these contain the raw text near a "Dimensions" heading on the page and are the MOST AUTHORITATIVE source. Parse width, depth, height, and unit values from that text. Then use dim_labelled and dim_label signals. Do NOT confuse variant titles (like "22 x 22") with actual product dimensions. Only labelled measurements (Width/Depth/Height) are real dimensions. NEVER return a product without dimensions if ANY dimension signal (explicit_dimensions_label, dim_label, dim_labelled, dim_WxDxH, spec_sections with measurements) exists in the signals below.\n\n${signals}`,
-          },
-        ],
-      });
+      const userContent = `Extract product data from these page signals.\n\nPRICE: If "selected_variant_price" is present, use that — it's the exact price for the URL's variant. Do NOT use og:price or meta tag prices when selected_variant_price exists.\n\nDIMENSIONS (HIGHEST PRIORITY): Look for "explicit_dimensions_label" signals FIRST — these contain the raw text near a "Dimensions" heading on the page and are the MOST AUTHORITATIVE source. Parse width, depth, height, and unit values from that text. Then use dim_labelled and dim_label signals. Do NOT confuse variant titles (like "22 x 22") with actual product dimensions. Only labelled measurements (Width/Depth/Height) are real dimensions. NEVER return a product without dimensions if ANY dimension signal (explicit_dimensions_label, dim_label, dim_labelled, dim_WxDxH, spec_sections with measurements) exists in the signals below.\n\n${signals}`;
+      const response = await enqueueClaudeCall(
+        'extract:' + sourceUrl,
+        () => getClient().messages.create({
+          model: MODEL_FAST,
+          max_tokens: 2048,
+          system: SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: userContent }],
+        }),
+        SYSTEM_PROMPT + '\n' + userContent,
+      );
 
       const textBlock = response.content.find((b) => b.type === 'text') as any;
       if (textBlock?.text) {
@@ -2268,15 +2269,17 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
               // If score is very low, re-extract the full product from browser content
               if (completeness.score < 50 && rendered.productText.length > 200) {
                 try {
-                  const reExtractResponse = await getClient().messages.create({
-                    model: MODEL_FAST,
-                    max_tokens: 2048,
-                    system: SYSTEM_PROMPT,
-                    messages: [{
-                      role: 'user',
-                      content: `Extract product data from this page content rendered by a headless browser.\n\nPRICE: Look for price patterns like "$1,234" or "Price: 1234".\n\nDIMENSIONS (HIGHEST PRIORITY):\nDimension-specific text found on the page:\n${rendered.dimensionText || '(none found)'}\n\nFull product area text:\n${rendered.productText.slice(0, 15_000)}`,
-                    }],
-                  });
+                  const reUserContent = `Extract product data from this page content rendered by a headless browser.\n\nPRICE: Look for price patterns like "$1,234" or "Price: 1234".\n\nDIMENSIONS (HIGHEST PRIORITY):\nDimension-specific text found on the page:\n${rendered.dimensionText || '(none found)'}\n\nFull product area text:\n${rendered.productText.slice(0, 15_000)}`;
+                  const reExtractResponse = await enqueueClaudeCall(
+                    're-extract:' + sourceUrl,
+                    () => getClient().messages.create({
+                      model: MODEL_FAST,
+                      max_tokens: 2048,
+                      system: SYSTEM_PROMPT,
+                      messages: [{ role: 'user', content: reUserContent }],
+                    }),
+                    SYSTEM_PROMPT + '\n' + reUserContent,
+                  );
                   const reTextBlock = reExtractResponse.content.find((b) => b.type === 'text') as any;
                   if (reTextBlock?.text) {
                     const reParsed = tryParseJson(reTextBlock.text);
@@ -2371,17 +2374,17 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
       });
 
       try {
-        const response = await getClient().messages.create({
-          model: MODEL_FAST,
-          max_tokens: 2048,
-          system: SYSTEM_PROMPT,
-          messages: [
-            {
-              role: 'user',
-              content: `Extract product data from this page content rendered by a headless browser.\n\nPRICE: Look for price patterns like "$1,234" or "Price: 1234".\n\nDIMENSIONS (HIGHEST PRIORITY):\nDimension-specific text found on the page:\n${rendered.dimensionText || '(none found)'}\n\nFull product area text:\n${rendered.productText.slice(0, 15_000)}`,
-            },
-          ],
-        });
+        const browserUserContent = `Extract product data from this page content rendered by a headless browser.\n\nPRICE: Look for price patterns like "$1,234" or "Price: 1234".\n\nDIMENSIONS (HIGHEST PRIORITY):\nDimension-specific text found on the page:\n${rendered.dimensionText || '(none found)'}\n\nFull product area text:\n${rendered.productText.slice(0, 15_000)}`;
+        const response = await enqueueClaudeCall(
+          'browser-extract:' + sourceUrl,
+          () => getClient().messages.create({
+            model: MODEL_FAST,
+            max_tokens: 2048,
+            system: SYSTEM_PROMPT,
+            messages: [{ role: 'user', content: browserUserContent }],
+          }),
+          SYSTEM_PROMPT + '\n' + browserUserContent,
+        );
 
         const textBlock = response.content.find((b) => b.type === 'text') as any;
         if (textBlock?.text) {
@@ -2442,76 +2445,37 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
 /* ─── Web search fallback ────────────────────────────── */
 
 async function extractWithWebSearch(sourceUrl: string): Promise<ExtractionResult> {
-  const messages: Anthropic.MessageParam[] = [
-    {
-      role: 'user',
-      content: `Search for the product at this URL and extract its full details:\n${sourceUrl}\n\nI need: name, price, currency, main image URL, furniture category, and metadata (description, key features, materials, assembly, care instructions, warranty, style, etc.).\n\nDIMENSIONS ARE THE MOST IMPORTANT DATA — find the product's width, depth, height measurements. Almost every furniture product page has dimensions (e.g. "68.5 x 85 x 54" or "68.5"W x 85"D x 54"H"). Search thoroughly for these. Include them in the dimensions object with numeric values and unit.\n\nReturn ONLY the JSON object as specified.`,
-    },
-  ];
-
-  const MAX_TURNS = 4;
-
-  for (let turn = 0; turn < MAX_TURNS; turn++) {
-    const response = await getClient().messages.create({
+  // Single Claude call — web_search handles iterations internally.
+  // Multi-turn accumulated web search results that blew past the 30k token/min org limit.
+  const wsUserContent = `Search for the product at this URL and extract its full details:\n${sourceUrl}\n\nI need: name, price, currency, main image URL, furniture category, and metadata (description, key features, materials, assembly, care instructions, warranty, style, etc.).\n\nDIMENSIONS ARE THE MOST IMPORTANT DATA — find the product's width, depth, height measurements. Almost every furniture product page has dimensions (e.g. "68.5 x 85 x 54" or "68.5"W x 85"D x 54"H"). Search thoroughly for these. Include them in the dimensions object with numeric values and unit.\n\nReturn ONLY the JSON object as specified.`;
+  const response = await enqueueClaudeCall(
+    'websearch:' + sourceUrl,
+    () => getClient().messages.create({
       model: MODEL_SEARCH,
       max_tokens: 3072,
       system: SYSTEM_PROMPT,
-      messages,
+      messages: [{ role: 'user', content: wsUserContent }],
       tools: [{ type: 'web_search_20250305', name: 'web_search' }] as any,
-    });
+    }),
+    SYSTEM_PROMPT + '\n' + wsUserContent,
+  );
 
-    const { stop_reason, content } = response;
-
-    // Always try to parse JSON from any text blocks first
-    const textBlocks = content.filter((b) => b.type === 'text');
-    if (textBlocks.length > 0) {
-      const parsed = tryParseJsonFromBlocks(textBlocks);
-      if (parsed) {
-        logger.info('Web search extraction succeeded', { url: sourceUrl, turn });
-        return buildResult(parsed, sourceUrl);
-      }
+  const textBlocks = response.content.filter((b) => b.type === 'text');
+  if (textBlocks.length > 0) {
+    const parsed = tryParseJsonFromBlocks(textBlocks);
+    if (parsed) {
+      logger.info('Web search extraction succeeded', { url: sourceUrl });
+      return buildResult(parsed, sourceUrl);
     }
-
-    if (stop_reason === 'max_tokens') break;
-
-    if (stop_reason === 'tool_use') {
-      messages.push({ role: 'assistant', content: content as any });
-      const toolUseBlocks = content.filter((b) => b.type === 'tool_use') as any[];
-      messages.push({
-        role: 'user',
-        content: toolUseBlocks.map((b) => ({
-          type: 'tool_result' as const,
-          tool_use_id: b.id,
-          content: '',
-        })) as any,
-      });
-      continue;
-    }
-
-    if (stop_reason === 'end_turn') {
-      if (turn < MAX_TURNS - 1) {
-        messages.push({ role: 'assistant', content: content as any });
-        messages.push({
-          role: 'user',
-          content:
-            'Output ONLY the JSON object with the product data including dimensions and metadata. No explanation, no markdown fences.',
-        });
-        continue;
-      }
-    }
-
-    break;
   }
 
-  const lastText = (messages as any[])
-    .filter((m) => m.role === 'assistant')
-    .flatMap((m) => (Array.isArray(m.content) ? m.content : [m.content]))
+  const responseText = response.content
     .filter((b: any) => b?.type === 'text')
     .map((b: any) => b.text)
     .join('\n')
     .slice(0, 200);
 
-  logger.warn('Web search extraction failed', { url: sourceUrl, lastText });
+  logger.warn('Web search extraction failed', { url: sourceUrl, responseText });
   throw new ExtractionError(
     'Failed to extract product data from this page. Try a different URL or add the product manually.',
     'PARSE_FAILED',

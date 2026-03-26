@@ -3,15 +3,18 @@ import { z } from 'zod';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { searchProducts, getMoreResults } from '../services/productSearch';
 import { extractProductFromUrl, ExtractionError, ExtractionResult } from '../services/catalogExtractor';
+import { getRateLimitStatus } from '../services/claudeRateLimit';
 import logger from '../config/logger';
 
 const router = Router();
 router.use(requireAuth, requireRole('designer'));
 
-/* ─── Rate limiter (1 search per 10s per designer) ──── */
+/* ─── GET /api/catalog/search/rate-limit ───────────── */
 
-const searchRateLimit = new Map<string, number>();
-const RATE_LIMIT_MS = 10_000;
+router.get('/rate-limit', (_req: AuthRequest, res: Response) => {
+  const status = getRateLimitStatus();
+  res.json(status);
+});
 
 /* ─── POST /api/catalog/search ──────────────────────── */
 
@@ -28,21 +31,8 @@ router.post('/', async (req: AuthRequest, res: Response) => {
 
   const designerId = req.user!.id;
 
-  // Rate limit
-  const last = searchRateLimit.get(designerId);
-  if (last != null) {
-    const elapsed = Date.now() - last;
-    if (elapsed < RATE_LIMIT_MS) {
-      const retryAfter = Math.ceil((RATE_LIMIT_MS - elapsed) / 1000);
-      res.status(429).json({
-        error: `Please wait ${retryAfter}s before searching again.`,
-        errorCode: 'RATE_LIMITED',
-        retryAfter,
-      });
-      return;
-    }
-  }
-  searchRateLimit.set(designerId, Date.now());
+  // Note: rate limiting is now handled inside searchProducts() via Claude API rate limiter.
+  // Cached queries bypass the rate limit since no Claude API call is made.
 
   try {
     const result = await searchProducts(parsed.data.query, designerId);
@@ -71,7 +61,7 @@ router.get('/:sessionId/more', async (req: AuthRequest, res: Response) => {
 /* ─── POST /api/catalog/search/extract ──────────────── */
 
 const extractSelectedSchema = z.object({
-  urls: z.array(z.string().url()).min(1).max(5, 'Maximum 5 products at a time'),
+  urls: z.array(z.string().url()).min(1).max(1, 'Add one product at a time'),
 });
 
 router.post('/extract', async (req: AuthRequest, res: Response) => {

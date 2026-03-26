@@ -1519,6 +1519,9 @@ export const api = {
 
   extractSearchResults: (urls: string[]) =>
     request<SearchExtractResponse>('/api/catalog/search/extract', { method: 'POST', body: JSON.stringify({ urls }) }),
+
+  getSearchRateLimit: () =>
+    request<{ available: boolean; retryAfter: number }>('/api/catalog/search/rate-limit'),
 };
 
 /* ─── Search types ──────────────────────────────────── */
@@ -1540,6 +1543,7 @@ export interface SearchProductsResponse {
   results: SearchResultItem[];
   hasMore: boolean;
   total: number;
+  cached?: boolean;
 }
 
 export interface SearchMoreResponse {

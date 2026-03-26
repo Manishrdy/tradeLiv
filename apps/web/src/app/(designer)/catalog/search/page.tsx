@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, SearchResultItem, ProductPayload } from '@/lib/api';
@@ -39,13 +39,50 @@ export default function ProductSearchPage() {
   const [hasMore, setHasMore] = useState(false);
   const [total, setTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
 
-  // Selection & extraction state
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Selection & extraction state — single selection
+  const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [extractStep, setExtractStep] = useState(0);
-  const [extractResults, setExtractResults] = useState<Array<{ url: string; success: boolean; productId?: string; error?: string }>>([]);
+  const [extractResult, setExtractResult] = useState<{ url: string; success: boolean; productId?: string; error?: string } | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Rate limit cooldown
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+  const cooldownRef = useRef<NodeJS.Timeout | null>(null);
+
+  function startCooldown(seconds: number) {
+    setCooldownSeconds(seconds);
+    if (cooldownRef.current) clearInterval(cooldownRef.current);
+    cooldownRef.current = setInterval(() => {
+      setCooldownSeconds((prev) => {
+        if (prev <= 1) {
+          clearInterval(cooldownRef.current!);
+          cooldownRef.current = null;
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }
+
+  // Check rate limit status after search/extract completes
+  const checkRateLimit = useCallback(async () => {
+    const r = await api.getSearchRateLimit();
+    if (r.data && !r.data.available && r.data.retryAfter > 0) {
+      startCooldown(r.data.retryAfter);
+    }
+  }, []);
+
+  // Cleanup interval on unmount
+  useEffect(() => {
+    return () => {
+      if (cooldownRef.current) clearInterval(cooldownRef.current);
+    };
+  }, []);
+
+  const isLocked = cooldownSeconds > 0;
 
   /* ── Step animation ─────────────────────────────── */
   function animateSteps(steps: string[], setter: (n: number) => void, interval = 2500): () => void {
@@ -68,9 +105,10 @@ export default function ProductSearchPage() {
     setSearching(true);
     setSearchError('');
     setResults([]);
-    setSelected(new Set());
-    setExtractResults([]);
+    setSelectedUrl(null);
+    setExtractResult(null);
     setSessionId(null);
+    setFromCache(false);
 
     const stopAnim = animateSteps(SEARCH_STEPS, setSearchStep);
 
@@ -81,6 +119,7 @@ export default function ProductSearchPage() {
 
     if (r.error) {
       setSearchError(r.error);
+      checkRateLimit();
       return;
     }
 
@@ -88,9 +127,15 @@ export default function ProductSearchPage() {
     setResults(r.data!.results);
     setHasMore(r.data!.hasMore);
     setTotal(r.data!.total);
+    setFromCache(!!(r.data as any)?.cached);
+
+    // Check rate limit after a successful search (Claude was called)
+    if (!(r.data as any)?.cached) {
+      checkRateLimit();
+    }
   }
 
-  /* ── Load more ──────────────────────────────────── */
+  /* ── Load more (show remaining from cache) ──────── */
   async function handleLoadMore() {
     if (!sessionId || loadingMore) return;
     setLoadingMore(true);
@@ -107,93 +152,89 @@ export default function ProductSearchPage() {
     setHasMore(r.data!.hasMore);
   }
 
-  /* ── Toggle selection ───────────────────────────── */
-  function toggleSelect(url: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(url)) next.delete(url);
-      else if (next.size < 5) next.add(url);
-      return next;
-    });
+  /* ── Select single product ──────────────────────── */
+  function handleSelect(url: string) {
+    setSelectedUrl((prev) => (prev === url ? null : url));
   }
 
-  /* ── Extract & Save selected ────────────────────── */
+  /* ── Extract & Save single product ──────────────── */
   async function handleExtractSelected() {
-    const urls = Array.from(selected);
-    if (urls.length === 0) return;
+    if (!selectedUrl) return;
 
     setExtracting(true);
-    setExtractResults([]);
+    setExtractResult(null);
     const stopAnim = animateSteps(EXTRACT_STEPS, setExtractStep);
 
-    const r = await api.extractSearchResults(urls);
+    const r = await api.extractSearchResults([selectedUrl]);
 
     stopAnim();
 
     if (r.error) {
       setExtracting(false);
       setSearchError(r.error);
+      checkRateLimit();
       return;
     }
 
-    // Now save each extracted product to the catalog
+    // Save the extracted product
     setSaving(true);
-    const saveResults: typeof extractResults = [];
+    const item = r.data!.results[0];
 
-    for (const item of r.data!.results) {
-      if (item.type === 'error') {
-        saveResults.push({ url: item.url, success: false, error: item.error || 'Extraction failed' });
-        continue;
-      }
-
-      // Build the product from extraction result
-      const product = item.type === 'single' ? item.product : item.products?.[0];
-      if (!product) {
-        saveResults.push({ url: item.url, success: false, error: 'No product data extracted' });
-        continue;
-      }
-
-      const payload: ProductPayload = {
-        productName: product.productName || 'Unknown Product',
-        sourceUrl: item.url,
-        brandName: product.brandName || undefined,
-        category: product.category || undefined,
-        currency: product.currency || 'USD',
-        variantId: product.variantId || undefined,
-        sku: product.sku || undefined,
-        activeVariant: product.activeVariant || undefined,
-        images: product.images || undefined,
-        pricing: product.pricing || undefined,
-        availableOptions: product.availableOptions || undefined,
-        features: product.features || [],
-        materials: product.materials || undefined,
-        promotions: product.promotions || [],
-        shipping: product.shipping || undefined,
-        availability: product.availability || undefined,
-        price: product.activeVariant?.price != null ? Number(product.activeVariant.price) : (product.price ?? undefined),
-        imageUrl: product.images?.primary || product.imageUrl || undefined,
-        productUrl: product.productUrl || item.url,
-        dimensions: product.dimensions || undefined,
-        material: typeof product.materials?.primary === 'string' ? product.materials.primary : (product.material || undefined),
-        finishes: product.finishes || [],
-        leadTime: product.leadTime || undefined,
-        metadata: product.metadata || undefined,
-      };
-
-      const saveR = await api.createProduct(payload);
-      if (saveR.error) {
-        saveResults.push({ url: item.url, success: false, error: saveR.error });
-      } else {
-        saveResults.push({ url: item.url, success: true, productId: (saveR.data as any)?.id });
-      }
+    if (item.type === 'error') {
+      setExtractResult({ url: item.url, success: false, error: item.error || 'Extraction failed' });
+      setSaving(false);
+      setExtracting(false);
+      checkRateLimit();
+      return;
     }
 
-    setExtractResults(saveResults);
+    const product = item.type === 'single' ? item.product : item.products?.[0];
+    if (!product) {
+      setExtractResult({ url: item.url, success: false, error: 'No product data extracted' });
+      setSaving(false);
+      setExtracting(false);
+      checkRateLimit();
+      return;
+    }
+
+    const payload: ProductPayload = {
+      productName: product.productName || 'Unknown Product',
+      sourceUrl: item.url,
+      brandName: product.brandName || undefined,
+      category: product.category || undefined,
+      currency: product.currency || 'USD',
+      variantId: product.variantId || undefined,
+      sku: product.sku || undefined,
+      activeVariant: product.activeVariant || undefined,
+      images: product.images || undefined,
+      pricing: product.pricing || undefined,
+      availableOptions: product.availableOptions || undefined,
+      features: product.features || [],
+      materials: product.materials || undefined,
+      promotions: product.promotions || [],
+      shipping: product.shipping || undefined,
+      availability: product.availability || undefined,
+      price: product.activeVariant?.price != null ? Number(product.activeVariant.price) : (product.price ?? undefined),
+      imageUrl: product.images?.primary || product.imageUrl || undefined,
+      productUrl: product.productUrl || item.url,
+      dimensions: product.dimensions || undefined,
+      material: typeof product.materials?.primary === 'string' ? product.materials.primary : (product.material || undefined),
+      finishes: product.finishes || [],
+      leadTime: product.leadTime || undefined,
+      metadata: product.metadata || undefined,
+    };
+
+    const saveR = await api.createProduct(payload);
+    if (saveR.error) {
+      setExtractResult({ url: item.url, success: false, error: saveR.error });
+    } else {
+      setExtractResult({ url: item.url, success: true, productId: (saveR.data as any)?.id });
+    }
+
     setSaving(false);
     setExtracting(false);
+    checkRateLimit();
   }
-
-  const successCount = extractResults.filter((r) => r.success).length;
 
   return (
     <div style={{ padding: '28px 40px 80px', maxWidth: 820 }}>
@@ -209,7 +250,7 @@ export default function ProductSearchPage() {
             Search Products
           </h1>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '6px 0 0', lineHeight: 1.5 }}>
-            Describe what you need and we&apos;ll find matching products from US furniture retailers.
+            Describe what you need and we&apos;ll find the top 3 matching products from US furniture retailers.
           </p>
         </div>
         <Link href="/catalog/new" style={{
@@ -223,6 +264,33 @@ export default function ProductSearchPage() {
         </Link>
       </div>
 
+      {/* Rate limit cooldown banner */}
+      {isLocked && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '12px 18px', marginBottom: 20, borderRadius: 10,
+          background: 'rgba(200,164,90,0.08)', border: '1px solid rgba(200,164,90,0.25)',
+        }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+          </svg>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+              Rate limit active
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+              Search and product extraction are paused to stay within API limits. Resuming in {cooldownSeconds}s.
+            </div>
+          </div>
+          <div style={{
+            fontSize: 20, fontWeight: 900, color: 'var(--gold)',
+            fontVariantNumeric: 'tabular-nums', minWidth: 40, textAlign: 'center',
+          }}>
+            {cooldownSeconds}s
+          </div>
+        </div>
+      )}
+
       {/* Search input */}
       <div className="card" style={{ padding: 28, marginBottom: 24 }}>
         <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>
@@ -232,7 +300,7 @@ export default function ProductSearchPage() {
           ref={textareaRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !searching) { e.preventDefault(); handleSearch(); } }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !searching && !isLocked) { e.preventDefault(); handleSearch(); } }}
           placeholder={"e.g. Mid-century modern walnut dining table, seats 6-8, 72\" long, under $2,500. Looking for solid wood with tapered legs, preferably from a US brand with trade pricing..."}
           rows={4}
           className="input-field"
@@ -248,14 +316,14 @@ export default function ProductSearchPage() {
           </span>
           <button
             onClick={handleSearch}
-            disabled={searching || query.trim().length < 10}
+            disabled={searching || query.trim().length < 10 || isLocked}
             className="btn-primary"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 8,
               padding: '10px 24px', fontSize: 13, fontWeight: 700,
               borderRadius: 8, fontFamily: 'inherit',
-              opacity: (searching || query.trim().length < 10) ? 0.5 : 1,
-              cursor: (searching || query.trim().length < 10) ? 'not-allowed' : 'pointer',
+              opacity: (searching || query.trim().length < 10 || isLocked) ? 0.5 : 1,
+              cursor: (searching || query.trim().length < 10 || isLocked) ? 'not-allowed' : 'pointer',
             }}
           >
             {searching ? (
@@ -282,28 +350,66 @@ export default function ProductSearchPage() {
         <div>
           {/* Results header */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
-              {results.length} of {total} results
-              {selected.size > 0 && (
-                <span style={{ fontWeight: 500, color: 'var(--text-muted)', marginLeft: 8 }}>
-                  · {selected.size} selected
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+              <span>
+                {results.length} of {total} results
+              </span>
+              {fromCache && (
+                <span style={{
+                  fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
+                  background: 'var(--bg-input)', padding: '3px 8px', borderRadius: 4,
+                  border: '1px solid var(--border)',
+                }}>
+                  Cached
+                </span>
+              )}
+              {selectedUrl && (
+                <span style={{ fontWeight: 500, color: 'var(--text-muted)' }}>
+                  · 1 selected
                 </span>
               )}
             </div>
-            {selected.size > 0 && !extracting && extractResults.length === 0 && (
-              <button
-                onClick={handleExtractSelected}
-                className="btn-primary"
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  padding: '8px 20px', fontSize: 12.5, fontWeight: 700,
-                  borderRadius: 8, fontFamily: 'inherit',
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-                Add {selected.size} to Catalog
-              </button>
-            )}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {hasMore && (
+                <button
+                  onClick={handleLoadMore}
+                  disabled={loadingMore}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '7px 14px', fontSize: 12, fontWeight: 700,
+                    border: '1px solid var(--border)', background: 'var(--bg-card)',
+                    color: 'var(--text-secondary)', borderRadius: 8, fontFamily: 'inherit',
+                    cursor: loadingMore ? 'wait' : 'pointer', transition: 'all 0.15s',
+                  }}
+                >
+                  {loadingMore ? (
+                    <>
+                      <svg className="anim-rotate" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>
+                      Loading…
+                    </>
+                  ) : (
+                    'Show Other Options'
+                  )}
+                </button>
+              )}
+              {selectedUrl && !extracting && !extractResult && (
+                <button
+                  onClick={handleExtractSelected}
+                  disabled={isLocked}
+                  className="btn-primary"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '8px 20px', fontSize: 12.5, fontWeight: 700,
+                    borderRadius: 8, fontFamily: 'inherit',
+                    opacity: isLocked ? 0.5 : 1,
+                    cursor: isLocked ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+                  Add to Catalog
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Extracting indicator */}
@@ -311,24 +417,24 @@ export default function ProductSearchPage() {
             <div className="card" style={{ padding: '16px 20px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-input)' }}>
               <svg className="anim-rotate" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2.5"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>
               <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 600 }}>
-                {saving ? 'Saving products to your catalog…' : EXTRACT_STEPS[extractStep]}
+                {saving ? 'Saving product to your catalog…' : EXTRACT_STEPS[extractStep]}
               </span>
             </div>
           )}
 
-          {/* Extract results summary */}
-          {extractResults.length > 0 && (
-            <div className="card" style={{ padding: '16px 20px', marginBottom: 16, border: `1px solid ${successCount > 0 ? 'var(--green-border)' : 'rgba(180,30,30,0.18)'}` }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: successCount > 0 ? 'var(--green)' : '#b91c1c', marginBottom: 8 }}>
-                {successCount > 0 ? `${successCount} product${successCount > 1 ? 's' : ''} added to your catalog` : 'No products could be added'}
+          {/* Extract result summary */}
+          {extractResult && (
+            <div className="card" style={{ padding: '16px 20px', marginBottom: 16, border: `1px solid ${extractResult.success ? 'var(--green-border)' : 'rgba(180,30,30,0.18)'}` }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: extractResult.success ? 'var(--green)' : '#b91c1c', marginBottom: 8 }}>
+                {extractResult.success ? 'Product added to your catalog' : 'Could not add product'}
               </div>
-              {extractResults.filter((r) => !r.success).map((r, i) => (
-                <div key={i} style={{ fontSize: 12, color: '#b91c1c', marginTop: 4 }}>
-                  {r.url.slice(0, 60)}… — {r.error}
+              {!extractResult.success && (
+                <div style={{ fontSize: 12, color: '#b91c1c', marginTop: 4 }}>
+                  {extractResult.error}
                 </div>
-              ))}
+              )}
               <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-                {successCount > 0 && (
+                {extractResult.success && (
                   <button
                     onClick={() => router.push('/catalog')}
                     className="btn-primary"
@@ -338,14 +444,14 @@ export default function ProductSearchPage() {
                   </button>
                 )}
                 <button
-                  onClick={() => { setExtractResults([]); setSelected(new Set()); }}
+                  onClick={() => { setExtractResult(null); setSelectedUrl(null); }}
                   style={{
                     padding: '7px 16px', fontSize: 12, fontWeight: 700, borderRadius: 8,
                     fontFamily: 'inherit', border: '1px solid var(--border)', background: 'transparent',
                     color: 'var(--text-secondary)', cursor: 'pointer',
                   }}
                 >
-                  Select More
+                  {extractResult.success ? 'Add Another' : 'Try Different Product'}
                 </button>
               </div>
             </div>
@@ -354,37 +460,40 @@ export default function ProductSearchPage() {
           {/* Result cards */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {results.map((item, idx) => {
-              const isSelected = selected.has(item.url);
-              const wasExtracted = extractResults.find((r) => r.url === item.url);
+              const isSelected = selectedUrl === item.url;
+              const wasExtracted = extractResult?.url === item.url;
               return (
                 <div
                   key={item.url + idx}
-                  onClick={() => { if (!extracting && !saving && !wasExtracted) toggleSelect(item.url); }}
+                  onClick={() => { if (!extracting && !saving && !(wasExtracted && extractResult?.success)) handleSelect(item.url); }}
                   className="card"
                   style={{
                     padding: '16px 20px',
                     display: 'flex', gap: 16, alignItems: 'flex-start',
-                    cursor: (extracting || saving || wasExtracted) ? 'default' : 'pointer',
-                    border: isSelected ? '1.5px solid var(--gold)' : wasExtracted?.success ? '1.5px solid var(--green-border)' : '1px solid var(--border)',
-                    background: isSelected ? 'rgba(200,164,90,0.04)' : wasExtracted?.success ? 'var(--green-dim)' : 'var(--bg-card)',
-                    opacity: wasExtracted && !wasExtracted.success ? 0.5 : 1,
+                    cursor: (extracting || saving || (wasExtracted && extractResult?.success)) ? 'default' : 'pointer',
+                    border: isSelected ? '1.5px solid var(--gold)' : (wasExtracted && extractResult?.success) ? '1.5px solid var(--green-border)' : '1px solid var(--border)',
+                    background: isSelected ? 'rgba(200,164,90,0.04)' : (wasExtracted && extractResult?.success) ? 'var(--green-dim)' : 'var(--bg-card)',
+                    opacity: wasExtracted && !extractResult?.success ? 0.5 : 1,
                     transition: 'all 0.15s',
                   }}
                 >
-                  {/* Checkbox */}
+                  {/* Radio indicator */}
                   <div style={{ flexShrink: 0, marginTop: 2 }}>
-                    {wasExtracted?.success ? (
+                    {wasExtracted && extractResult?.success ? (
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--green)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
                     ) : (
                       <div style={{
-                        width: 20, height: 20, borderRadius: 5,
+                        width: 20, height: 20, borderRadius: '50%',
                         border: isSelected ? '2px solid var(--gold)' : '2px solid var(--border)',
-                        background: isSelected ? 'var(--gold)' : 'transparent',
+                        background: 'transparent',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         transition: 'all 0.15s',
                       }}>
                         {isSelected && (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+                          <div style={{
+                            width: 10, height: 10, borderRadius: '50%',
+                            background: 'var(--gold)',
+                          }} />
                         )}
                       </div>
                     )}
@@ -460,32 +569,6 @@ export default function ProductSearchPage() {
               );
             })}
           </div>
-
-          {/* Load more button */}
-          {hasMore && (
-            <div style={{ textAlign: 'center', marginTop: 20 }}>
-              <button
-                onClick={handleLoadMore}
-                disabled={loadingMore}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 8,
-                  padding: '10px 28px', fontSize: 13, fontWeight: 700,
-                  border: '1px solid var(--border)', background: 'var(--bg-card)',
-                  color: 'var(--text-secondary)', borderRadius: 8, fontFamily: 'inherit',
-                  cursor: loadingMore ? 'wait' : 'pointer', transition: 'all 0.15s',
-                }}
-              >
-                {loadingMore ? (
-                  <>
-                    <svg className="anim-rotate" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>
-                    Loading…
-                  </>
-                ) : (
-                  <>Show More Results</>
-                )}
-              </button>
-            </div>
-          )}
         </div>
       )}
 
