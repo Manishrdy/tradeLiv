@@ -819,6 +819,49 @@ function ActivitySection({ activity }: { activity: AuditLogEntry[] }) {
   );
 }
 
+/* ─── PDF Download Button ──────────────────────────── */
+
+function PdfDownloadButton({ projectId }: { projectId: string }) {
+  const [downloading, setDownloading] = useState(false);
+
+  async function handleDownload() {
+    setDownloading(true);
+    const result = await api.downloadProjectPdf(projectId);
+    setDownloading(false);
+    if (result.error) { alert(result.error); return; }
+    if (result.data) {
+      const url = URL.createObjectURL(result.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'Project_Proposal.pdf';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  return (
+    <button
+      onClick={handleDownload}
+      disabled={downloading}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        border: '1px solid var(--border)', background: 'var(--bg-card)',
+        color: 'var(--text-secondary)', borderRadius: 999, padding: '5px 14px',
+        fontSize: 11.5, fontWeight: 700, cursor: downloading ? 'wait' : 'pointer',
+        fontFamily: 'inherit', transition: 'all 0.15s', opacity: downloading ? 0.6 : 1,
+      }}
+      title="Download project proposal as PDF"
+    >
+      {downloading ? (
+        <svg className="anim-rotate" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>
+      ) : (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
+      )}
+      PDF Proposal
+    </button>
+  );
+}
+
 /* ─── Main page ─────────────────────────────────────── */
 
 export default function ProjectOverviewPage() {
@@ -916,29 +959,32 @@ export default function ProjectOverviewPage() {
             Created {formatDate(project.createdAt)} · Client: <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>{project.client.name}</span>
           </div>
         </div>
-        {/* Status changer */}
-        <div style={{ display: 'flex', gap: 4 }}>
-          {STATUS_OPTIONS.map((s) => {
-            const sst = STATUS_STYLES[s];
-            const isActive = project.status === s;
-            return (
-              <button
-                key={s}
-                onClick={() => { if (!isActive) saveField({ status: s }); }}
-                style={{
-                  border: `1px solid ${isActive ? sst.border : 'var(--border)'}`,
-                  background: isActive ? sst.bg : 'transparent',
-                  color: isActive ? sst.color : 'var(--text-muted)',
-                  borderRadius: 999, padding: '4px 12px',
-                  fontSize: 11, fontWeight: 700, cursor: isActive ? 'default' : 'pointer',
-                  textTransform: 'capitalize', transition: 'all 0.15s',
-                  fontFamily: 'inherit',
-                }}
-              >
-                {s}
-              </button>
-            );
-          })}
+        {/* Status changer + PDF */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {STATUS_OPTIONS.map((s) => {
+              const sst = STATUS_STYLES[s];
+              const isActive = project.status === s;
+              return (
+                <button
+                  key={s}
+                  onClick={() => { if (!isActive) saveField({ status: s }); }}
+                  style={{
+                    border: `1px solid ${isActive ? sst.border : 'var(--border)'}`,
+                    background: isActive ? sst.bg : 'transparent',
+                    color: isActive ? sst.color : 'var(--text-muted)',
+                    borderRadius: 999, padding: '4px 12px',
+                    fontSize: 11, fontWeight: 700, cursor: isActive ? 'default' : 'pointer',
+                    textTransform: 'capitalize', transition: 'all 0.15s',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  {s}
+                </button>
+              );
+            })}
+          </div>
+          <PdfDownloadButton projectId={id} />
         </div>
       </div>
 

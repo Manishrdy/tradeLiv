@@ -320,14 +320,22 @@ export default function CatalogPage() {
               </button>
             ))}
           </div>
-          <Link href="/catalog/new" style={{ textDecoration: 'none' }}>
-            <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-              Add Product
-            </button>
-          </Link>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Link href="/catalog/search" style={{ textDecoration: 'none' }}>
+              <button className="btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" /></svg>
+                Search
+              </button>
+            </Link>
+            <Link href="/catalog/new" style={{ textDecoration: 'none' }}>
+              <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                Add from URL
+              </button>
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -510,9 +518,17 @@ export default function CatalogPage() {
             {showFavOnly ? 'Heart products to add them to your favorites.' : search || category ? 'Try adjusting your search or filters.' : 'Add your first product to build your catalog.'}
           </div>
           {!search && !category && !showFavOnly && (
-            <Link href="/catalog/new" style={{ textDecoration: 'none' }}>
-              <button className="btn-primary">Add first product</button>
-            </Link>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <Link href="/catalog/search" style={{ textDecoration: 'none' }}>
+                <button style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', borderRadius: 8, padding: '9px 18px', fontSize: 13, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" /></svg>
+                  Search Products
+                </button>
+              </Link>
+              <Link href="/catalog/new" style={{ textDecoration: 'none' }}>
+                <button className="btn-primary">Add from URL</button>
+              </Link>
+            </div>
           )}
         </div>
       ) : viewMode === 'grid' ? (

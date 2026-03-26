@@ -741,6 +741,49 @@ function ShortlistItemCard({
   );
 }
 
+/* ─── Room PDF Button ──────────────────────────────── */
+
+function RoomPdfButton({ projectId, roomId }: { projectId: string; roomId: string }) {
+  const [downloading, setDownloading] = useState(false);
+
+  async function handleDownload() {
+    setDownloading(true);
+    const result = await api.downloadRoomPdf(projectId, roomId);
+    setDownloading(false);
+    if (result.error) { alert(result.error); return; }
+    if (result.data) {
+      const url = URL.createObjectURL(result.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'Room_Spec_Sheet.pdf';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  return (
+    <button
+      onClick={handleDownload}
+      disabled={downloading}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0,
+        border: '1px solid var(--border)', background: 'var(--bg-card)',
+        color: 'var(--text-secondary)', borderRadius: 999, padding: '5px 14px',
+        fontSize: 11.5, fontWeight: 700, cursor: downloading ? 'wait' : 'pointer',
+        fontFamily: 'inherit', transition: 'all 0.15s', opacity: downloading ? 0.6 : 1,
+      }}
+      title="Download room spec sheet as PDF"
+    >
+      {downloading ? (
+        <svg className="anim-rotate" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>
+      ) : (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
+      )}
+      Spec Sheet
+    </button>
+  );
+}
+
 /* ─── Main Page ─────────────────────────────────────── */
 
 export default function RoomDetailPage() {
@@ -881,9 +924,12 @@ export default function RoomDetailPage() {
 
       {/* Room header */}
       <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.04em', margin: '0 0 6px' }}>
-          {room.name}
-        </h1>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+          <h1 style={{ fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.04em', margin: '0 0 6px' }}>
+            {room.name}
+          </h1>
+          <RoomPdfButton projectId={projectId} roomId={roomId} />
+        </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 13, color: 'var(--text-muted)', fontWeight: 500 }}>
           {room.areaSqft != null && <span>{room.areaSqft} sq ft</span>}
           {hasDims && <span>{[room.lengthFt, room.widthFt, room.heightFt].filter(Boolean).join(' × ')} ft</span>}

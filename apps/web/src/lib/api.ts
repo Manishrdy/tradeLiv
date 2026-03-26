@@ -1478,4 +1478,83 @@ export const api = {
 
   logComparisonEvent: (event: string, payload: Record<string, unknown>) =>
     request<{ ok: boolean }>('/api/comparisons/events', { method: 'POST', body: JSON.stringify({ event, payload }) }),
+
+  /* ─── PDF Generation ──────────────────────────────── */
+
+  downloadProjectPdf: async (projectId: string): Promise<{ data?: Blob; error?: string }> => {
+    try {
+      const res = await fetch(`${API_URL}/api/projects/${projectId}/pdf`, { credentials: 'include' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { error: (body as any).error || `Failed to generate PDF (${res.status})` };
+      }
+      const blob = await res.blob();
+      return { data: blob };
+    } catch {
+      return { error: 'Unable to connect to the server.' };
+    }
+  },
+
+  downloadRoomPdf: async (projectId: string, roomId: string): Promise<{ data?: Blob; error?: string }> => {
+    try {
+      const res = await fetch(`${API_URL}/api/projects/${projectId}/rooms/${roomId}/pdf`, { credentials: 'include' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { error: (body as any).error || `Failed to generate PDF (${res.status})` };
+      }
+      const blob = await res.blob();
+      return { data: blob };
+    } catch {
+      return { error: 'Unable to connect to the server.' };
+    }
+  },
+
+  /* ─── Product Search ──────────────────────────────── */
+
+  searchProducts: (query: string) =>
+    request<SearchProductsResponse>('/api/catalog/search', { method: 'POST', body: JSON.stringify({ query }) }),
+
+  searchMore: (sessionId: string) =>
+    request<SearchMoreResponse>(`/api/catalog/search/${sessionId}/more`),
+
+  extractSearchResults: (urls: string[]) =>
+    request<SearchExtractResponse>('/api/catalog/search/extract', { method: 'POST', body: JSON.stringify({ urls }) }),
 };
+
+/* ─── Search types ──────────────────────────────────── */
+
+export interface SearchResultItem {
+  name: string;
+  brand: string;
+  price: string;
+  url: string;
+  imageUrl?: string;
+  category?: string;
+  dimensions?: string;
+  material?: string;
+  description?: string;
+}
+
+export interface SearchProductsResponse {
+  sessionId: string;
+  results: SearchResultItem[];
+  hasMore: boolean;
+  total: number;
+}
+
+export interface SearchMoreResponse {
+  results: SearchResultItem[];
+  hasMore: boolean;
+  total: number;
+}
+
+export interface SearchExtractResponse {
+  results: Array<{
+    url: string;
+    type?: 'single' | 'multiple' | 'error';
+    product?: any;
+    products?: any[];
+    error?: string;
+    errorCode?: string;
+  }>;
+}
