@@ -258,6 +258,8 @@ export interface PlacedProduct {
   zone: PlacementZone;
   /** Clearance to nearest wall in each direction (inches) */
   clearance: { top: number; right: number; bottom: number; left: number };
+  /** True if product dimensions are missing — cannot be rendered on canvas */
+  missingDimensions?: boolean;
 }
 
 /** Which zone a category prefers for smart placement */
@@ -327,7 +329,25 @@ export function autoLayoutProducts(
 
   for (const item of sorted) {
     const normalized = normalizeProductDimensions(item.dims);
-    if (!normalized) continue;
+    if (!normalized) {
+      // Still include in output so visibility pills can show it
+      placed.push({
+        id: item.id,
+        label: item.label,
+        brand: item.brand,
+        imageUrl: item.imageUrl,
+        x: 0, y: 0, widthIn: 0, depthIn: 0,
+        originalWidthIn: 0, originalDepthIn: 0,
+        rotated: false,
+        fit: calculateFit(roomWidthFt, roomLengthFt, item.dims, item.category),
+        isContext: item.isContext,
+        isHighlighted: item.isHighlighted,
+        zone: 'center',
+        clearance: { top: 0, right: 0, bottom: 0, left: 0 },
+        missingDimensions: true,
+      });
+      continue;
+    }
 
     let wIn = normalized.widthIn;
     let dIn = normalized.depthIn;

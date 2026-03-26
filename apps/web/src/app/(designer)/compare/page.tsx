@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, Product, ProjectSummary, Room, ShortlistItem, RecommendationResult } from '@/lib/api';
+import { api, Product, ProjectSummary, Room, RecommendationResult } from '@/lib/api';
 import {
   getAttributesForCategory,
   resolveAttributeValue,
@@ -197,6 +197,257 @@ function FitBadge({ fit }: { fit: FitResult }) {
   );
 }
 
+/* ─── Missing Dimensions Modal ─────────────────────── */
+
+interface DimFormEntry {
+  productId: string;
+  productName: string;
+  brandName: string | null;
+  imageUrl: string | undefined;
+  width: string;
+  depth: string;
+  height: string;
+  unit: string;
+  /** Which fields were already present */
+  hadWidth: boolean;
+  hadDepth: boolean;
+  hadHeight: boolean;
+}
+
+function MissingDimsModal({
+  products,
+  saving,
+  onSave,
+  onCancel,
+}: {
+  products: Product[];
+  saving: boolean;
+  onSave: (entries: DimFormEntry[]) => void;
+  onCancel: () => void;
+}) {
+  const [entries, setEntries] = useState<DimFormEntry[]>(() =>
+    products.map((p) => {
+      const d = p.dimensions;
+      const imgs = p.images as { primary?: string } | null;
+      return {
+        productId: p.id,
+        productName: p.productName,
+        brandName: p.brandName,
+        imageUrl: imgs?.primary || p.imageUrl || undefined,
+        width: d?.width != null && d.width > 0 ? String(d.width) : '',
+        depth: d?.depth != null && d.depth > 0 ? String(d.depth) : d?.length != null && d.length > 0 ? String(d.length) : '',
+        height: d?.height != null && d.height > 0 ? String(d.height) : '',
+        unit: d?.unit || 'in',
+        hadWidth: d?.width != null && d.width > 0,
+        hadDepth: (d?.depth != null && d.depth > 0) || (d?.length != null && d.length > 0),
+        hadHeight: d?.height != null && d.height > 0,
+      };
+    }),
+  );
+
+  const updateEntry = (idx: number, field: keyof DimFormEntry, value: string) => {
+    setEntries((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], [field]: value };
+      return next;
+    });
+  };
+
+  const allValid = entries.every((e) => {
+    const w = parseFloat(e.width);
+    const d = parseFloat(e.depth);
+    return !isNaN(w) && w > 0 && !isNaN(d) && d > 0;
+  });
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) { if (e.key === 'Escape') onCancel(); }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [onCancel]);
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 200,
+        background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(3px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+      onClick={onCancel}
+    >
+      <div
+        className="anim-scale-in"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff', borderRadius: 16, width: '90vw', maxWidth: 640,
+          maxHeight: '85vh', overflow: 'auto',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.18)', padding: '28px 32px',
+        }}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: 8, background: 'rgba(146,112,12,0.08)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#92700C" strokeWidth="2" strokeLinecap="round">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+              <line x1="12" y1="22.08" x2="12" y2="12" />
+            </svg>
+          </div>
+          <div>
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.02em' }}>
+              Missing Product Dimensions
+            </h3>
+            <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '2px 0 0' }}>
+              Enter width and depth to place {products.length === 1 ? 'this product' : 'these products'} in the room layout.
+            </p>
+          </div>
+        </div>
+
+        {/* Product dimension forms */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 20 }}>
+          {entries.map((entry, idx) => (
+            <div
+              key={entry.productId}
+              style={{
+                display: 'flex', gap: 14, padding: '14px 16px',
+                borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-input)',
+              }}
+            >
+              {/* Product thumbnail */}
+              <div style={{
+                width: 52, height: 52, borderRadius: 8, overflow: 'hidden', flexShrink: 0,
+                background: 'var(--bg-card)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                {entry.imageUrl ? (
+                  <img src={entry.imageUrl} alt={entry.productName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--border-strong)" strokeWidth="1.4">
+                    <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
+                  </svg>
+                )}
+              </div>
+
+              {/* Product info + inputs */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {entry.productName}
+                </div>
+                {entry.brandName && (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>{entry.brandName}</div>
+                )}
+
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  {/* Width */}
+                  <div style={{ flex: 1, minWidth: 80 }}>
+                    <label style={{ fontSize: 10, fontWeight: 600, color: entry.hadWidth ? 'var(--text-muted)' : '#92700C', display: 'block', marginBottom: 3 }}>
+                      Width {!entry.hadWidth && <span style={{ color: '#b91c1c' }}>*</span>}
+                    </label>
+                    <input
+                      type="number"
+                      className="input-field"
+                      placeholder="e.g. 60"
+                      value={entry.width}
+                      onChange={(e) => updateEntry(idx, 'width', e.target.value)}
+                      min="0"
+                      step="0.1"
+                      style={{
+                        width: '100%', fontSize: 13, padding: '6px 10px',
+                        borderColor: !entry.hadWidth && !entry.width ? 'rgba(185,28,28,0.3)' : undefined,
+                      }}
+                    />
+                  </div>
+
+                  {/* Depth */}
+                  <div style={{ flex: 1, minWidth: 80 }}>
+                    <label style={{ fontSize: 10, fontWeight: 600, color: entry.hadDepth ? 'var(--text-muted)' : '#92700C', display: 'block', marginBottom: 3 }}>
+                      Depth {!entry.hadDepth && <span style={{ color: '#b91c1c' }}>*</span>}
+                    </label>
+                    <input
+                      type="number"
+                      className="input-field"
+                      placeholder="e.g. 36"
+                      value={entry.depth}
+                      onChange={(e) => updateEntry(idx, 'depth', e.target.value)}
+                      min="0"
+                      step="0.1"
+                      style={{
+                        width: '100%', fontSize: 13, padding: '6px 10px',
+                        borderColor: !entry.hadDepth && !entry.depth ? 'rgba(185,28,28,0.3)' : undefined,
+                      }}
+                    />
+                  </div>
+
+                  {/* Height (optional) */}
+                  <div style={{ flex: 1, minWidth: 80 }}>
+                    <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>
+                      Height
+                    </label>
+                    <input
+                      type="number"
+                      className="input-field"
+                      placeholder="optional"
+                      value={entry.height}
+                      onChange={(e) => updateEntry(idx, 'height', e.target.value)}
+                      min="0"
+                      step="0.1"
+                      style={{ width: '100%', fontSize: 13, padding: '6px 10px' }}
+                    />
+                  </div>
+
+                  {/* Unit */}
+                  <div style={{ width: 70 }}>
+                    <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>
+                      Unit
+                    </label>
+                    <select
+                      className="input-field"
+                      value={entry.unit}
+                      onChange={(e) => updateEntry(idx, 'unit', e.target.value)}
+                      style={{ width: '100%', fontSize: 12, padding: '6px 8px' }}
+                    >
+                      <option value="in">inches</option>
+                      <option value="cm">cm</option>
+                      <option value="ft">feet</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+          <button
+            onClick={onCancel}
+            className="btn-ghost"
+            style={{ fontSize: 13 }}
+          >
+            Skip for now
+          </button>
+          <button
+            onClick={() => onSave(entries)}
+            disabled={!allValid || saving}
+            className="btn-primary"
+            style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, opacity: !allValid || saving ? 0.6 : 1 }}
+          >
+            {saving ? (
+              <>
+                <svg className="anim-rotate" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>
+                Saving…
+              </>
+            ) : (
+              'Save & Place in Room'
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════
    Compare Page
    ═══════════════════════════════════════════════════════ */
@@ -216,9 +467,12 @@ export default function ComparePage() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [shortlistItems, setShortlistItems] = useState<ShortlistItem[]>([]);
   const [highlightedProductId, setHighlightedProductId] = useState<string | null>(null);
   const [rotatedProducts, setRotatedProducts] = useState<Set<string>>(new Set());
+  const [hiddenProducts, setHiddenProducts] = useState<Set<string>>(new Set());
+  const [positionOverrides, setPositionOverrides] = useState<Record<string, { x: number; y: number }>>({});
+  const [showDimsModal, setShowDimsModal] = useState(false);
+  const [dimsSaving, setDimsSaving] = useState(false);
 
   // Layer 3 state
   const [recommendation, setRecommendation] = useState<RecommendationResult | null>(null);
@@ -290,14 +544,6 @@ export default function ComparePage() {
     });
   }, [selectedProjectId, urlRoomId]);
 
-  // Fetch shortlisted items for the selected room (context items)
-  useEffect(() => {
-    if (!selectedProjectId || !selectedRoomId) { setShortlistItems([]); return; }
-    api.getProjectShortlist(selectedProjectId, selectedRoomId).then((res) => {
-      if (res.data) setShortlistItems(res.data);
-    });
-  }, [selectedProjectId, selectedRoomId]);
-
   // Derive category from pinned product
   const primaryCategory = useMemo(() => {
     const p = products.find((p) => p.id === pinnedId);
@@ -312,6 +558,24 @@ export default function ComparePage() {
   // Selected room
   const selectedRoom = rooms.find((r) => r.id === selectedRoomId) || null;
   const hasRoomDims = selectedRoom && selectedRoom.widthFt && selectedRoom.lengthFt;
+
+  // Detect products with missing dimensions (width or depth/length)
+  const productsWithMissingDims = useMemo(() => {
+    return products.filter((p) => {
+      const d = p.dimensions;
+      if (!d) return true;
+      const hasWidth = d.width != null && d.width > 0;
+      const hasDepth = (d.depth != null && d.depth > 0) || (d.length != null && d.length > 0);
+      return !hasWidth || !hasDepth;
+    });
+  }, [products]);
+
+  // Auto-show dimensions modal when room is selected and products have missing dims
+  useEffect(() => {
+    if (hasRoomDims && productsWithMissingDims.length > 0) {
+      setShowDimsModal(true);
+    }
+  }, [hasRoomDims, productsWithMissingDims.length]);
 
   // Compute fit results per product
   const fitResults = useMemo<Record<string, FitResult>>(() => {
@@ -332,22 +596,6 @@ export default function ComparePage() {
   const placedProducts = useMemo<PlacedProduct[]>(() => {
     if (!hasRoomDims) return [];
 
-    // Context items (shortlisted, excluding compared products)
-    const comparedIds = new Set(products.map((p) => p.id));
-    const contextItems: LayoutItem[] = shortlistItems
-      .filter((si) => !comparedIds.has(si.productId) && si.product)
-      .map((si) => ({
-        id: `ctx-${si.id}`,
-        label: si.product.productName,
-        brand: si.product.brandName,
-        imageUrl: (si.product.images as { primary?: string } | null)?.primary || si.product.imageUrl || undefined,
-        dims: si.product.dimensions,
-        category: si.product.category,
-        isContext: true,
-        isHighlighted: false,
-      }));
-
-    // Compared products
     const compareItems: LayoutItem[] = products.map((p) => ({
       id: p.id,
       label: p.productName,
@@ -360,12 +608,32 @@ export default function ComparePage() {
       rotated: rotatedProducts.has(p.id),
     }));
 
-    return autoLayoutProducts(
+    const laid = autoLayoutProducts(
       Number(selectedRoom!.widthFt),
       Number(selectedRoom!.lengthFt),
-      [...contextItems, ...compareItems],
+      compareItems,
     );
-  }, [products, shortlistItems, selectedRoom, hasRoomDims, highlightedProductId, rotatedProducts]);
+
+    // Apply manual position overrides from drag-and-drop
+    const roomW = Number(selectedRoom!.widthFt) * 12;
+    const roomH = Number(selectedRoom!.lengthFt) * 12;
+    return laid.map((p) => {
+      const ov = positionOverrides[p.id];
+      if (!ov) return p;
+      const x = Math.max(0, Math.min(ov.x, roomW - p.widthIn));
+      const y = Math.max(0, Math.min(ov.y, roomH - p.depthIn));
+      return {
+        ...p,
+        x, y,
+        clearance: {
+          top: Math.round(y),
+          left: Math.round(x),
+          right: Math.round(roomW - x - p.widthIn),
+          bottom: Math.round(roomH - y - p.depthIn),
+        },
+      };
+    });
+  }, [products, selectedRoom, hasRoomDims, highlightedProductId, rotatedProducts, positionOverrides]);
 
   const setPin = useCallback((id: string) => setPinnedId(id), []);
 
@@ -421,6 +689,39 @@ export default function ComparePage() {
     setEditedRec(null);
     setEditedTradeOffs(null);
   }, [recommendation]);
+
+  // Save missing dimensions handler
+  const handleSaveDimensions = useCallback(async (entries: DimFormEntry[]) => {
+    setDimsSaving(true);
+    const updatedProducts = [...products];
+
+    for (const entry of entries) {
+      const w = parseFloat(entry.width);
+      const d = parseFloat(entry.depth);
+      if (isNaN(w) || w <= 0 || isNaN(d) || d <= 0) continue;
+
+      const h = parseFloat(entry.height);
+      const dims = {
+        width: w,
+        depth: d,
+        ...((!isNaN(h) && h > 0) ? { height: h } : {}),
+        unit: entry.unit as 'in' | 'cm' | 'ft',
+      };
+
+      const res = await api.updateProduct(entry.productId, { dimensions: dims });
+      if (res.data) {
+        // Update local product state with the saved dimensions
+        const idx = updatedProducts.findIndex((p) => p.id === entry.productId);
+        if (idx !== -1) {
+          updatedProducts[idx] = { ...updatedProducts[idx], dimensions: dims };
+        }
+      }
+    }
+
+    setProducts(updatedProducts);
+    setDimsSaving(false);
+    setShowDimsModal(false);
+  }, [products]);
 
   /* ─── Loading / Error ─────────────────────────────── */
 
@@ -519,6 +820,7 @@ export default function ComparePage() {
             roomName={selectedRoom!.name}
             products={placedProducts}
             highlightedId={highlightedProductId}
+            hiddenIds={hiddenProducts}
             onProductClick={(id) => {
               if (products.some((p) => p.id === id)) {
                 setHighlightedProductId((prev) => prev === id ? null : id);
@@ -531,13 +833,18 @@ export default function ComparePage() {
                 return next;
               });
             }}
+            onToggleVisibility={(id) => {
+              setHiddenProducts((prev) => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id); else next.add(id);
+                return next;
+              });
+            }}
+            onProductMove={(id, xIn, yIn) => {
+              setPositionOverrides((prev) => ({ ...prev, [id]: { x: xIn, y: yIn } }));
+            }}
           />
           {/* Room context note */}
-          {shortlistItems.length > 0 && (
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
-              {shortlistItems.filter((si) => !products.some((p) => p.id === si.productId)).length} shortlisted item(s) shown as context (dashed outline)
-            </div>
-          )}
         </div>
       )}
 
@@ -1053,6 +1360,16 @@ export default function ComparePage() {
           </div>
         )}
       </div>
+
+      {/* ── Missing Dimensions Modal ──────────────── */}
+      {showDimsModal && productsWithMissingDims.length > 0 && (
+        <MissingDimsModal
+          products={productsWithMissingDims}
+          saving={dimsSaving}
+          onSave={handleSaveDimensions}
+          onCancel={() => setShowDimsModal(false)}
+        />
+      )}
     </div>
   );
 }
