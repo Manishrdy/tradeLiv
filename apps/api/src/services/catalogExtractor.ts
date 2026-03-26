@@ -342,7 +342,17 @@ IMPORTANT: Use the option label EXACTLY as it appears on the page or in shopify_
 For example, if the page has separate "Finish" and "Color" selectors, keep them as two separate entries — do NOT merge them.
 If shopify_options is present, use it as the authoritative source for option types and values.
 Only include options with 2+ values.
-Example: [{ "type": "Finish", "values": ["Walnut", "Natural", "Espresso"] }, { "type": "Size", "values": ["Queen", "King"] }, { "type": "Configuration", "values": ["Headboard", "Frame"] }]
+IMPORTANT: Furniture products commonly have these option axes — scan for ALL of them:
+  - Configuration (e.g. "Headboard", "Frame", "With Storage")
+  - Size (e.g. "Queen", "King", "Full")
+  - Finish / Color (e.g. "Walnut", "Natural", "Espresso", "Grey") — look for color swatches, finish selectors, wood tone options
+  - Fabric / Upholstery (e.g. "Linen", "Velvet", "Leather")
+  - Material — ONLY if the user can SELECT between different materials (e.g. "Wood" vs "Metal" vs "Marble" as a chooser).
+    Do NOT add Material as an availableOption when the page simply DESCRIBES what the product is made of (e.g. "hardwood frame, polyester fabric, oak legs").
+    Component materials belong in the "materials" object, not in availableOptions.
+Do NOT miss finish/color options — these are among the most common product variants for furniture.
+If the body_text or page mentions multiple finishes/colors (even as text like "Available in Walnut, Natural, Espresso, and Grey"), extract them as an availableOptions entry.
+Example: [{ "type": "Finish", "values": ["Walnut", "Natural", "Espresso", "Grey"] }, { "type": "Size", "values": ["Queen", "King"] }, { "type": "Configuration", "values": ["Headboard", "Frame"] }]
 
 CRITICAL — features: Array of product feature bullet points. Extract from product description, feature lists, or specification sections.
 Do NOT include availability info (colors, sizes, "Available in...") here.
@@ -449,6 +459,12 @@ Rules:
 - dimensions: THIS IS THE MOST IMPORTANT OPTIONAL FIELD. Use dim_labelled and dim_label first. Always include "raw".
 - features: extract ALL feature bullet points. Do NOT include availability info.
 - materials: extract structured material breakdown, not just the primary material string.
+- availableOptions: ONLY include actual product variant/customization options (Size, Color, Finish, Fabric, Material, Configuration, Leg, etc.).
+  Do NOT include website UI elements, navigation controls, or page actions such as:
+  "Selection Summary", "Location Menu", "Add to Cart", "Save for Later", "Zip Code", "Close Menu", "Quantity", "Share", "Wishlist".
+  If an option's values contain the product name itself or action labels (e.g. "Save for Later", "Add to Bag"), it is NOT a product option — exclude it entirely.
+  Also exclude option values like "N options available", "and N other options", "View all", "See more" — these are UI hints, not selectable variants.
+  If you can only see a subset of values (e.g. "Natural" + "and 3 other options"), only include the actual values you can see, not the placeholder text.
 - Output ONLY the JSON object.`;
 
 /* ─── HTML fetch ─────────────────────────────────────── */
@@ -1083,7 +1099,253 @@ function extractEmbeddedProductJson(html: string, url: string): string[] {
         const data = JSON.parse(match[1]);
         const dimText = extractDimensionFieldsFromJson(data);
         if (dimText) lines.push(`embedded_dimensions: ${dimText}`);
+
+        // Also extract options/variants from hydration data (Next.js, etc.)
+        if (!foundProduct) {
+          const hydrationOptions = extractOptionsFromHydrationData(data);
+          if (hydrationOptions.length > 0) {
+            lines.push(`shopify_options: ${JSON.stringify(hydrationOptions)}`);
+          }
+          const hydrationPricing = extractPricingFromHydrationData(data, variantId);
+          lines.push(...hydrationPricing);
+        }
       } catch { /* ignore parse failures */ }
+    }
+  }
+
+  // ── HTML DOM option selectors (ALWAYS supplementary — never replaces LLM/Shopify options) ──
+  const domOptions = extractOptionsFromHtmlDom(html);
+  if (domOptions.length > 0) {
+    lines.push(`dom_options: ${JSON.stringify(domOptions)}`);
+  }
+
+  return lines;
+}
+
+/* ─── Extract product options from HTML DOM selectors ── */
+
+function extractOptionsFromHtmlDom(html: string): Array<{ name: string; values: string[] }> {
+  const options: Array<{ name: string; values: string[] }> = [];
+  const seen = new Set<string>();
+
+  // Filter out instruction-like labels ("Select a color", "Choose your size", etc.)
+  // and clean them to extract the actual option name.
+  const cleanOptionName = (raw: string): string => {
+    let name = raw.trim();
+    // Remove instruction prefixes: "Select a color or finish" → "color or finish" → "Finish"
+    name = name.replace(/^(?:select|choose|pick|change)\s+(?:a|an|your|the)?\s*/i, '');
+    // "color or finish" → take the last word as the canonical name
+    if (/\bor\b/i.test(name)) {
+      const parts = name.split(/\s+or\s+/i);
+      name = parts[parts.length - 1].trim();
+    }
+    // Remove trailing colons, question marks
+    name = name.replace(/[:\?]+$/, '').trim();
+    // If what's left is too short or still looks like an instruction, reject it
+    if (name.length < 2 || /^(select|choose|pick|option|variant)\s*$/i.test(name)) return '';
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  };
+
+  // Pattern 1: <select> elements with option-related names/labels
+  // e.g. <select name="finish"><option>Walnut</option><option>Natural</option>...</select>
+  const selectRegex = /<(?:label[^>]*>([^<]{1,60})<\/label>\s*)?<select[^>]*(?:name|id|data-option|aria-label)=["']([^"']{1,100})["'][^>]*>([\s\S]*?)<\/select>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = selectRegex.exec(html)) !== null) {
+    const rawName = m[1]?.trim() || m[2]?.trim() || '';
+    const name = cleanOptionName(rawName);
+    if (!name || seen.has(name.toLowerCase())) continue;
+    const optionValues: string[] = [];
+    const optRegex = /<option[^>]*(?:value=["']([^"']{1,100})["'])?[^>]*>([^<]{1,100})<\/option>/gi;
+    let optMatch: RegExpExecArray | null;
+    while ((optMatch = optRegex.exec(m[3])) !== null) {
+      const val = (optMatch[2] || optMatch[1] || '').trim();
+      if (val && val !== '' && !/select|choose|pick/i.test(val)) {
+        optionValues.push(val);
+      }
+    }
+    if (optionValues.length > 0) {
+      seen.add(name.toLowerCase());
+      options.push({ name, values: optionValues });
+    }
+  }
+
+  // Pattern 2: Swatch/button groups with data-option-type or data-option-name
+  // e.g. <div data-option-name="Finish"><button data-value="Walnut">...
+  const swatchGroupRegex =
+    /<(?:div|fieldset|ul)[^>]*(?:data-option-(?:name|type|index)|data-product-option|aria-label)=["']([^"']{1,100})["'][^>]*>([\s\S]*?)<\/(?:div|fieldset|ul)>/gi;
+  while ((m = swatchGroupRegex.exec(html)) !== null) {
+    const name = cleanOptionName(m[1]);
+    if (!name || seen.has(name.toLowerCase()) || /^\d+$/.test(name)) continue;
+    const values: string[] = [];
+    // Look for value in data-value, data-option-value, aria-label, or button text
+    const valRegex = /(?:data-value|data-option-value|data-swatch-value|aria-label)=["']([^"']{1,100})["']/gi;
+    let valMatch: RegExpExecArray | null;
+    while ((valMatch = valRegex.exec(m[2])) !== null) {
+      const val = valMatch[1].trim();
+      if (val && !values.includes(val)) values.push(val);
+    }
+    if (values.length > 0) {
+      seen.add(name.toLowerCase());
+      options.push({ name, values });
+    }
+  }
+
+  // Pattern 3: Radio button groups with name containing option keywords
+  // e.g. <input type="radio" name="option-finish" value="Walnut">
+  const radioGroups = new Map<string, string[]>();
+  const radioRegex = /<input[^>]*type=["']radio["'][^>]*name=["']([^"']{1,100})["'][^>]*value=["']([^"']{1,100})["'][^>]*>/gi;
+  while ((m = radioRegex.exec(html)) !== null) {
+    const name = m[1].trim();
+    const val = m[2].trim();
+    if (!name || !val) continue;
+    if (!radioGroups.has(name)) radioGroups.set(name, []);
+    const vals = radioGroups.get(name)!;
+    if (!vals.includes(val)) vals.push(val);
+  }
+  for (const [rawName, values] of radioGroups) {
+    if (values.length < 2 || seen.has(rawName.toLowerCase())) continue;
+    // Clean up name: "option-finish" → "Finish", "option[Finish]" → "Finish"
+    const stripped = rawName.replace(/^option[-_\[]*/i, '').replace(/\]$/, '').trim();
+    const cleaned = cleanOptionName(stripped) || stripped;
+    if (cleaned) {
+      seen.add(cleaned.toLowerCase());
+      options.push({ name: cleaned, values });
+    }
+  }
+
+  // Pattern 4: Button groups where buttons have explicit option labels
+  // e.g. <div class="option-group"><span class="option-label">Finish</span><button>Walnut</button>...
+  const labeledGroupRegex =
+    /<(?:div|fieldset)[^>]*class=["'][^"']*(?:option|variant|selector|swatch)[^"']*["'][^>]*>[\s\S]*?<(?:span|label|div|p|h\d)[^>]*(?:class=["'][^"']*(?:option-label|option-name|variant-label|swatch-label)[^"']*["'])?[^>]*>([^<]{1,60})<\/(?:span|label|div|p|h\d)>([\s\S]*?)<\/(?:div|fieldset)>/gi;
+  while ((m = labeledGroupRegex.exec(html)) !== null) {
+    const label = cleanOptionName(m[1].replace(/:$/, ''));
+    if (!label || seen.has(label.toLowerCase())) continue;
+    const btnValues: string[] = [];
+    const btnRegex = /<(?:button|a|span)[^>]*>([^<]{1,60})<\/(?:button|a|span)>/gi;
+    let btnMatch: RegExpExecArray | null;
+    while ((btnMatch = btnRegex.exec(m[2])) !== null) {
+      const val = btnMatch[1].trim();
+      if (val && val.length > 0 && val.length < 50 && !/select|choose|pick|add|remove/i.test(val)) {
+        btnValues.push(val);
+      }
+    }
+    if (btnValues.length >= 2) {
+      seen.add(label.toLowerCase());
+      options.push({ name: label, values: btnValues });
+    }
+  }
+
+  return options;
+}
+
+/* ─── Extract options from Next.js / React hydration data ── */
+
+function extractOptionsFromHydrationData(data: any, depth = 0): Array<{ name: string; values: string[] }> {
+  if (depth > 10 || !data) return [];
+
+  // Look for arrays that look like product options
+  if (Array.isArray(data)) {
+    // Check if this IS an options array (each item has name + values)
+    if (data.length > 0 && data.every((item: any) =>
+      item && typeof item === 'object' &&
+      (item.name || item.label || item.type || item.title) &&
+      (Array.isArray(item.values) || Array.isArray(item.options) || Array.isArray(item.choices))
+    )) {
+      return data.map((item: any) => ({
+        name: String(item.name ?? item.label ?? item.type ?? item.title ?? ''),
+        values: (item.values ?? item.options ?? item.choices ?? [])
+          .map((v: any) => typeof v === 'string' ? v : (v?.label ?? v?.value ?? v?.name ?? String(v)))
+          .filter((v: any) => typeof v === 'string' && v.length > 0),
+      })).filter((o: any) => o.name && o.values.length > 0);
+    }
+
+    // Recurse into array items
+    for (const item of data.slice(0, 20)) {
+      const result = extractOptionsFromHydrationData(item, depth + 1);
+      if (result.length > 0) return result;
+    }
+    return [];
+  }
+
+  if (typeof data === 'object') {
+    // Check keys that commonly hold product options
+    const optionKeys = ['options', 'productOptions', 'product_options', 'variantOptions',
+      'variant_options', 'configOptions', 'availableOptions'];
+    for (const key of optionKeys) {
+      if (data[key] && Array.isArray(data[key])) {
+        const result = extractOptionsFromHydrationData(data[key], depth + 1);
+        if (result.length > 0) return result;
+      }
+    }
+
+    // Check if this is a product object with options
+    if (data.product && typeof data.product === 'object') {
+      const result = extractOptionsFromHydrationData(data.product, depth + 1);
+      if (result.length > 0) return result;
+    }
+
+    // Check pageProps (Next.js pattern)
+    if (data.props?.pageProps) {
+      const result = extractOptionsFromHydrationData(data.props.pageProps, depth + 1);
+      if (result.length > 0) return result;
+    }
+
+    // Recurse into all object values
+    for (const val of Object.values(data)) {
+      if (typeof val === 'object' && val !== null) {
+        const result = extractOptionsFromHydrationData(val, depth + 1);
+        if (result.length > 0) return result;
+      }
+    }
+  }
+
+  return [];
+}
+
+function extractPricingFromHydrationData(data: any, variantId: string | null): string[] {
+  const lines: string[] = [];
+
+  // Recursively find a "variants" array
+  const findVariants = (obj: any, depth: number): any[] | null => {
+    if (depth > 10 || !obj) return null;
+    if (Array.isArray(obj)) {
+      // Check if this IS a variants array
+      if (obj.length > 0 && obj.every((v: any) => v && typeof v === 'object' && (v.price != null || v.priceV2 != null))) {
+        return obj;
+      }
+      for (const item of obj.slice(0, 20)) {
+        const r = findVariants(item, depth + 1);
+        if (r) return r;
+      }
+      return null;
+    }
+    if (typeof obj === 'object') {
+      if (obj.variants && Array.isArray(obj.variants)) return obj.variants;
+      for (const val of Object.values(obj)) {
+        if (typeof val === 'object' && val !== null) {
+          const r = findVariants(val, depth + 1);
+          if (r) return r;
+        }
+      }
+    }
+    return null;
+  };
+
+  const variants = findVariants(data, 0);
+  if (!variants || variants.length === 0) return lines;
+
+  // Find selected variant
+  if (variantId) {
+    const selected = variants.find((v: any) => String(v.id) === variantId || String(v.id).endsWith(variantId));
+    if (selected) {
+      const price = selected.price ?? selected.priceV2?.amount;
+      const priceNum = typeof price === 'string' ? parseFloat(price) : Number(price);
+      const normalizedPrice = priceNum > 10000 ? priceNum / 100 : priceNum;
+      if (!isNaN(normalizedPrice) && normalizedPrice > 0) {
+        lines.push(`selected_variant_price: ${normalizedPrice}`);
+      }
+      const title = selected.title ?? selected.name ?? '';
+      if (title) lines.push(`selected_variant_title: ${title}`);
     }
   }
 
@@ -1929,6 +2191,38 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
             });
           }
 
+          // Merge DOM-extracted options as supplementary (never replaces existing)
+          const domOptionsMatch = signals.match(/^dom_options:\s*(\[.+\])$/m);
+          if (domOptionsMatch) {
+            try {
+              const domParsed = JSON.parse(domOptionsMatch[1]);
+              if (Array.isArray(domParsed)) {
+                const products = result.type === 'single' ? [result.product].filter(Boolean) : (result.products ?? []);
+                for (const p of products) {
+                  if (!p) continue;
+                  const existingTypes = new Set(
+                    (p.availableOptions ?? []).map(o => o.type.toLowerCase())
+                  );
+                  // Pre-clean DOM options to remove UI noise before merging
+                  const cleanedDomOpts = cleanAvailableOptions(
+                    domParsed
+                      .filter((o: any) => o && (o.name || o.type) && Array.isArray(o.values))
+                      .map((o: any) => ({ type: String(o.name ?? o.type).trim(), values: o.values.map((v: any) => String(v)) })),
+                    p.productName ?? '',
+                  );
+                  for (const domOpt of cleanedDomOpts) {
+                    const typeName = domOpt.type.charAt(0).toUpperCase() + domOpt.type.slice(1);
+                    if (existingTypes.has(typeName.toLowerCase())) continue;
+                    if (!p.availableOptions) p.availableOptions = [];
+                    p.availableOptions.push({ type: typeName, values: domOpt.values });
+                    existingTypes.add(typeName.toLowerCase());
+                    logger.info('DOM option merged as supplementary', { type: typeName, valueCount: domOpt.values.length });
+                  }
+                }
+              }
+            } catch { /* ignore parse failure */ }
+          }
+
           // Deterministic fallback from extracted signals before using web search.
           const product = result.type === 'single' ? result.product : result.products?.[0];
           let hasDims = hasPrimaryDimensions(product?.dimensions);
@@ -2285,6 +2579,63 @@ function buildResult(parsed: any, sourceUrl: string, preCategory?: string | null
   console.log(JSON.stringify(singleResult, null, 2));
   console.log('═══════════════════════════════\n');
   return singleResult;
+}
+
+/* ─── Clean available options: remove UI noise, deduplicate ── */
+
+// Option type names that are website UI, not product variants
+const NOISE_OPTION_TYPES = new Set([
+  'selection summary', 'location menu', 'location', 'quantity', 'qty',
+  'share', 'wishlist', 'add to cart', 'delivery', 'delivery options',
+  'protection plan', 'protection', 'warranty plan', 'gift wrap',
+  'store pickup', 'shipping method', 'zip code', 'postal code',
+]);
+
+// Option values that are UI actions/labels, not selectable product variants
+const NOISE_VALUE_PATTERNS = [
+  /^\d+\s*options?\s*available$/i,       // "265 options available"
+  /^and\s+\d+\s+other\s+options?$/i,    // "and 3 other options"
+  /^view\s*all$/i,                        // "View all"
+  /^close\s*menu$/i,                      // "Close Menu"
+  /^zip\s*code$/i,                        // "Zip Code"
+  /^save\s*(for\s*later)?$/i,             // "Save for Later", "Save"
+  /^add\s*to\s*(cart|bag|wishlist)$/i,    // "Add to Cart"
+  /^select\s/i,                           // "Select a ..."
+  /^choose\s/i,                           // "Choose ..."
+  /^enter\s/i,                            // "Enter zip code"
+  /^none$/i,                              // "None"
+  /^not\s*selected$/i,                    // "Not selected"
+  /^n\/a$/i,
+  /^\d+\s*options?$/i,                   // "4 options"
+  /^see\s+(all|more)/i,                  // "See all", "See more"
+  /^show\s+(all|more)/i,                 // "Show all"
+];
+
+function cleanAvailableOptions(
+  options: Array<{ type: string; values: string[] }>,
+  productName: string,
+): Array<{ type: string; values: string[] }> {
+  const productNameLower = productName.toLowerCase().trim();
+
+  return options
+    .filter(opt => !NOISE_OPTION_TYPES.has(opt.type.toLowerCase().trim()))
+    .map(opt => {
+      // Deduplicate and filter noisy values
+      const seen = new Set<string>();
+      const cleanValues = opt.values.filter(v => {
+        const vLower = v.toLowerCase().trim();
+        // Skip duplicates
+        if (seen.has(vLower)) return false;
+        seen.add(vLower);
+        // Skip if value matches the product name
+        if (vLower === productNameLower) return false;
+        // Skip UI action patterns
+        if (NOISE_VALUE_PATTERNS.some(pat => pat.test(v.trim()))) return false;
+        return true;
+      });
+      return { type: opt.type, values: cleanValues };
+    })
+    .filter(opt => opt.values.length >= 2); // Must have 2+ values to be a real option
 }
 
 function normalizeProduct(
@@ -2692,11 +3043,66 @@ function normalizeProduct(
     }
   }
 
+  // ── Promote materials into availableOptions ──
+  // Only promote when materials represent genuinely selectable alternatives
+  // (e.g., "Oak" vs "Walnut" for frame). Do NOT promote when the materials object
+  // describes different COMPONENTS of the product (frame, upholstery, legs, etc.)
+  // — those are descriptions, not user-selectable options.
+  if (result.materials) {
+    const materialOptionKey = 'material';
+
+    // Check if a Material option already exists from LLM/Shopify/pricing data
+    if (!existingOptionTypes.has(materialOptionKey)) {
+      const materialValues = new Set<string>();
+
+      // Only promote if there's a single "primary" key with multiple values,
+      // or an explicit "options" array. Multiple component keys (frame, upholstery, legs)
+      // indicate a bill-of-materials, not selectable choices.
+      const componentKeys = Object.keys(result.materials).filter(
+        k => k !== 'certifications' && k !== 'finish_coating'
+      );
+      const isBillOfMaterials = componentKeys.length >= 2;
+
+      if (!isBillOfMaterials) {
+        for (const [key, val] of Object.entries(result.materials)) {
+          if (key === 'certifications' || key === 'finish_coating') continue;
+          if (Array.isArray(val)) {
+            for (const v of val) {
+              if (typeof v === 'string' && v.length > 0) materialValues.add(v);
+            }
+          } else if (typeof val === 'string' && val.length > 0) {
+            materialValues.add(val);
+          }
+        }
+      }
+
+      // Only add as option if there are 2+ selectable values
+      if (materialValues.size >= 2) {
+        existingOptionTypes.set(materialOptionKey, {
+          type: 'Material',
+          values: materialValues,
+        });
+      }
+    }
+  }
+
+  // ── Merge DOM-extracted options (supplementary) ──
+  // DOM options may capture options the LLM missed (e.g., Finish swatches on custom frontends)
+  // Only add option types that don't already exist.
+  // This is handled by the cross-validation above for pricing/activeVariant keys,
+  // but DOM options need explicit merging here since they're not in the pricing matrix.
+
   // Rebuild availableOptions from the merged map
   if (existingOptionTypes.size > 0) {
     result.availableOptions = Array.from(existingOptionTypes.values())
       .filter(opt => opt.values.size >= 2)
       .map(opt => ({ type: opt.type, values: Array.from(opt.values) }));
+  }
+
+  // ── Clean options: remove UI noise, deduplicate values ──
+  if (result.availableOptions) {
+    result.availableOptions = cleanAvailableOptions(result.availableOptions, result.productName);
+    if (result.availableOptions.length === 0) result.availableOptions = undefined;
   }
 
   // Re-derive legacy fields after cross-validation

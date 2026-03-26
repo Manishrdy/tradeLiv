@@ -17,6 +17,7 @@ import adminRouter from './routes/admin';
 import paymentsRouter from './routes/payments';
 import { furnitureCategoriesRouter, adminFurnitureCategoriesRouter } from './routes/furnitureCategories';
 import sessionsRouter from './routes/sessions';
+import comparisonsRouter from './routes/comparisons';
 import { stripeWebhookHandler } from './routes/webhooks';
 import { addProjectListener, emitProjectEvent } from './services/projectEvents';
 import { setOnline, setOffline, purgeExpiredMessages } from './services/messageService';
@@ -71,6 +72,7 @@ app.use('/api/admin', adminRouter);
 app.use('/api/furniture-categories', furnitureCategoriesRouter);
 app.use('/api/admin/furniture-categories', adminFurnitureCategoriesRouter);
 app.use('/api/sessions', sessionsRouter);
+app.use('/api/comparisons', comparisonsRouter);
 
 /* ─── SSE: real-time project events ───────────────── */
 app.get('/api/projects/:projectId/events', (req, res) => {

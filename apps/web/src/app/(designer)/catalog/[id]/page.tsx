@@ -782,8 +782,8 @@ export default function ProductDetailPage() {
                 </div>
                 {finishes.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
-                    {finishes.map((f) => (
-                      <span key={f} className="tag-chip" style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }} onClick={() => setFinishes(finishes.filter((x) => x !== f))}>
+                    {finishes.map((f, i) => (
+                      <span key={`${f}-${i}`} className="tag-chip" style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }} onClick={() => setFinishes(finishes.filter((_, idx) => idx !== i))}>
                         {f}
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
                           <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
@@ -830,7 +830,10 @@ export default function ProductDetailPage() {
                 {[
                   { label: 'Price', value: formatPrice(product.price) },
                   { label: 'Category', value: product.category || '—' },
-                  { label: 'Material', value: product.material || '—' },
+                  // Show Material as text only when availableOptions doesn't cover it
+                  ...(!product.availableOptions?.some(o => o.type.toLowerCase() === 'material')
+                    ? [{ label: 'Material', value: product.material || '—' }]
+                    : []),
                   { label: 'Lead time', value: product.leadTime || '—' },
                   { label: 'Dimensions', value: dimStr || '—' },
                   { label: 'Style', value: (meta?.style as string) || '—' },
@@ -844,23 +847,62 @@ export default function ProductDetailPage() {
                 ))}
               </div>
 
+              {/* Available Options — Configuration, Size, Finish, Material, etc. as button groups */}
+              {product.availableOptions && product.availableOptions.length > 0 && (
+                <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  {product.availableOptions.map((option) => {
+                    // Determine if any value is the "active" one from activeVariant
+                    const activeValue = product.activeVariant?.[option.type.toLowerCase()] as string | undefined;
+                    return (
+                      <div key={option.type}>
+                        <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>{option.type}</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {option.values.map((val, i) => {
+                            const isActive = activeValue != null && val.toLowerCase() === activeValue.toLowerCase();
+                            return (
+                              <button
+                                key={`${val}-${i}`}
+                                type="button"
+                                style={{
+                                  padding: '6px 14px',
+                                  fontSize: 13,
+                                  fontWeight: 500,
+                                  borderRadius: 6,
+                                  border: isActive ? '1.5px solid var(--accent)' : '1px solid var(--border)',
+                                  background: isActive ? 'var(--accent-bg, rgba(99,102,241,0.08))' : 'var(--bg-secondary)',
+                                  color: isActive ? 'var(--accent)' : 'var(--text-primary)',
+                                  cursor: 'default',
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                {val}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Finishes — fallback when not already shown in availableOptions */}
+              {product.finishes.length > 0 && !product.availableOptions?.some(o => ['Finish', 'Color', 'Fabric'].includes(o.type)) && (
+                <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>Finishes</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {product.finishes.map((f, i) => (
+                      <span key={`${f}-${i}`} className="tag-chip">{f}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Description from metadata */}
               {meta?.description && (
                 <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>Description</div>
                   <div style={{ fontSize: 13.5, color: 'var(--text-primary)', lineHeight: 1.6 }}>{meta.description as string}</div>
-                </div>
-              )}
-
-              {/* Finishes */}
-              {product.finishes.length > 0 && (
-                <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>Finishes</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {product.finishes.map((f) => (
-                      <span key={f} className="tag-chip">{f}</span>
-                    ))}
-                  </div>
                 </div>
               )}
 

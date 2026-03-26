@@ -1001,6 +1001,44 @@ export interface DesignerSessionDetail {
   lastPing: string;
 }
 
+/* ─── Comparison types ─────────────────────────────── */
+
+export interface PinnedComparisonSummary {
+  id: string;
+  projectId: string;
+  roomId: string | null;
+  designerId: string;
+  pinnedProductId: string;
+  comparedProductIds: string[];
+  createdAt: string;
+  room?: { id: string; name: string } | null;
+}
+
+export interface PinnedComparisonDetail extends PinnedComparisonSummary {
+  room?: {
+    id: string;
+    name: string;
+    lengthFt: number | null;
+    widthFt: number | null;
+    heightFt: number | null;
+    areaSqft: number | null;
+    categoryNeeds: string[];
+    clientRequirements: Record<string, unknown> | null;
+  } | null;
+  products: Product[];
+}
+
+export interface QuickCompareResult {
+  products: Product[];
+}
+
+export interface RecommendationResult {
+  recommendation: string;
+  tradeOffs: string[];
+  internalNotes: string[];
+  recommendedProduct: string | null;
+}
+
 /* ─── API methods ───────────────────────────────────── */
 
 export const api = {
@@ -1413,4 +1451,31 @@ export const api = {
 
   endSession: (sessionId: string) =>
     request<{ ok: boolean }>(`/api/sessions/${sessionId}/end`, { method: 'PUT' }),
+
+  // Comparisons
+  getComparisons: (projectId?: string) => {
+    const qs = projectId ? `?projectId=${projectId}` : '';
+    return request<PinnedComparisonSummary[]>(`/api/comparisons${qs}`);
+  },
+
+  getComparison: (id: string) =>
+    request<PinnedComparisonDetail>(`/api/comparisons/${id}`),
+
+  createComparison: (payload: { projectId: string; roomId?: string; pinnedProductId: string; comparedProductIds: string[] }) =>
+    request<PinnedComparisonSummary>('/api/comparisons', { method: 'POST', body: JSON.stringify(payload) }),
+
+  updateComparison: (id: string, payload: { pinnedProductId?: string; comparedProductIds?: string[]; roomId?: string | null }) =>
+    request<PinnedComparisonSummary>(`/api/comparisons/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+
+  deleteComparison: (id: string) =>
+    request<{ message: string }>(`/api/comparisons/${id}`, { method: 'DELETE' }),
+
+  quickCompare: (productIds: string[]) =>
+    request<QuickCompareResult>('/api/comparisons/quick', { method: 'POST', body: JSON.stringify({ productIds }) }),
+
+  generateRecommendation: (payload: { productIds: string[]; projectId?: string; roomId?: string; designerNotes?: string }) =>
+    request<RecommendationResult>('/api/comparisons/recommend', { method: 'POST', body: JSON.stringify(payload) }),
+
+  logComparisonEvent: (event: string, payload: Record<string, unknown>) =>
+    request<{ ok: boolean }>('/api/comparisons/events', { method: 'POST', body: JSON.stringify({ event, payload }) }),
 };

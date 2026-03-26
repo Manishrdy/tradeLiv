@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { api, ProductListItem } from '@/lib/api';
 
 /* ── Helpers ───────────────────────────────────────── */
@@ -186,6 +187,7 @@ function CompareModal({ items, onClose, onRemove }: { items: ProductListItem[]; 
    ══════════════════════════════════════════════════════ */
 
 export default function CatalogPage() {
+  const router = useRouter();
   const [products, setProducts]     = useState<ProductListItem[]>([]);
   const [loading, setLoading]       = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -456,7 +458,7 @@ export default function CatalogPage() {
         }}>
           <span style={{ fontSize: 12.5, fontWeight: 600 }}>{compareIds.size} selected</span>
           <button
-            onClick={() => setShowCompare(true)}
+            onClick={() => router.push(`/compare?ids=${[...compareIds].join(',')}&pinned=${[...compareIds][0]}`)}
             disabled={compareIds.size < 2}
             style={{
               background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 6,

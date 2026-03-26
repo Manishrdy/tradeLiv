@@ -1521,7 +1521,15 @@ export default function NewProductPage() {
             )}
 
             {/* ── Pricing matrix table (collapsible) ── */}
-            {singlePricing && singlePricing.length > 1 && (
+            {/* Hide when the table adds no info beyond variant chips (single axis, all same price) */}
+            {singlePricing && singlePricing.length > 1 && (() => {
+              const nonPriceKeys = Object.keys(singlePricing[0]).filter(k => k !== 'price');
+              const prices = singlePricing.map(e => Number(e.price)).filter(n => !isNaN(n));
+              const allSamePrice = prices.length > 0 && prices.every(p => p === prices[0]);
+              // If only 1 option axis and all prices identical, variant chips already show everything
+              if (nonPriceKeys.length <= 1 && allSamePrice) return null;
+              return true;
+            })() && (
               <div style={{ marginBottom: 20, padding: '16px 20px', borderRadius: 12, border: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>All Variants & Pricing</div>
