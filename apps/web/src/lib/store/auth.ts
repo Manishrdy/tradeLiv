@@ -21,6 +21,6 @@ export const useAuthStore = create<AuthState>()(
       setUser: (user) => set({ user }),
       clearAuth: () => set({ user: null }),
     }),
-    { name: 'tradeliv-auth' }
+    { name: 'furnlo-auth' }
   )
 );

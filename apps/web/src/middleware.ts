@@ -21,6 +21,7 @@ const PUBLIC_PATHS = [
 
 const PUBLIC_PREFIXES = [
   '/portal/',
+  '/client/',
   '/_next/',
   '/api/',
   '/favicon',

@@ -1,6 +1,8 @@
 import dotenv from 'dotenv';
 import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
+import { assertAuthEnv } from './config';
+assertAuthEnv();
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -18,11 +20,15 @@ import paymentsRouter from './routes/payments';
 import { furnitureCategoriesRouter, adminFurnitureCategoriesRouter } from './routes/furnitureCategories';
 import sessionsRouter from './routes/sessions';
 import comparisonsRouter from './routes/comparisons';
+import quotesRouter from './routes/quotes';
 import pdfRouter from './routes/pdf';
-import searchRouter from './routes/search';
+import notificationsRouter from './routes/notifications';
 import { stripeWebhookHandler } from './routes/webhooks';
 import { addProjectListener, emitProjectEvent } from './services/projectEvents';
+import { addDesignerListener } from './services/designerEvents';
 import { setOnline, setOffline, purgeExpiredMessages } from './services/messageService';
+import { purgeOldNotifications, getUnreadCount, notifyProjectDesigner } from './services/notificationService';
+import { requireAuth, requireRole, AuthRequest } from './middleware/auth';
 
 const app = express();
 const PORT = process.env.API_PORT ?? 4000;
@@ -75,8 +81,27 @@ app.use('/api/furniture-categories', furnitureCategoriesRouter);
 app.use('/api/admin/furniture-categories', adminFurnitureCategoriesRouter);
 app.use('/api/sessions', sessionsRouter);
 app.use('/api/comparisons', comparisonsRouter);
+app.use('/api/quotes', quotesRouter);
 app.use('/api/projects', pdfRouter);
-app.use('/api/catalog/search', searchRouter);
+app.use('/api/notifications', notificationsRouter);
+
+
+/* ─── SSE: real-time designer notifications ───────── */
+app.get('/api/notifications/stream', requireAuth, requireRole('designer'), async (req: AuthRequest, res) => {
+  const designerId = req.user!.id;
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+  res.write(':\n\n');
+
+  // Send current unread count on connect
+  const count = await getUnreadCount(designerId);
+  res.write(`event: unread_count\ndata: ${JSON.stringify({ count })}\n\n`);
+
+  addDesignerListener(designerId, res);
+});
 
 /* ─── SSE: real-time project events ───────────────── */
 app.get('/api/projects/:projectId/events', (req, res) => {
@@ -118,6 +143,12 @@ app.get('/api/portal/:portalToken/events', async (req, res) => {
   emitProjectEvent(project.id, 'presence', { actorType: 'client', online: true });
   addProjectListener(project.id, res);
 
+  // Notify designer that client is viewing the portal
+  notifyProjectDesigner(
+    project.id, 'client_portal_view',
+    'Your client is viewing the portal',
+  ).catch(() => {});
+
   res.on('close', () => {
     setOffline(project.id, 'client');
     emitProjectEvent(project.id, 'presence', { actorType: 'client', online: false });
@@ -135,6 +166,10 @@ app.listen(PORT, () => {
   // Run message TTL cleanup every 6 hours
   purgeExpiredMessages().catch(() => {});
   setInterval(() => purgeExpiredMessages().catch(() => {}), 6 * 60 * 60 * 1000);
+
+  // Run notification TTL cleanup every 24 hours (90-day retention)
+  purgeOldNotifications().catch(() => {});
+  setInterval(() => purgeOldNotifications().catch(() => {}), 24 * 60 * 60 * 1000);
 });
 
 export default app;

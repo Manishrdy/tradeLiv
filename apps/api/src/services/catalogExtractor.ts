@@ -2,7 +2,6 @@ import Anthropic from '@anthropic-ai/sdk';
 import puppeteer from 'puppeteer-core';
 import { config } from '../config';
 import logger from '../config/logger';
-import { enqueueClaudeCall } from './claudeRateLimit';
 
 let _client: Anthropic | null = null;
 function getClient() {
@@ -2160,16 +2159,12 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
 
     try {
       const userContent = `Extract product data from these page signals.\n\nPRICE: If "selected_variant_price" is present, use that — it's the exact price for the URL's variant. Do NOT use og:price or meta tag prices when selected_variant_price exists.\n\nDIMENSIONS (HIGHEST PRIORITY): Look for "explicit_dimensions_label" signals FIRST — these contain the raw text near a "Dimensions" heading on the page and are the MOST AUTHORITATIVE source. Parse width, depth, height, and unit values from that text. Then use dim_labelled and dim_label signals. Do NOT confuse variant titles (like "22 x 22") with actual product dimensions. Only labelled measurements (Width/Depth/Height) are real dimensions. NEVER return a product without dimensions if ANY dimension signal (explicit_dimensions_label, dim_label, dim_labelled, dim_WxDxH, spec_sections with measurements) exists in the signals below.\n\n${signals}`;
-      const response = await enqueueClaudeCall(
-        'extract:' + sourceUrl,
-        () => getClient().messages.create({
-          model: MODEL_FAST,
-          max_tokens: 2048,
-          system: SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: userContent }],
-        }),
-        SYSTEM_PROMPT + '\n' + userContent,
-      );
+      const response = await getClient().messages.create({
+        model: MODEL_FAST,
+        max_tokens: 2048,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userContent }],
+      });
 
       const textBlock = response.content.find((b) => b.type === 'text') as any;
       if (textBlock?.text) {
@@ -2270,16 +2265,12 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
               if (completeness.score < 50 && rendered.productText.length > 200) {
                 try {
                   const reUserContent = `Extract product data from this page content rendered by a headless browser.\n\nPRICE: Look for price patterns like "$1,234" or "Price: 1234".\n\nDIMENSIONS (HIGHEST PRIORITY):\nDimension-specific text found on the page:\n${rendered.dimensionText || '(none found)'}\n\nFull product area text:\n${rendered.productText.slice(0, 15_000)}`;
-                  const reExtractResponse = await enqueueClaudeCall(
-                    're-extract:' + sourceUrl,
-                    () => getClient().messages.create({
-                      model: MODEL_FAST,
-                      max_tokens: 2048,
-                      system: SYSTEM_PROMPT,
-                      messages: [{ role: 'user', content: reUserContent }],
-                    }),
-                    SYSTEM_PROMPT + '\n' + reUserContent,
-                  );
+                  const reExtractResponse = await getClient().messages.create({
+                    model: MODEL_FAST,
+                    max_tokens: 2048,
+                    system: SYSTEM_PROMPT,
+                    messages: [{ role: 'user', content: reUserContent }],
+                  });
                   const reTextBlock = reExtractResponse.content.find((b) => b.type === 'text') as any;
                   if (reTextBlock?.text) {
                     const reParsed = tryParseJson(reTextBlock.text);
@@ -2375,16 +2366,12 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
 
       try {
         const browserUserContent = `Extract product data from this page content rendered by a headless browser.\n\nPRICE: Look for price patterns like "$1,234" or "Price: 1234".\n\nDIMENSIONS (HIGHEST PRIORITY):\nDimension-specific text found on the page:\n${rendered.dimensionText || '(none found)'}\n\nFull product area text:\n${rendered.productText.slice(0, 15_000)}`;
-        const response = await enqueueClaudeCall(
-          'browser-extract:' + sourceUrl,
-          () => getClient().messages.create({
-            model: MODEL_FAST,
-            max_tokens: 2048,
-            system: SYSTEM_PROMPT,
-            messages: [{ role: 'user', content: browserUserContent }],
-          }),
-          SYSTEM_PROMPT + '\n' + browserUserContent,
-        );
+        const response = await getClient().messages.create({
+          model: MODEL_FAST,
+          max_tokens: 2048,
+          system: SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: browserUserContent }],
+        });
 
         const textBlock = response.content.find((b) => b.type === 'text') as any;
         if (textBlock?.text) {
@@ -2448,17 +2435,13 @@ async function extractWithWebSearch(sourceUrl: string): Promise<ExtractionResult
   // Single Claude call — web_search handles iterations internally.
   // Multi-turn accumulated web search results that blew past the 30k token/min org limit.
   const wsUserContent = `Search for the product at this URL and extract its full details:\n${sourceUrl}\n\nI need: name, price, currency, main image URL, furniture category, and metadata (description, key features, materials, assembly, care instructions, warranty, style, etc.).\n\nDIMENSIONS ARE THE MOST IMPORTANT DATA — find the product's width, depth, height measurements. Almost every furniture product page has dimensions (e.g. "68.5 x 85 x 54" or "68.5"W x 85"D x 54"H"). Search thoroughly for these. Include them in the dimensions object with numeric values and unit.\n\nReturn ONLY the JSON object as specified.`;
-  const response = await enqueueClaudeCall(
-    'websearch:' + sourceUrl,
-    () => getClient().messages.create({
-      model: MODEL_SEARCH,
-      max_tokens: 3072,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: wsUserContent }],
-      tools: [{ type: 'web_search_20250305', name: 'web_search' }] as any,
-    }),
-    SYSTEM_PROMPT + '\n' + wsUserContent,
-  );
+  const response = await getClient().messages.create({
+    model: MODEL_SEARCH,
+    max_tokens: 3072,
+    system: SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: wsUserContent }],
+    tools: [{ type: 'web_search_20250305', name: 'web_search' }] as any,
+  });
 
   const textBlocks = response.content.filter((b) => b.type === 'text');
   if (textBlocks.length > 0) {

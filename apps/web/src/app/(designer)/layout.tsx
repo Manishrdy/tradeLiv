@@ -5,6 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthStore } from '@/lib/store/auth';
 import { api } from '@/lib/api';
+import NotificationPanel from '@/components/NotificationPanel';
 
 /* ── Nav items ─────────────────────────────────────── */
 
@@ -231,6 +232,8 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
   const [cmdkOpen, setCmdkOpen]       = useState(false);
   const [cmdkSearch, setCmdkSearch]   = useState('');
   const [isOffline, setIsOffline]     = useState(false);
+  const [notifOpen, setNotifOpen]     = useState(false);
+  const [notifUnread, setNotifUnread] = useState(0);
 
   useEffect(() => {
     setHydrated(true);
@@ -282,6 +285,31 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
     setIsOffline(!navigator.onLine);
     return () => { window.removeEventListener('offline', goOffline); window.removeEventListener('online', goOnline); };
   }, []);
+
+  /* ── Notification SSE stream ─────────────────────── */
+  useEffect(() => {
+    if (!user) return;
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+
+    // Fetch initial unread count
+    api.getNotificationUnreadCount().then((r) => {
+      if (r.data) setNotifUnread(r.data.count);
+    });
+
+    // SSE connection
+    const es = new EventSource(`${apiBase}/api/notifications/stream`, { withCredentials: true });
+    es.addEventListener('unread_count', (e) => {
+      try { setNotifUnread(JSON.parse(e.data).count); } catch {}
+    });
+    es.addEventListener('notification', () => {
+      // Trigger browser notification if tab is not focused
+      if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+        // Just bump count — the panel will refetch on open
+      }
+    });
+
+    return () => es.close();
+  }, [user]);
 
   /* ── Keyboard shortcuts: G then <key> ───────────── */
   useEffect(() => {
@@ -488,37 +516,51 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
         </nav>
 
         {/* Notification bell */}
-        <div style={{ padding: isCollapsed ? '0 6px' : '0 10px' }}>
+        <div style={{ padding: isCollapsed ? '0 6px' : '0 10px', position: 'relative' }}>
           <button
+            onClick={() => setNotifOpen((v) => !v)}
             title="Notifications"
-            aria-label="Notifications"
+            aria-label={`Notifications${notifUnread > 0 ? ` (${notifUnread} unread)` : ''}`}
             style={{
               display: 'flex', alignItems: 'center', gap: 9,
               width: '100%', padding: isCollapsed ? '9px 0' : '8px 10px',
               justifyContent: isCollapsed ? 'center' : undefined,
-              borderRadius: 8, background: 'transparent', border: 'none',
+              borderRadius: 8, background: notifOpen ? 'var(--sidebar-hover-bg)' : 'transparent', border: 'none',
               cursor: 'pointer', fontFamily: 'inherit', fontSize: 13,
-              fontWeight: 500, color: 'var(--sidebar-text)',
+              fontWeight: 500, color: notifOpen ? '#4A4A4A' : 'var(--sidebar-text)',
               transition: 'all 0.12s', letterSpacing: '-0.01em',
               position: 'relative',
             }}
             onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--sidebar-hover-bg)'; e.currentTarget.style.color = '#4A4A4A'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--sidebar-text)'; }}
+            onMouseLeave={(e) => { if (!notifOpen) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--sidebar-text)'; } }}
           >
             <span style={{ flexShrink: 0, opacity: 0.65, display: 'flex', alignItems: 'center', position: 'relative' }}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
                 <path d="M13.73 21a2 2 0 0 1-3.46 0" />
               </svg>
-              {/* Badge dot */}
-              <span style={{
-                position: 'absolute', top: -1, right: -1,
-                width: 6, height: 6, borderRadius: '50%',
-                background: '#ef4444', border: '1.5px solid var(--sidebar-bg)',
-              }} />
+              {/* Badge */}
+              {notifUnread > 0 && (
+                <span style={{
+                  position: 'absolute', top: -4, right: -6,
+                  minWidth: 15, height: 15, borderRadius: 8,
+                  background: '#ef4444', border: '1.5px solid var(--sidebar-bg)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 9, fontWeight: 700, color: '#fff',
+                  padding: '0 3px', lineHeight: 1,
+                }}>
+                  {notifUnread > 99 ? '99+' : notifUnread}
+                </span>
+              )}
             </span>
             {!isCollapsed && 'Notifications'}
           </button>
+          <NotificationPanel
+            open={notifOpen}
+            onClose={() => setNotifOpen(false)}
+            unreadCount={notifUnread}
+            onUnreadChange={setNotifUnread}
+          />
         </div>
 
         {/* User + sign out */}

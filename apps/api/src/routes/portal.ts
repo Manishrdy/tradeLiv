@@ -4,6 +4,8 @@ import { prisma } from '@furnlo/db';
 import { writeAuditLog } from '../services/auditLog';
 import { emitProjectEvent } from '../services/projectEvents';
 import { createMessage, getMessages, markMessagesRead, getUnreadCount, getProjectPresence } from '../services/messageService';
+import { approveQuote, requestRevision, getQuoteDetail } from '../services/quoteService';
+import { notifyProjectDesigner } from '../services/notificationService';
 import logger from '../config/logger';
 
 const router = Router();
@@ -208,6 +210,16 @@ router.put('/:portalToken/shortlist/:itemId', async (req: Request, res: Response
 
     emitProjectEvent(item.projectId, 'shortlist_updated', { itemId: item.id });
 
+    // Notify designer of client shortlist feedback
+    if (status && status !== item.status) {
+      const action = status === 'approved' ? 'approved' : status === 'rejected' ? 'rejected' : 'updated';
+      notifyProjectDesigner(
+        item.projectId, 'shortlist_change',
+        `Client ${action} "${item.product.productName}"`,
+        undefined, 'shortlist', item.id,
+      ).catch(() => {});
+    }
+
     res.json(updated);
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
@@ -232,7 +244,9 @@ router.get('/:portalToken/messages', async (req: Request, res: Response) => {
     if (!project) { res.status(404).json({ error: 'Not found' }); return; }
 
     const after = typeof req.query.after === 'string' ? req.query.after : undefined;
-    const messages = await getMessages(project.id, after);
+    const contextType = typeof req.query.contextType === 'string' ? req.query.contextType : undefined;
+    const contextId = typeof req.query.contextId === 'string' ? req.query.contextId : undefined;
+    const messages = await getMessages(project.id, { after, contextType, contextId });
     res.json(messages);
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
@@ -245,6 +259,9 @@ router.get('/:portalToken/messages', async (req: Request, res: Response) => {
 const portalMessageSchema = z.object({
   text: z.string().min(1, 'Message cannot be empty').max(5000),
   senderName: z.string().min(1).max(120),
+  contextType: z.string().optional(),
+  contextId: z.string().optional(),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 router.post('/:portalToken/messages', async (req: Request, res: Response) => {
@@ -260,6 +277,9 @@ router.post('/:portalToken/messages', async (req: Request, res: Response) => {
       senderType: 'client',
       senderName: parsed.data.senderName,
       text: parsed.data.text,
+      contextType: parsed.data.contextType,
+      contextId: parsed.data.contextId,
+      metadata: parsed.data.metadata,
     });
 
     emitProjectEvent(project.id, 'new_message', {
@@ -267,8 +287,19 @@ router.post('/:portalToken/messages', async (req: Request, res: Response) => {
       senderType: message.senderType,
       senderName: message.senderName,
       text: message.text,
+      contextType: message.contextType,
+      contextId: message.contextId,
+      metadata: message.metadata,
       createdAt: message.createdAt.toISOString(),
     });
+
+    // Notify designer
+    notifyProjectDesigner(
+      project.id, 'message',
+      `New message from ${parsed.data.senderName}`,
+      parsed.data.text.length > 120 ? parsed.data.text.slice(0, 117) + '...' : parsed.data.text,
+      'message', message.id,
+    ).catch(() => {});
 
     res.status(201).json(message);
   } catch (err) {
@@ -319,6 +350,238 @@ router.get('/:portalToken/presence', async (req: Request, res: Response) => {
 
     const presence = getProjectPresence(project.id);
     res.json(presence);
+  } catch (err) {
+    logger.error('portal route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── GET /api/portal/:portalToken/quotes ───────────── */
+
+router.get('/:portalToken/quotes', async (req: Request, res: Response) => {
+  try {
+    const project = await getProjectByPortalToken(req.params.portalToken);
+    if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+
+    const quotes = await prisma.quote.findMany({
+      where: { projectId: project.id, status: { in: ['sent', 'approved', 'revision_requested', 'converted'] } },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        _count: { select: { lineItems: true, comments: true } },
+        designer: { select: { fullName: true, businessName: true } },
+      },
+    });
+
+    res.json(quotes.map((q) => ({
+      ...q,
+      subtotal: toNum(q.subtotal),
+      grandTotal: toNum(q.grandTotal),
+      taxAmount: toNum(q.taxAmount),
+      commissionAmount: toNum(q.commissionAmount),
+      platformFeeAmount: toNum(q.platformFeeAmount),
+    })));
+  } catch (err) {
+    logger.error('portal route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── GET /api/portal/:portalToken/quotes/:quoteId ──── */
+
+router.get('/:portalToken/quotes/:quoteId', async (req: Request, res: Response) => {
+  try {
+    const project = await getProjectByPortalToken(req.params.portalToken);
+    if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+
+    const quote = await getQuoteDetail(req.params.quoteId);
+    if (!quote || quote.projectId !== project.id || quote.status === 'draft') {
+      res.status(404).json({ error: 'Quote not found.' }); return;
+    }
+
+    // Serialize with client-friendly labels
+    res.json({
+      ...quote,
+      subtotal: toNum(quote.subtotal),
+      taxRate: toNum(quote.taxRate),
+      taxAmount: toNum(quote.taxAmount),
+      commissionAmount: toNum(quote.commissionAmount),
+      platformFeeAmount: toNum(quote.platformFeeAmount),
+      grandTotal: toNum(quote.grandTotal),
+      lineItems: quote.lineItems.map((li: any) => ({
+        ...li,
+        unitPrice: toNum(li.unitPrice),
+        lineTotal: toNum(li.lineTotal),
+        adjustmentValue: toNum(li.adjustmentValue),
+        product: li.product ? { ...li.product, price: toNum(li.product.price) } : undefined,
+      })),
+    });
+  } catch (err) {
+    logger.error('portal route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── PUT /api/portal/:portalToken/quotes/:quoteId ──── */
+
+const quoteReviewSchema = z.object({
+  action: z.enum(['approve', 'request_revision']),
+});
+
+router.put('/:portalToken/quotes/:quoteId', async (req: Request, res: Response) => {
+  const parsed = quoteReviewSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors[0].message }); return; }
+
+  try {
+    const project = await getProjectByPortalToken(req.params.portalToken);
+    if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+
+    if (parsed.data.action === 'approve') {
+      const updated = await approveQuote(req.params.quoteId, project.id);
+      res.json({ ...updated, grandTotal: toNum(updated.grandTotal) });
+    } else {
+      const updated = await requestRevision(req.params.quoteId, project.id);
+      res.json({ ...updated, grandTotal: toNum(updated.grandTotal) });
+    }
+  } catch (err: any) {
+    if (err.message?.includes('not found') || err.message?.includes('not in')) {
+      res.status(400).json({ error: err.message }); return;
+    }
+    logger.error('portal route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── GET /api/portal/:portalToken/quotes/:quoteId/comments */
+/* Now reads from unified Message table with contextType=quote */
+
+router.get('/:portalToken/quotes/:quoteId/comments', async (req: Request, res: Response) => {
+  try {
+    const project = await getProjectByPortalToken(req.params.portalToken);
+    if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+
+    const quote = await prisma.quote.findFirst({ where: { id: req.params.quoteId, projectId: project.id } });
+    if (!quote || quote.status === 'draft') { res.status(404).json({ error: 'Quote not found.' }); return; }
+
+    const after = typeof req.query.after === 'string' ? req.query.after : undefined;
+    const messages = await getMessages(project.id, {
+      after,
+      contextType: 'quote',
+      contextId: req.params.quoteId,
+    });
+    const comments = messages.map((m) => ({
+      id: m.id,
+      quoteId: req.params.quoteId,
+      senderType: m.senderType,
+      senderId: m.senderId,
+      senderName: m.senderName,
+      text: m.text,
+      lineItemId: (m.metadata as any)?.lineItemId ?? null,
+      readAt: m.readAt,
+      createdAt: m.createdAt,
+    }));
+    res.json(comments);
+  } catch (err) {
+    logger.error('portal route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── POST /api/portal/:portalToken/quotes/:quoteId/comments */
+
+const portalQuoteCommentSchema = z.object({
+  text: z.string().min(1).max(5000),
+  senderName: z.string().min(1).max(120),
+  lineItemId: z.string().uuid().optional(),
+});
+
+router.post('/:portalToken/quotes/:quoteId/comments', async (req: Request, res: Response) => {
+  const parsed = portalQuoteCommentSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors[0].message }); return; }
+
+  try {
+    const project = await getProjectByPortalToken(req.params.portalToken);
+    if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+
+    const quote = await prisma.quote.findFirst({ where: { id: req.params.quoteId, projectId: project.id } });
+    if (!quote || quote.status === 'draft') { res.status(404).json({ error: 'Quote not found.' }); return; }
+
+    const message = await createMessage({
+      projectId: project.id,
+      senderType: 'client',
+      senderName: parsed.data.senderName,
+      text: parsed.data.text,
+      contextType: 'quote',
+      contextId: req.params.quoteId,
+      metadata: parsed.data.lineItemId ? { lineItemId: parsed.data.lineItemId } : undefined,
+    });
+
+    emitProjectEvent(project.id, 'new_message', {
+      id: message.id,
+      senderType: message.senderType,
+      senderName: message.senderName,
+      text: message.text,
+      contextType: message.contextType,
+      contextId: message.contextId,
+      metadata: message.metadata,
+      createdAt: message.createdAt.toISOString(),
+    });
+
+    // Legacy event for backward compat
+    emitProjectEvent(project.id, 'quote_comment', {
+      quoteId: req.params.quoteId,
+      commentId: message.id,
+      senderType: message.senderType,
+      senderName: message.senderName,
+      text: message.text,
+      lineItemId: (message.metadata as any)?.lineItemId ?? null,
+      createdAt: message.createdAt.toISOString(),
+    });
+
+    // Notify designer
+    notifyProjectDesigner(
+      project.id, 'quote_comment',
+      `${parsed.data.senderName} commented on a quote`,
+      parsed.data.text.length > 120 ? parsed.data.text.slice(0, 117) + '...' : parsed.data.text,
+      'quote', req.params.quoteId,
+    ).catch(() => {});
+
+    res.status(201).json({
+      id: message.id,
+      quoteId: req.params.quoteId,
+      senderType: message.senderType,
+      senderId: message.senderId,
+      senderName: message.senderName,
+      text: message.text,
+      lineItemId: (message.metadata as any)?.lineItemId ?? null,
+      readAt: message.readAt,
+      createdAt: message.createdAt,
+    });
+  } catch (err) {
+    logger.error('portal route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── PUT /api/portal/:portalToken/quotes/:quoteId/comments/read */
+
+router.put('/:portalToken/quotes/:quoteId/comments/read', async (req: Request, res: Response) => {
+  try {
+    const project = await getProjectByPortalToken(req.params.portalToken);
+    if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+
+    const count = await markMessagesRead(project.id, 'client', {
+      contextType: 'quote',
+      contextId: req.params.quoteId,
+    });
+    if (count > 0) {
+      emitProjectEvent(project.id, 'messages_read', {
+        readerType: 'client',
+        count,
+        contextType: 'quote',
+        contextId: req.params.quoteId,
+      });
+    }
+    res.json({ markedRead: count });
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
     res.status(500).json({ error: 'An error occurred. Please try again.' });

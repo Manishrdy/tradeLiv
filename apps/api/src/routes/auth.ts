@@ -1,10 +1,10 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import jwt, { type SignOptions } from 'jsonwebtoken';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { prisma } from '@furnlo/db';
-import { config } from '../config';
+import { config, buildCookieOptions, clearCookieOptions } from '../config';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { writeAuditLog } from '../services/auditLog';
 import logger from '../config/logger';
@@ -13,10 +13,13 @@ const router = Router();
 
 /* ─── Constants ────────────────────────────────────── */
 
-const ACCESS_COOKIE = 'session';            // short-lived access token
-const REFRESH_COOKIE = 'refresh';           // long-lived refresh token
-const ACCESS_TOKEN_EXPIRY = '15m';          // 15 minutes
-const REFRESH_TOKEN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const ACCESS_COOKIE = 'session'; // short-lived access token
+const REFRESH_COOKIE = 'refresh'; // long-lived refresh token
+
+/** Without "remember me", refresh cookie TTL is shorter (browser-session style). */
+const REFRESH_TTL_SHORT_MS = 2 * 24 * 60 * 60 * 1000; // 2 days
+/** With "remember me", refresh cookie TTL is longer. */
+const REFRESH_TTL_LONG_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
@@ -24,27 +27,24 @@ const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 /* ─── Helpers ──────────────────────────────────────── */
 
 function accessCookieOptions() {
-  return {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict' as const,
-    maxAge: 15 * 60 * 1000, // 15 min
-    path: '/',
-  };
+  return buildCookieOptions(config.accessTokenMaxAgeMs, '/');
 }
 
-function refreshCookieOptions() {
-  return {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict' as const,
-    maxAge: REFRESH_TOKEN_EXPIRY_MS,
-    path: '/api/auth', // only sent to auth endpoints
-  };
+function refreshCookieOptions(maxAgeMs: number) {
+  return buildCookieOptions(maxAgeMs, '/api/auth');
+}
+
+function clearSessionCookies(res: Response) {
+  res.clearCookie(ACCESS_COOKIE, clearCookieOptions('/'));
+  res.clearCookie(REFRESH_COOKIE, clearCookieOptions('/api/auth'));
 }
 
 function signAccessToken(payload: { id: string; role: string }) {
-  return jwt.sign(payload, config.jwtSecret, { expiresIn: ACCESS_TOKEN_EXPIRY });
+  const signOpts: SignOptions = {
+    expiresIn: config.accessTokenExpiresIn as SignOptions['expiresIn'],
+    algorithm: config.jwtAlgorithm,
+  };
+  return jwt.sign(payload, config.jwtSecret, signOpts);
 }
 
 function generateRefreshToken(): string {
@@ -61,27 +61,38 @@ async function issueTokenPair(
   designer: { id: string },
   role: string,
   req: Request,
-  family?: string,
+  options: { family?: string; refreshTtlMs: number },
 ) {
   const accessToken = signAccessToken({ id: designer.id, role });
   const rawRefresh = generateRefreshToken();
-  const tokenFamily = family ?? crypto.randomUUID();
+  const tokenFamily = options.family ?? crypto.randomUUID();
+  const refreshTtlMs = options.refreshTtlMs;
 
   await prisma.refreshToken.create({
     data: {
       designerId: designer.id,
       tokenHash: hashToken(rawRefresh),
       family: tokenFamily,
-      expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRY_MS),
+      expiresAt: new Date(Date.now() + refreshTtlMs),
       userAgent: req.headers['user-agent'] ?? null,
       ipAddress: req.ip ?? null,
     },
   });
 
   res.cookie(ACCESS_COOKIE, accessToken, accessCookieOptions());
-  res.cookie(REFRESH_COOKIE, rawRefresh, refreshCookieOptions());
+  res.cookie(REFRESH_COOKIE, rawRefresh, refreshCookieOptions(refreshTtlMs));
 
   return tokenFamily;
+}
+
+/**
+ * Preserve refresh lifetime on rotation: same TTL class as the token being rotated.
+ * Unknown / invalid rows fall back to short TTL.
+ */
+function refreshTtlMsFromStoredToken(stored: { createdAt: Date; expiresAt: Date }): number {
+  const issuedTtl = stored.expiresAt.getTime() - stored.createdAt.getTime();
+  if (!Number.isFinite(issuedTtl) || issuedTtl <= 0) return REFRESH_TTL_SHORT_MS;
+  return Math.min(Math.max(issuedTtl, 60 * 60 * 1000), REFRESH_TTL_LONG_MS);
 }
 
 /** Check and handle account lockout. Returns true if locked. */
@@ -147,6 +158,7 @@ const designerSignupSchema = z.object({
 const loginSchema = z.object({
   email: z.string().email('Invalid email address'),
   password: z.string().min(1, 'Password is required'),
+  remember: z.boolean().optional(),
 });
 
 const profileUpdateSchema = z.object({
@@ -197,7 +209,7 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
       entityId: designer.id,
     });
 
-    await issueTokenPair(res, designer, 'designer', req);
+    await issueTokenPair(res, designer, 'designer', req, { refreshTtlMs: REFRESH_TTL_LONG_MS });
 
     res.status(201).json({
       role: 'designer',
@@ -210,6 +222,7 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
 });
 
 // POST /api/auth/login
+// Failed attempts are tracked per account (not per unknown email) to limit user enumeration.
 router.post('/login', async (req: Request, res: Response) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -217,7 +230,7 @@ router.post('/login', async (req: Request, res: Response) => {
     return;
   }
 
-  const { email, password } = parsed.data;
+  const { email, password, remember } = parsed.data;
 
   try {
     const designer = await prisma.designer.findUnique({ where: { email } });
@@ -239,12 +252,10 @@ router.post('/login', async (req: Request, res: Response) => {
     // Reset failed attempts on success
     await resetFailedLogin(designer.id);
 
-    // Admin accounts go through admin flow
     if (designer.isAdmin) {
-      await issueTokenPair(res, designer, 'admin', req);
-      res.json({
-        role: 'admin',
-        user: { id: designer.id, fullName: designer.fullName, email: designer.email, isSuperAdmin: designer.isSuperAdmin },
+      res.status(403).json({
+        error: 'Admin accounts must sign in through the admin portal.',
+        code: 'USE_ADMIN_LOGIN',
       });
       return;
     }
@@ -266,7 +277,8 @@ router.post('/login', async (req: Request, res: Response) => {
       return;
     }
 
-    await issueTokenPair(res, designer, 'designer', req);
+    const refreshTtlMs = remember ? REFRESH_TTL_LONG_MS : REFRESH_TTL_SHORT_MS;
+    await issueTokenPair(res, designer, 'designer', req, { refreshTtlMs });
     res.json({
       role: 'designer',
       user: { id: designer.id, fullName: designer.fullName, email: designer.email, status: designer.status },
@@ -285,7 +297,7 @@ router.post('/admin/login', async (req: Request, res: Response) => {
     return;
   }
 
-  const { email, password } = parsed.data;
+  const { email, password, remember } = parsed.data;
 
   try {
     const designer = await prisma.designer.findUnique({ where: { email } });
@@ -310,7 +322,8 @@ router.post('/admin/login', async (req: Request, res: Response) => {
       return;
     }
 
-    await issueTokenPair(res, designer, 'admin', req);
+    const refreshTtlMs = remember ? REFRESH_TTL_LONG_MS : REFRESH_TTL_SHORT_MS;
+    await issueTokenPair(res, designer, 'admin', req, { refreshTtlMs });
     res.json({
       role: 'admin',
       user: { id: designer.id, fullName: designer.fullName, email: designer.email, isSuperAdmin: designer.isSuperAdmin },
@@ -321,7 +334,7 @@ router.post('/admin/login', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/auth/refresh — rotate refresh token
+// POST /api/auth/refresh — rotate refresh token (single-use; concurrent refresh loses race safely)
 router.post('/refresh', async (req: Request, res: Response) => {
   const rawToken = req.cookies?.[REFRESH_COOKIE];
   if (!rawToken) {
@@ -333,62 +346,103 @@ router.post('/refresh', async (req: Request, res: Response) => {
     const tokenHash = hashToken(rawToken);
     const storedToken = await prisma.refreshToken.findUnique({ where: { tokenHash } });
 
-    if (!storedToken || storedToken.revokedAt) {
-      // Possible token reuse attack — revoke the entire family
-      if (storedToken?.family) {
-        await prisma.refreshToken.updateMany({
-          where: { family: storedToken.family, revokedAt: null },
-          data: { revokedAt: new Date() },
-        });
-        logger.warn('refresh token reuse detected — revoked family', { family: storedToken.family, designerId: storedToken.designerId });
-      }
+    if (!storedToken) {
+      clearSessionCookies(res);
+      res.status(401).json({ error: 'Invalid refresh token. Please log in again.' });
+      return;
+    }
 
-      res.clearCookie(ACCESS_COOKIE, { path: '/' });
-      res.clearCookie(REFRESH_COOKIE, { path: '/api/auth' });
+    if (storedToken.revokedAt) {
+      await prisma.refreshToken.updateMany({
+        where: { family: storedToken.family, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      logger.warn('refresh token reuse detected — revoked family', {
+        family: storedToken.family,
+        designerId: storedToken.designerId,
+      });
+      clearSessionCookies(res);
       res.status(401).json({ error: 'Invalid refresh token. Please log in again.' });
       return;
     }
 
     if (storedToken.expiresAt < new Date()) {
-      res.clearCookie(ACCESS_COOKIE, { path: '/' });
-      res.clearCookie(REFRESH_COOKIE, { path: '/api/auth' });
+      clearSessionCookies(res);
       res.status(401).json({ error: 'Refresh token expired. Please log in again.' });
       return;
     }
 
-    // Revoke current token (rotation)
-    await prisma.refreshToken.update({
-      where: { id: storedToken.id },
-      data: { revokedAt: new Date() },
+    const newRawRefresh = generateRefreshToken();
+    const newHash = hashToken(newRawRefresh);
+    const refreshTtlMs = refreshTtlMsFromStoredToken(storedToken);
+    const newExpiresAt = new Date(Date.now() + refreshTtlMs);
+
+    const outcome = await prisma.$transaction(async (tx) => {
+      const revoked = await tx.refreshToken.updateMany({
+        where: { id: storedToken.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      if (revoked.count !== 1) {
+        return { kind: 'concurrent' as const };
+      }
+
+      const designer = await tx.designer.findUnique({
+        where: { id: storedToken.designerId },
+        select: { id: true, isAdmin: true, status: true },
+      });
+
+      if (!designer) {
+        return { kind: 'no_user' as const };
+      }
+
+      if (!designer.isAdmin && (designer.status === 'suspended' || designer.status === 'rejected')) {
+        await tx.refreshToken.updateMany({
+          where: { designerId: designer.id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        return { kind: 'revoked_account' as const };
+      }
+
+      const role = designer.isAdmin ? 'admin' : 'designer';
+
+      await tx.refreshToken.create({
+        data: {
+          designerId: designer.id,
+          tokenHash: newHash,
+          family: storedToken.family,
+          expiresAt: newExpiresAt,
+          userAgent: req.headers['user-agent'] ?? null,
+          ipAddress: req.ip ?? null,
+        },
+      });
+
+      return { kind: 'ok' as const, designer, role };
     });
 
-    // Look up user to get current role
-    const designer = await prisma.designer.findUnique({
-      where: { id: storedToken.designerId },
-      select: { id: true, isAdmin: true, status: true },
-    });
+    if (outcome.kind === 'concurrent') {
+      clearSessionCookies(res);
+      res.status(401).json({
+        error: 'Session was refreshed elsewhere. Please sign in again.',
+        code: 'REFRESH_CONFLICT',
+      });
+      return;
+    }
 
-    if (!designer) {
+    if (outcome.kind === 'no_user') {
+      clearSessionCookies(res);
       res.status(401).json({ error: 'Account not found.' });
       return;
     }
 
-    // Check if account is suspended/rejected
-    if (!designer.isAdmin && (designer.status === 'suspended' || designer.status === 'rejected')) {
-      await prisma.refreshToken.updateMany({
-        where: { designerId: designer.id, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-      res.clearCookie(ACCESS_COOKIE, { path: '/' });
-      res.clearCookie(REFRESH_COOKIE, { path: '/api/auth' });
+    if (outcome.kind === 'revoked_account') {
+      clearSessionCookies(res);
       res.status(403).json({ error: 'Account access revoked.' });
       return;
     }
 
-    const role = designer.isAdmin ? 'admin' : 'designer';
-
-    // Issue new pair with same family
-    await issueTokenPair(res, designer, role, req, storedToken.family);
+    const accessToken = signAccessToken({ id: outcome.designer.id, role: outcome.role });
+    res.cookie(ACCESS_COOKIE, accessToken, accessCookieOptions());
+    res.cookie(REFRESH_COOKIE, newRawRefresh, refreshCookieOptions(refreshTtlMs));
 
     res.json({ message: 'Token refreshed.' });
   } catch (err) {
@@ -413,8 +467,7 @@ router.post('/logout', async (req: Request, res: Response) => {
     }
   }
 
-  res.clearCookie(ACCESS_COOKIE, { path: '/' });
-  res.clearCookie(REFRESH_COOKIE, { path: '/api/auth' });
+  clearSessionCookies(res);
   res.json({ message: 'Logged out successfully.' });
 });
 
@@ -426,8 +479,7 @@ router.post('/logout-all', requireAuth, async (req: AuthRequest, res: Response) 
       data: { revokedAt: new Date() },
     });
 
-    res.clearCookie(ACCESS_COOKIE, { path: '/' });
-    res.clearCookie(REFRESH_COOKIE, { path: '/api/auth' });
+    clearSessionCookies(res);
     res.json({ message: 'All sessions revoked.' });
   } catch (err) {
     logger.error('logout-all error', { err });
@@ -473,6 +525,39 @@ router.put('/me', requireAuth, requireRole('designer'), async (req: AuthRequest,
         id: true, fullName: true, email: true,
         businessName: true, phone: true, status: true,
         isAdmin: true, createdAt: true,
+      },
+    });
+    res.json(designer);
+  } catch (err) {
+    logger.error('auth route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+// PUT /api/auth/me/fee-defaults — save default fee configuration for quotes
+const feeDefaultsSchema = z.object({
+  taxRate: z.number().min(0).max(100).optional(),
+  commissionType: z.enum(['percentage', 'fixed']).optional(),
+  commissionValue: z.number().min(0).optional(),
+  platformFeeType: z.enum(['percentage', 'fixed']).optional(),
+  platformFeeValue: z.number().min(0).optional(),
+});
+
+router.put('/me/fee-defaults', requireAuth, requireRole('designer'), async (req: AuthRequest, res: Response) => {
+  const parsed = feeDefaultsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0].message });
+    return;
+  }
+
+  try {
+    const designer = await prisma.designer.update({
+      where: { id: req.user!.id },
+      data: { feeDefaults: parsed.data },
+      select: {
+        id: true, fullName: true, email: true,
+        businessName: true, phone: true, status: true,
+        isAdmin: true, createdAt: true, feeDefaults: true,
       },
     });
     res.json(designer);
@@ -528,7 +613,7 @@ router.put('/change-password', requireAuth, async (req: AuthRequest, res: Respon
     });
 
     // Re-issue tokens for the current session
-    await issueTokenPair(res, designer, req.user!.role, req);
+    await issueTokenPair(res, designer, req.user!.role, req, { refreshTtlMs: REFRESH_TTL_LONG_MS });
 
     writeAuditLog({
       actorType: req.user!.role === 'admin' ? 'admin' : 'designer',

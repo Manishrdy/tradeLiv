@@ -1,11 +1,15 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
+import { api } from '@/lib/api';
+import ProjectChatPanel from '@/components/ProjectChatPanel';
 
 const TABS = [
   { label: 'Overview', href: (id: string) => `/projects/${id}` },
   { label: 'Rooms',    href: (id: string) => `/projects/${id}/rooms` },
+  { label: 'Quotes',   href: (id: string) => `/projects/${id}/quotes` },
   { label: 'Cart',     href: (id: string) => `/projects/${id}/cart` },
   { label: 'Orders',   href: (id: string) => `/projects/${id}/orders` },
 ];
@@ -13,6 +17,13 @@ const TABS = [
 export default function ProjectLayout({ children }: { children: React.ReactNode }) {
   const { id } = useParams<{ id: string }>();
   const pathname = usePathname();
+  const [clientName, setClientName] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getProject(id).then((r) => {
+      if (r.data) setClientName(r.data.client.name);
+    });
+  }, [id]);
 
   return (
     <div>
@@ -28,7 +39,8 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
           const href = tab.href(id);
           const isActive = pathname === href
             || (tab.label === 'Rooms' && pathname.startsWith(`/projects/${id}/rooms`))
-            || (tab.label === 'Orders' && pathname.startsWith(`/projects/${id}/orders`));
+            || (tab.label === 'Orders' && pathname.startsWith(`/projects/${id}/orders`))
+            || (tab.label === 'Quotes' && pathname.startsWith(`/projects/${id}/quotes`));
           return (
             <Link
               key={tab.label}
@@ -52,6 +64,9 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
       </div>
 
       {children}
+
+      {/* Unified Chat Panel — available on all project pages */}
+      {clientName && <ProjectChatPanel projectId={id} clientName={clientName} />}
     </div>
   );
 }
