@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { z } from 'zod';
 import { prisma } from '@furnlo/db';
 import { config } from '../config';
 
@@ -7,16 +8,34 @@ export interface AuthRequest extends Request {
   user?: { id: string; role: 'designer' | 'client' | 'admin' };
 }
 
+const accessTokenPayloadSchema = z.object({
+  id: z.string().uuid(),
+  role: z.enum(['designer', 'admin', 'client']),
+});
+
+function parseBearerToken(header: string | undefined): string | null {
+  if (!header || !header.startsWith('Bearer ')) return null;
+  const token = header.slice(7).trim();
+  return token.length > 0 ? token : null;
+}
+
 export function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
-  // Prefer HTTP-only cookie; fall back to Authorization header for API clients
-  const token = req.cookies?.session ?? req.headers.authorization?.split(' ')[1];
+  const token =
+    req.cookies?.session ?? parseBearerToken(req.headers.authorization);
   if (!token) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
   try {
-    const payload = jwt.verify(token, config.jwtSecret) as AuthRequest['user'];
-    req.user = payload;
+    const decoded = jwt.verify(token, config.jwtSecret, {
+      algorithms: [config.jwtAlgorithm],
+    });
+    const payload = accessTokenPayloadSchema.safeParse(decoded);
+    if (!payload.success) {
+      res.status(401).json({ error: 'Invalid or expired session' });
+      return;
+    }
+    req.user = payload.data;
     next();
   } catch {
     res.status(401).json({ error: 'Invalid or expired session' });
