@@ -486,6 +486,8 @@ router.delete('/:id/rooms/:roomId', async (req: AuthRequest, res: Response) => {
 
 const messageQuerySchema = z.object({
   after: z.string().datetime().optional(),
+  contextType: z.string().optional(),
+  contextId: z.string().optional(),
 });
 
 router.get('/:id/messages', async (req: AuthRequest, res: Response) => {
@@ -494,8 +496,8 @@ router.get('/:id/messages', async (req: AuthRequest, res: Response) => {
     if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
 
     const parsed = messageQuerySchema.safeParse(req.query);
-    const after = parsed.success ? parsed.data.after : undefined;
-    const messages = await getMessages(project.id, after);
+    const { after, contextType, contextId } = parsed.success ? parsed.data : {};
+    const messages = await getMessages(project.id, { after, contextType, contextId });
     res.json(messages);
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
@@ -507,6 +509,9 @@ router.get('/:id/messages', async (req: AuthRequest, res: Response) => {
 
 const sendMessageSchema = z.object({
   text: z.string().min(1, 'Message cannot be empty').max(5000),
+  contextType: z.string().optional(),
+  contextId: z.string().optional(),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 router.post('/:id/messages', async (req: AuthRequest, res: Response) => {
@@ -528,6 +533,9 @@ router.post('/:id/messages', async (req: AuthRequest, res: Response) => {
       senderId: req.user!.id,
       senderName: designer?.fullName ?? 'Designer',
       text: parsed.data.text,
+      contextType: parsed.data.contextType,
+      contextId: parsed.data.contextId,
+      metadata: parsed.data.metadata,
     });
 
     emitProjectEvent(project.id, 'new_message', {
@@ -535,6 +543,9 @@ router.post('/:id/messages', async (req: AuthRequest, res: Response) => {
       senderType: message.senderType,
       senderName: message.senderName,
       text: message.text,
+      contextType: message.contextType,
+      contextId: message.contextId,
+      metadata: message.metadata,
       createdAt: message.createdAt.toISOString(),
     });
 

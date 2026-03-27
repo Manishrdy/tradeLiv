@@ -790,6 +790,9 @@ export interface ChatMessage {
   senderId: string | null;
   senderName: string;
   text: string;
+  contextType: string | null;
+  contextId: string | null;
+  metadata: Record<string, unknown> | null;
   createdAt: string;
   readAt: string | null;
 }
@@ -797,6 +800,25 @@ export interface ChatMessage {
 export interface PresenceStatus {
   designer: { lastSeen: string; online: boolean };
   client: { lastSeen: string; online: boolean };
+}
+
+/* ─── Notification types ───────────────────────────── */
+
+export type NotificationType =
+  | 'message' | 'quote_approved' | 'quote_revision' | 'quote_comment'
+  | 'order_update' | 'shortlist_change' | 'client_portal_view' | 'payment_received';
+
+export interface Notification {
+  id: string;
+  designerId: string;
+  type: NotificationType;
+  title: string;
+  body: string | null;
+  projectId: string | null;
+  resourceType: string | null;
+  resourceId: string | null;
+  read: boolean;
+  createdAt: string;
 }
 
 /* ─── Admin types ───────────────────────────────────── */
@@ -1039,6 +1061,128 @@ export interface RecommendationResult {
   recommendedProduct: string | null;
 }
 
+/* ─── Quote types ──────────────────────────────────── */
+
+export interface QuoteLineItem {
+  id: string;
+  quoteId: string;
+  productId: string;
+  roomId: string;
+  selectedVariant: Record<string, string> | null;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+  adjustmentLabel: string | null;
+  adjustmentValue: number | null;
+  sortOrder: number;
+  product: {
+    id: string;
+    productName: string;
+    brandName: string | null;
+    price: number | null;
+    imageUrl: string | null;
+    category: string | null;
+    activeVariant: Record<string, string | number> | null;
+    images: ProductImages | null;
+    dimensions: ProductDimensions | null;
+    material: string | null;
+  };
+  room: { id: string; name: string };
+}
+
+export interface QuoteComment {
+  id: string;
+  quoteId: string;
+  senderType: 'designer' | 'client';
+  senderId: string | null;
+  senderName: string;
+  text: string;
+  lineItemId: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export interface QuoteSummary {
+  id: string;
+  projectId: string;
+  designerId: string;
+  version: number;
+  status: 'draft' | 'sent' | 'approved' | 'revision_requested' | 'expired' | 'converted';
+  title: string | null;
+  subtotal: number | null;
+  grandTotal: number | null;
+  taxAmount: number | null;
+  commissionAmount: number | null;
+  platformFeeAmount: number | null;
+  sentAt: string | null;
+  approvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  _count: { lineItems: number; comments: number };
+  designer?: { fullName: string; businessName?: string | null };
+}
+
+export interface QuoteDetail {
+  id: string;
+  projectId: string;
+  designerId: string;
+  version: number;
+  status: 'draft' | 'sent' | 'approved' | 'revision_requested' | 'expired' | 'converted';
+  title: string | null;
+  notes: string | null;
+  taxRate: number | null;
+  commissionType: 'percentage' | 'fixed' | null;
+  commissionValue: number | null;
+  platformFeeType: 'percentage' | 'fixed' | null;
+  platformFeeValue: number | null;
+  subtotal: number | null;
+  taxAmount: number | null;
+  commissionAmount: number | null;
+  platformFeeAmount: number | null;
+  grandTotal: number | null;
+  sentAt: string | null;
+  approvedAt: string | null;
+  expiresAt: string | null;
+  convertedOrderId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lineItems: QuoteLineItem[];
+  comments: QuoteComment[];
+  designer: { id: string; fullName: string; businessName: string | null };
+  project: { id: string; name: string; client: { name: string; email: string | null } };
+}
+
+export interface QuoteCreatePayload {
+  title?: string;
+  notes?: string;
+  itemIds?: string[];
+  feeConfig?: {
+    taxRate?: number;
+    commissionType?: 'percentage' | 'fixed';
+    commissionValue?: number;
+    platformFeeType?: 'percentage' | 'fixed';
+    platformFeeValue?: number;
+  };
+}
+
+export interface QuoteUpdatePayload {
+  title?: string | null;
+  notes?: string | null;
+  taxRate?: number | null;
+  commissionType?: 'percentage' | 'fixed' | null;
+  commissionValue?: number | null;
+  platformFeeType?: 'percentage' | 'fixed' | null;
+  platformFeeValue?: number | null;
+}
+
+export interface FeeDefaults {
+  taxRate?: number;
+  commissionType?: 'percentage' | 'fixed';
+  commissionValue?: number;
+  platformFeeType?: 'percentage' | 'fixed';
+  platformFeeValue?: number;
+}
+
 /* ─── API methods ───────────────────────────────────── */
 
 export const api = {
@@ -1278,16 +1422,28 @@ export const api = {
     }),
 
   // Chat / Messaging
-  getMessages: (projectId: string, after?: string) =>
-    request<ChatMessage[]>(`/api/projects/${projectId}/messages${after ? `?after=${after}` : ''}`),
+  getMessages: (projectId: string, opts?: { after?: string; contextType?: string; contextId?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.after) params.set('after', opts.after);
+    if (opts?.contextType) params.set('contextType', opts.contextType);
+    if (opts?.contextId) params.set('contextId', opts.contextId);
+    const qs = params.toString();
+    return request<ChatMessage[]>(`/api/projects/${projectId}/messages${qs ? `?${qs}` : ''}`);
+  },
 
-  sendMessage: (projectId: string, payload: { text: string; senderType: 'designer' | 'client'; senderName: string }) =>
+  sendMessage: (projectId: string, payload: { text: string; senderType: 'designer' | 'client'; senderName: string; contextType?: string; contextId?: string; metadata?: Record<string, unknown> }) =>
     request<ChatMessage>(`/api/projects/${projectId}/messages`, { method: 'POST', body: JSON.stringify(payload) }),
 
-  getPortalMessages: (portalToken: string, after?: string) =>
-    request<ChatMessage[]>(`/api/portal/${portalToken}/messages${after ? `?after=${after}` : ''}`),
+  getPortalMessages: (portalToken: string, opts?: { after?: string; contextType?: string; contextId?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.after) params.set('after', opts.after);
+    if (opts?.contextType) params.set('contextType', opts.contextType);
+    if (opts?.contextId) params.set('contextId', opts.contextId);
+    const qs = params.toString();
+    return request<ChatMessage[]>(`/api/portal/${portalToken}/messages${qs ? `?${qs}` : ''}`);
+  },
 
-  sendPortalMessage: (portalToken: string, payload: { text: string; senderName: string }) =>
+  sendPortalMessage: (portalToken: string, payload: { text: string; senderName: string; contextType?: string; contextId?: string; metadata?: Record<string, unknown> }) =>
     request<ChatMessage>(`/api/portal/${portalToken}/messages`, { method: 'POST', body: JSON.stringify(payload) }),
 
   markMessagesRead: (projectId: string, senderType: 'designer' | 'client') =>
@@ -1308,6 +1464,66 @@ export const api = {
 
   markPortalMessagesRead: (portalToken: string) =>
     request<void>(`/api/portal/${portalToken}/messages/read`, { method: 'PUT' }),
+
+  // Quotes (designer)
+  createQuote: (projectId: string, payload: QuoteCreatePayload) =>
+    request<QuoteDetail>(`/api/quotes/projects/${projectId}`, { method: 'POST', body: JSON.stringify(payload) }),
+
+  getProjectQuotes: (projectId: string) =>
+    request<QuoteSummary[]>(`/api/quotes/projects/${projectId}`),
+
+  getQuote: (quoteId: string) =>
+    request<QuoteDetail>(`/api/quotes/${quoteId}`),
+
+  updateQuote: (quoteId: string, payload: QuoteUpdatePayload) =>
+    request<QuoteDetail>(`/api/quotes/${quoteId}`, { method: 'PUT', body: JSON.stringify(payload) }),
+
+  addQuoteLineItem: (quoteId: string, shortlistItemId: string) =>
+    request<QuoteLineItem>(`/api/quotes/${quoteId}/line-items`, { method: 'POST', body: JSON.stringify({ shortlistItemId }) }),
+
+  updateQuoteLineItem: (quoteId: string, lineItemId: string, payload: { quantity?: number; adjustmentLabel?: string | null; adjustmentValue?: number | null }) =>
+    request<QuoteLineItem>(`/api/quotes/${quoteId}/line-items/${lineItemId}`, { method: 'PUT', body: JSON.stringify(payload) }),
+
+  removeQuoteLineItem: (quoteId: string, lineItemId: string) =>
+    request<{ success: boolean }>(`/api/quotes/${quoteId}/line-items/${lineItemId}`, { method: 'DELETE' }),
+
+  sendQuote: (quoteId: string) =>
+    request<QuoteSummary>(`/api/quotes/${quoteId}/send`, { method: 'POST' }),
+
+  convertQuoteToOrder: (quoteId: string) =>
+    request<OrderDetail>(`/api/quotes/${quoteId}/convert`, { method: 'POST' }),
+
+  getQuoteComments: (quoteId: string, after?: string) =>
+    request<QuoteComment[]>(`/api/quotes/${quoteId}/comments${after ? `?after=${after}` : ''}`),
+
+  postQuoteComment: (quoteId: string, payload: { text: string; lineItemId?: string }) =>
+    request<QuoteComment>(`/api/quotes/${quoteId}/comments`, { method: 'POST', body: JSON.stringify(payload) }),
+
+  markQuoteCommentsRead: (quoteId: string) =>
+    request<{ markedRead: number }>(`/api/quotes/${quoteId}/comments/read`, { method: 'PUT' }),
+
+  // Portal quotes (public)
+  getPortalQuotes: (portalToken: string) =>
+    request<QuoteSummary[]>(`/api/portal/${portalToken}/quotes`),
+
+  getPortalQuote: (portalToken: string, quoteId: string) =>
+    request<QuoteDetail>(`/api/portal/${portalToken}/quotes/${quoteId}`),
+
+  reviewPortalQuote: (portalToken: string, quoteId: string, action: 'approve' | 'request_revision') =>
+    request<QuoteSummary>(`/api/portal/${portalToken}/quotes/${quoteId}`, { method: 'PUT', body: JSON.stringify({ action }) }),
+
+  getPortalQuoteComments: (portalToken: string, quoteId: string, after?: string) =>
+    request<QuoteComment[]>(`/api/portal/${portalToken}/quotes/${quoteId}/comments${after ? `?after=${after}` : ''}`),
+
+  postPortalQuoteComment: (portalToken: string, quoteId: string, payload: { text: string; senderName: string; lineItemId?: string }) =>
+    request<QuoteComment>(`/api/portal/${portalToken}/quotes/${quoteId}/comments`, { method: 'POST', body: JSON.stringify(payload) }),
+
+  markPortalQuoteCommentsRead: (portalToken: string, quoteId: string) =>
+    request<{ markedRead: number }>(`/api/portal/${portalToken}/quotes/${quoteId}/comments/read`, { method: 'PUT' }),
+
+  // Fee defaults
+  updateFeeDefaults: (payload: FeeDefaults) =>
+    request<DesignerProfile>('/api/auth/me/fee-defaults', { method: 'PUT', body: JSON.stringify(payload) }),
 
   // Admin
   getAdminMe: () =>
@@ -1509,56 +1725,23 @@ export const api = {
     }
   },
 
-  /* ─── Product Search ──────────────────────────────── */
+  // Notifications
+  getNotifications: (opts?: { unread?: boolean; limit?: number; cursor?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.unread) params.set('unread', 'true');
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    if (opts?.cursor) params.set('cursor', opts.cursor);
+    const qs = params.toString();
+    return request<Notification[]>(`/api/notifications${qs ? `?${qs}` : ''}`);
+  },
 
-  searchProducts: (query: string) =>
-    request<SearchProductsResponse>('/api/catalog/search', { method: 'POST', body: JSON.stringify({ query }) }),
+  getNotificationUnreadCount: () =>
+    request<{ count: number }>('/api/notifications/unread'),
 
-  searchMore: (sessionId: string) =>
-    request<SearchMoreResponse>(`/api/catalog/search/${sessionId}/more`),
+  markNotificationRead: (id: string) =>
+    request<{ success: boolean }>(`/api/notifications/${id}/read`, { method: 'PUT' }),
 
-  extractSearchResults: (urls: string[]) =>
-    request<SearchExtractResponse>('/api/catalog/search/extract', { method: 'POST', body: JSON.stringify({ urls }) }),
+  markAllNotificationsRead: () =>
+    request<{ marked: number }>('/api/notifications/read-all', { method: 'PUT' }),
 
-  getSearchRateLimit: () =>
-    request<{ available: boolean; retryAfter: number }>('/api/catalog/search/rate-limit'),
 };
-
-/* ─── Search types ──────────────────────────────────── */
-
-export interface SearchResultItem {
-  name: string;
-  brand: string;
-  price: string;
-  url: string;
-  imageUrl?: string;
-  category?: string;
-  dimensions?: string;
-  material?: string;
-  description?: string;
-}
-
-export interface SearchProductsResponse {
-  sessionId: string;
-  results: SearchResultItem[];
-  hasMore: boolean;
-  total: number;
-  cached?: boolean;
-}
-
-export interface SearchMoreResponse {
-  results: SearchResultItem[];
-  hasMore: boolean;
-  total: number;
-}
-
-export interface SearchExtractResponse {
-  results: Array<{
-    url: string;
-    type?: 'single' | 'multiple' | 'error';
-    product?: any;
-    products?: any[];
-    error?: string;
-    errorCode?: string;
-  }>;
-}

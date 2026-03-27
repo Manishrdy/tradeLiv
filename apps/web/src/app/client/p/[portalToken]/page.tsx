@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
-import { api, PortalProject, PortalShortlistItem, PortalRoom, PortalProduct, ChatMessage } from '@/lib/api';
+import { api, PortalProject, PortalShortlistItem, PortalRoom, PortalProduct, ChatMessage, QuoteSummary, QuoteDetail } from '@/lib/api';
 
 /* ─── Helpers ─────────────────────────────────────── */
 
@@ -43,50 +43,6 @@ function statusBadge(status: string) {
     }}>
       {s.label}
     </span>
-  );
-}
-
-/* ── Client identity capture (#75) ─────────────────── */
-
-function ClientIdentityCapture({ onSubmit }: { onSubmit: (name: string) => void }) {
-  const [name, setName] = useState('');
-  return (
-    <div className="anim-fade-up" style={{
-      background: 'var(--bg-card)', border: '1px solid var(--border)',
-      borderRadius: 14, padding: '28px 28px 24px', marginBottom: 24,
-      textAlign: 'center', maxWidth: 420, margin: '0 auto 24px',
-    }}>
-      <div style={{ fontSize: 28, marginBottom: 12 }}>👋</div>
-      <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em', marginBottom: 6 }}>
-        Welcome
-      </h2>
-      <p style={{ fontSize: 13.5, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 20 }}>
-        Enter your name so your designer knows who&apos;s reviewing.
-      </p>
-      <form onSubmit={(e) => { e.preventDefault(); if (name.trim()) onSubmit(name.trim()); }} style={{ display: 'flex', gap: 8 }}>
-        <input
-          className="input-field"
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Your name"
-          autoFocus
-          style={{ flex: 1 }}
-        />
-        <button
-          type="submit"
-          disabled={!name.trim()}
-          style={{
-            background: '#111', color: '#fff', border: 'none',
-            borderRadius: 8, padding: '10px 20px',
-            fontSize: 13, fontWeight: 600, cursor: name.trim() ? 'pointer' : 'not-allowed',
-            opacity: name.trim() ? 1 : 0.4, fontFamily: 'inherit',
-          }}
-        >
-          Continue
-        </button>
-      </form>
-    </div>
   );
 }
 
@@ -141,7 +97,9 @@ function ProjectProgress({ totalItems, approvedCount, rejectedCount, hasOrders }
 
 /* ── Chat widget (#78) ─────────────────────────────── */
 
-function ChatWidget({ portalToken, clientName, designerName }: { portalToken: string; clientName: string; designerName: string }) {
+function ChatWidget({ portalToken, clientName, designerName }: {
+  portalToken: string; clientName: string; designerName: string;
+}) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
@@ -154,7 +112,6 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
-  // Load messages from API
   const loadMessages = useCallback(async () => {
     const r = await api.getPortalMessages(portalToken);
     if (r.data) {
@@ -164,7 +121,6 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
     }
   }, [portalToken]);
 
-  // Load presence
   const loadPresence = useCallback(async () => {
     const r = await api.getPortalPresence(portalToken);
     if (r.data) {
@@ -173,7 +129,6 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
     }
   }, [portalToken]);
 
-  // SSE connection — always on for unread badge + presence
   useEffect(() => {
     loadMessages();
     loadPresence();
@@ -187,19 +142,14 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
         if (prev.some((m) => m.id === msg.id)) return prev;
         return [...prev, msg];
       });
-      if (msg.senderType === 'designer') {
-        setUnread((prev) => prev + 1);
-      }
+      if (msg.senderType === 'designer') setUnread((prev) => prev + 1);
     });
 
     es.addEventListener('messages_read', (e) => {
       const data = JSON.parse(e.data) as { readerType: string };
       if (data.readerType === 'designer') {
-        // Designer read our messages — update readAt on client messages
         setMessages((prev) => prev.map((m) =>
-          m.senderType === 'client' && !m.readAt
-            ? { ...m, readAt: new Date().toISOString() }
-            : m
+          m.senderType === 'client' && !m.readAt ? { ...m, readAt: new Date().toISOString() } : m
         ));
       }
     });
@@ -215,7 +165,6 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
     return () => { es.close(); };
   }, [portalToken, apiBase, loadMessages, loadPresence]);
 
-  // Mark messages as read when chat opens
   useEffect(() => {
     if (open && unread > 0) {
       api.markPortalMessagesRead(portalToken);
@@ -223,7 +172,6 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
     }
   }, [open, unread, portalToken]);
 
-  // Scroll to bottom on new messages
   useEffect(() => {
     if (open) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length, open]);
@@ -231,7 +179,10 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
   async function handleSend() {
     if (!draft.trim() || sending) return;
     setSending(true);
-    const r = await api.sendPortalMessage(portalToken, { text: draft.trim(), senderName: clientName });
+    const r = await api.sendPortalMessage(portalToken, {
+      text: draft.trim(),
+      senderName: clientName,
+    });
     setSending(false);
     if (r.data) {
       setMessages((prev) => {
@@ -245,8 +196,7 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
   function formatLastSeen(iso: string | null) {
     if (!iso) return '';
     const d = new Date(iso);
-    const now = new Date();
-    const diffMin = Math.round((now.getTime() - d.getTime()) / 60000);
+    const diffMin = Math.round((Date.now() - d.getTime()) / 60000);
     if (diffMin < 1) return 'Just now';
     if (diffMin < 60) return `${diffMin}m ago`;
     if (diffMin < 1440) return `${Math.floor(diffMin / 60)}h ago`;
@@ -255,86 +205,113 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
 
   return (
     <>
-      {/* Floating chat button */}
+      {/* FAB Toggle */}
       <button
         onClick={() => setOpen((v) => !v)}
         style={{
-          position: 'fixed', bottom: 24, right: 24, zIndex: 100,
-          width: 52, height: 52, borderRadius: '50%',
-          background: '#111', border: 'none', color: '#fff',
-          cursor: 'pointer', boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+          position: 'fixed', bottom: 28, right: 28, zIndex: 101,
+          width: 56, height: 56, borderRadius: '50%',
+          background: open ? '#333' : '#111', border: 'none', color: '#fff',
+          cursor: 'pointer',
+          boxShadow: '0 6px 24px rgba(0,0,0,0.25)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          transition: 'transform 0.15s',
+          transition: 'transform 0.2s, background 0.2s',
         }}
         onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.08)')}
         onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
       >
-        {open ? (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        ) : (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
-        )}
+        <svg
+          width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          style={{ transition: 'transform 0.2s', transform: open ? 'rotate(90deg)' : 'rotate(0)' }}
+        >
+          {open
+            ? <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>
+            : <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />}
+        </svg>
         {unread > 0 && !open && (
           <span style={{
-            position: 'absolute', top: -2, right: -2,
-            width: 20, height: 20, borderRadius: '50%',
+            position: 'absolute', top: -3, right: -3,
+            minWidth: 22, height: 22, borderRadius: 11,
             background: '#ef4444', color: '#fff',
-            fontSize: 10, fontWeight: 700,
+            fontSize: 11, fontWeight: 700,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            border: '2px solid #fff',
+            border: '2.5px solid #fff', padding: '0 5px',
           }}>
-            {unread}
+            {unread > 9 ? '9+' : unread}
           </span>
         )}
       </button>
 
-      {/* Chat panel */}
+      {/* Chat Card */}
       {open && (
-        <div className="anim-scale-in" style={{
-          position: 'fixed', bottom: 88, right: 24, zIndex: 100,
-          width: 360, maxHeight: 480, borderRadius: 16,
-          background: '#fff', boxShadow: '0 12px 40px rgba(0,0,0,0.15)',
-          border: '1px solid var(--border)',
-          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        <div style={{
+          position: 'fixed', bottom: 96, right: 28, zIndex: 100,
+          width: 380, height: 520, maxHeight: 'calc(100vh - 140px)',
+          borderRadius: 20,
+          background: '#fff',
+          boxShadow: '0 12px 48px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08)',
+          border: '1px solid rgba(0,0,0,0.06)',
+          display: 'flex', flexDirection: 'column',
+          overflow: 'hidden',
+          animation: 'chatPopUp 0.25s cubic-bezier(0.34,1.56,0.64,1)',
         }}>
-          {/* Header with presence */}
+          {/* Header */}
           <div style={{
-            padding: '14px 18px', borderBottom: '1px solid var(--border)',
-            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '14px 18px',
+            background: '#111', color: '#fff',
+            display: 'flex', alignItems: 'center', gap: 12,
+            borderRadius: '20px 20px 0 0',
           }}>
             <div style={{ position: 'relative' }}>
               <div style={{
-                width: 32, height: 32, borderRadius: '50%', background: 'var(--bg-input)',
-                border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)',
+                width: 38, height: 38, borderRadius: '50%',
+                background: 'rgba(255,255,255,0.15)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 13, fontWeight: 700, color: '#fff',
               }}>
                 {designerName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}
               </div>
-              {/* Online dot */}
               <span style={{
-                position: 'absolute', bottom: -1, right: -1,
-                width: 10, height: 10, borderRadius: '50%',
-                background: designerOnline ? '#22c55e' : '#9ca3af',
-                border: '2px solid #fff',
+                position: 'absolute', bottom: 0, right: 0,
+                width: 11, height: 11, borderRadius: '50%',
+                background: designerOnline ? '#22c55e' : '#6b7280',
+                border: '2px solid #111',
               }} />
             </div>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{designerName}</div>
-              <div style={{ fontSize: 10.5, color: designerOnline ? '#22c55e' : 'var(--text-muted)' }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{designerName}</div>
+              <div style={{ fontSize: 11, opacity: 0.7 }}>
                 {designerOnline ? 'Online' : designerLastSeen ? `Last seen ${formatLastSeen(designerLastSeen)}` : 'Your designer'}
               </div>
             </div>
+            <button
+              onClick={() => setOpen(false)}
+              style={{
+                background: 'rgba(255,255,255,0.1)', border: 'none', cursor: 'pointer',
+                color: '#fff', padding: 6, borderRadius: 8,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.2)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.1)')}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
           </div>
 
           {/* Messages */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8, minHeight: 200, maxHeight: 320 }}>
+          <div style={{
+            flex: 1, overflowY: 'auto', padding: '16px 16px 8px',
+            display: 'flex', flexDirection: 'column', gap: 6,
+            background: '#fafafa',
+          }}>
             {messages.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: 12.5 }}>
-                No messages yet. Start a conversation with your designer.
+              <div style={{ textAlign: 'center', padding: '50px 20px', color: '#999', fontSize: 13 }}>
+                <div style={{ fontSize: 28, marginBottom: 10 }}>&#128172;</div>
+                No messages yet.<br />Start a conversation with your designer.
               </div>
             )}
             {messages.map((m, idx) => {
@@ -343,20 +320,23 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
               return (
                 <div key={m.id} style={{ display: 'flex', flexDirection: 'column', alignItems: isClient ? 'flex-end' : 'flex-start' }}>
                   <div style={{
-                    maxWidth: '80%', padding: '9px 13px', borderRadius: 12,
-                    background: isClient ? '#111' : 'var(--bg-input)',
-                    color: isClient ? '#fff' : 'var(--text-primary)',
-                    fontSize: 13, lineHeight: 1.45,
-                    borderBottomRightRadius: isClient ? 4 : 12,
-                    borderBottomLeftRadius: isClient ? 12 : 4,
+                    maxWidth: '80%', padding: '10px 14px', fontSize: 13, lineHeight: 1.5,
+                    borderRadius: isClient ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                    background: isClient ? '#111' : '#fff',
+                    color: isClient ? '#fff' : '#1a1a1a',
+                    boxShadow: isClient ? 'none' : '0 1px 3px rgba(0,0,0,0.06)',
+                    border: isClient ? 'none' : '1px solid rgba(0,0,0,0.05)',
                   }}>
                     {m.text}
                   </div>
-                  <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3, paddingLeft: 4, paddingRight: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    {m.senderName} · {new Date(m.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                    {/* Seen status for client's own messages */}
+                  <div style={{
+                    fontSize: 10, color: '#aaa', marginTop: 3,
+                    paddingLeft: 6, paddingRight: 6,
+                    display: 'flex', alignItems: 'center', gap: 4,
+                  }}>
+                    {new Date(m.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
                     {isClient && isLast && (
-                      <span style={{ color: m.readAt ? '#2563eb' : 'var(--text-muted)', marginLeft: 2 }}>
+                      <span style={{ color: m.readAt ? '#3b82f6' : '#ccc', marginLeft: 2, display: 'flex' }}>
                         {m.readAt ? (
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M2 12l5 5L18 6" /><path d="M7 12l5 5L23 6" />
@@ -376,32 +356,39 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
           </div>
 
           {/* Input */}
-          <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8 }}>
+          <div style={{
+            padding: '12px 14px', borderTop: '1px solid rgba(0,0,0,0.06)',
+            background: '#fff', display: 'flex', gap: 8, alignItems: 'center',
+          }}>
             <input
               type="text"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') handleSend(); }}
-              placeholder="Type a message…"
+              placeholder="Type a message\u2026"
               style={{
-                flex: 1, border: '1px solid var(--border)', borderRadius: 8,
-                padding: '8px 12px', fontSize: 13, fontFamily: 'inherit',
-                outline: 'none', background: 'var(--bg-input)',
+                flex: 1, border: '1.5px solid #e5e5e5', borderRadius: 24,
+                padding: '10px 16px', fontSize: 13, fontFamily: 'inherit',
+                outline: 'none', background: '#fafafa',
+                transition: 'border-color 0.15s',
               }}
+              onFocus={(e) => (e.currentTarget.style.borderColor = '#111')}
+              onBlur={(e) => (e.currentTarget.style.borderColor = '#e5e5e5')}
             />
             <button
               onClick={handleSend}
               disabled={!draft.trim() || sending}
               style={{
-                width: 36, height: 36, borderRadius: 8,
-                background: draft.trim() ? '#111' : 'var(--bg-input)',
+                width: 40, height: 40, borderRadius: '50%',
+                background: draft.trim() ? '#111' : '#e5e5e5',
                 border: 'none', cursor: draft.trim() ? 'pointer' : 'default',
-                color: draft.trim() ? '#fff' : 'var(--text-muted)',
+                color: draft.trim() ? '#fff' : '#999',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                transition: 'all 0.12s',
+                transition: 'all 0.15s',
+                flexShrink: 0,
               }}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="22" y1="2" x2="11" y2="13" />
                 <polygon points="22 2 15 22 11 13 2 9 22 2" />
               </svg>
@@ -409,6 +396,13 @@ function ChatWidget({ portalToken, clientName, designerName }: { portalToken: st
           </div>
         </div>
       )}
+
+      <style>{`
+        @keyframes chatPopUp {
+          from { opacity: 0; transform: scale(0.85) translateY(20px); }
+          to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+      `}</style>
     </>
   );
 }
@@ -1203,20 +1197,10 @@ export default function PortalPage() {
   const [project, setProject] = useState<PortalProject | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [activeTab, setActiveTab] = useState<'shortlist' | 'order'>('shortlist');
-  const [clientName, setClientName] = useState<string | null>(null);
-
-  // Load client name from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem(`tradeliv-portal-name-${portalToken}`);
-    if (saved) setClientName(saved);
-  }, [portalToken]);
-
-  function handleIdentity(name: string) {
-    setClientName(name);
-    localStorage.setItem(`tradeliv-portal-name-${portalToken}`, name);
-  }
-
+  const [activeTab, setActiveTab] = useState<'shortlist' | 'quotes' | 'order'>('shortlist');
+  const [quotes, setQuotes] = useState<QuoteSummary[]>([]);
+  const [selectedQuote, setSelectedQuote] = useState<QuoteDetail | null>(null);
+  const [quoteActioning, setQuoteActioning] = useState(false);
   const loadProject = useCallback(() => {
     if (!portalToken) return;
     api.getPortalProject(portalToken).then((r) => {
@@ -1228,14 +1212,43 @@ export default function PortalPage() {
 
   useEffect(() => { loadProject(); }, [loadProject]);
 
+  // Load quotes
+  const loadQuotes = useCallback(() => {
+    if (!portalToken) return;
+    api.getPortalQuotes(portalToken).then((r) => {
+      if (!r.error) setQuotes(r.data!);
+    });
+  }, [portalToken]);
+
+  useEffect(() => { loadQuotes(); }, [loadQuotes]);
+
+  const loadQuoteDetail = useCallback(async (quoteId: string) => {
+    const r = await api.getPortalQuote(portalToken, quoteId);
+    if (!r.error && r.data) {
+      setSelectedQuote(r.data);
+    }
+  }, [portalToken]);
+
   // ── SSE: real-time sync ────────────────────────────
   useEffect(() => {
     if (!portalToken) return;
     const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
     const es = new EventSource(`${API_URL}/api/portal/${portalToken}/events`);
     es.addEventListener('shortlist_updated', () => { loadProject(); });
+    es.addEventListener('quote_sent', () => { loadQuotes(); if (selectedQuote) loadQuoteDetail(selectedQuote.id); });
+    es.addEventListener('quote_updated', () => { if (selectedQuote) loadQuoteDetail(selectedQuote.id); loadQuotes(); });
     return () => es.close();
-  }, [portalToken, loadProject]);
+  }, [portalToken, loadProject, loadQuotes, loadQuoteDetail, selectedQuote]);
+
+  const handleQuoteAction = async (quoteId: string, action: 'approve' | 'request_revision') => {
+    setQuoteActioning(true);
+    const r = await api.reviewPortalQuote(portalToken, quoteId, action);
+    if (!r.error) {
+      loadQuotes();
+      loadQuoteDetail(quoteId);
+    }
+    setQuoteActioning(false);
+  };
 
   function handleItemUpdate(roomId: string, updated: PortalShortlistItem) {
     if (!project) return;
@@ -1294,15 +1307,7 @@ export default function PortalPage() {
   );
   const pendingCount = totalItems - approvedCount - rejectedCount;
   const designerDisplayName = project.designer.businessName || project.designer.fullName;
-
-  // Gate: capture client identity first (#75)
-  if (!clientName) {
-    return (
-      <div style={{ paddingTop: 60 }}>
-        <ClientIdentityCapture onSubmit={handleIdentity} />
-      </div>
-    );
-  }
+  const clientName = project.client?.name || 'Client';
 
   return (
     <div style={{ paddingBottom: 100 }}>
@@ -1355,10 +1360,10 @@ export default function PortalPage() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', marginBottom: 24 }}>
-        {(['shortlist', 'order'] as const).map((tab) => {
-          const label = tab === 'shortlist' ? 'Shortlist' : 'Order Status';
+        {(['shortlist', 'quotes', 'order'] as const).map((tab) => {
+          const label = tab === 'shortlist' ? 'Shortlist' : tab === 'quotes' ? 'Quotes' : 'Order Status';
           const isActive = activeTab === tab;
-          const isDisabled = tab === 'order' && !hasOrders;
+          const isDisabled = (tab === 'order' && !hasOrders) || (tab === 'quotes' && quotes.length === 0);
           return (
             <button
               key={tab}
@@ -1369,9 +1374,16 @@ export default function PortalPage() {
                 color: isActive ? 'var(--text-primary)' : isDisabled ? 'var(--text-placeholder)' : 'var(--text-muted)',
                 borderBottom: `2px solid ${isActive ? 'var(--text-primary)' : 'transparent'}`,
                 transition: 'all 0.15s',
+                position: 'relative',
               }}
             >
               {label}
+              {tab === 'quotes' && quotes.some(q => q.status === 'sent') && (
+                <span style={{
+                  width: 7, height: 7, borderRadius: '50%', background: '#3850be',
+                  display: 'inline-block', marginLeft: 6, verticalAlign: 'middle',
+                }} />
+              )}
               {tab === 'order' && !hasOrders && (
                 <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: 'var(--text-placeholder)' }}>
                   (not placed yet)
@@ -1399,6 +1411,234 @@ export default function PortalPage() {
                 onItemUpdate={handleItemUpdate}
               />
             ))
+          )}
+        </div>
+      )}
+
+      {/* Quotes tab */}
+      {activeTab === 'quotes' && (
+        <div>
+          {!selectedQuote ? (
+            /* Quote list */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {quotes.length === 0 && (
+                <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--text-muted)', fontSize: 14 }}>
+                  No quotes yet. Your designer will send you a quote for review.
+                </div>
+              )}
+              {quotes.map((q) => {
+                const statusMap: Record<string, { bg: string; color: string; label: string }> = {
+                  sent:               { bg: 'rgba(50,80,190,0.08)', color: '#3850be', label: 'Awaiting your review' },
+                  approved:           { bg: 'rgba(22,163,74,0.08)', color: '#16a34a', label: 'You approved this' },
+                  revision_requested: { bg: 'rgba(234,179,8,0.10)', color: '#b45309', label: 'Revision requested' },
+                  converted:          { bg: 'rgba(22,163,74,0.08)', color: '#16a34a', label: 'Order created' },
+                };
+                const s = statusMap[q.status] || { bg: 'rgba(0,0,0,0.05)', color: '#555', label: q.status };
+                return (
+                  <button
+                    key={q.id}
+                    onClick={() => loadQuoteDetail(q.id)}
+                    style={{
+                      background: 'var(--bg-card)', border: '1px solid var(--border)',
+                      borderRadius: 12, padding: '18px 22px', cursor: 'pointer',
+                      textAlign: 'left', width: '100%',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>
+                          {q.title || `Quote #${q.id.slice(0, 8)}`}
+                        </div>
+                        <span style={{
+                          padding: '3px 10px', fontSize: 11, fontWeight: 700,
+                          background: s.bg, color: s.color, borderRadius: 99,
+                        }}>
+                          {s.label}
+                        </span>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 10 }}>
+                          {q._count.lineItems} item{q._count.lineItems !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--text-primary)' }}>
+                        {q.grandTotal != null
+                          ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(q.grandTotal)
+                          : '--'}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            /* Quote detail view */
+            <div>
+              <button
+                onClick={() => { setSelectedQuote(null); }}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer', padding: 0, marginBottom: 16 }}
+              >
+                &larr; All Quotes
+              </button>
+
+              <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, padding: '22px 26px', marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+                  <div>
+                    <h2 style={{ fontSize: 18, fontWeight: 800, margin: '0 0 6px', color: 'var(--text-primary)' }}>
+                      {selectedQuote.title || `Quote #${selectedQuote.id.slice(0, 8)}`}
+                    </h2>
+                    <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+                      From {selectedQuote.designer.businessName || selectedQuote.designer.fullName}
+                      {selectedQuote.version > 1 && <span> (v{selectedQuote.version})</span>}
+                    </div>
+                  </div>
+                  {selectedQuote.status === 'sent' && (
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        onClick={() => handleQuoteAction(selectedQuote.id, 'request_revision')}
+                        disabled={quoteActioning}
+                        style={{
+                          padding: '9px 18px', fontSize: 12.5, fontWeight: 600,
+                          background: 'none', border: '1px solid var(--border)', borderRadius: 8,
+                          cursor: 'pointer', color: 'var(--text-secondary)',
+                        }}
+                      >
+                        Request Revision
+                      </button>
+                      <button
+                        onClick={() => handleQuoteAction(selectedQuote.id, 'approve')}
+                        disabled={quoteActioning}
+                        style={{
+                          padding: '9px 18px', fontSize: 12.5, fontWeight: 600,
+                          background: '#16a34a', color: '#fff', border: 'none', borderRadius: 8,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {quoteActioning ? 'Processing...' : 'Approve Quote'}
+                      </button>
+                    </div>
+                  )}
+                  {selectedQuote.status === 'approved' && (
+                    <span style={{
+                      padding: '6px 14px', fontSize: 12, fontWeight: 700,
+                      background: 'rgba(22,163,74,0.08)', color: '#16a34a', borderRadius: 99,
+                    }}>
+                      Approved
+                    </span>
+                  )}
+                  {selectedQuote.status === 'revision_requested' && (
+                    <span style={{
+                      padding: '6px 14px', fontSize: 12, fontWeight: 700,
+                      background: 'rgba(234,179,8,0.10)', color: '#b45309', borderRadius: 99,
+                    }}>
+                      Revision Requested
+                    </span>
+                  )}
+                </div>
+
+                {selectedQuote.notes && (
+                  <div style={{
+                    padding: '12px 16px', background: 'var(--bg-input)', borderRadius: 8,
+                    fontSize: 13, color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.6,
+                  }}>
+                    {selectedQuote.notes}
+                  </div>
+                )}
+
+                {/* Line items */}
+                <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 20 }}>
+                  <thead>
+                    <tr style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, borderBottom: '1px solid var(--border)' }}>
+                      <th style={{ padding: '8px 0', textAlign: 'left', fontWeight: 600 }}>Product</th>
+                      <th style={{ padding: '8px 0', textAlign: 'right', fontWeight: 600, width: 60 }}>Qty</th>
+                      <th style={{ padding: '8px 0', textAlign: 'right', fontWeight: 600, width: 100 }}>Price</th>
+                      <th style={{ padding: '8px 0', textAlign: 'right', fontWeight: 600, width: 100 }}>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedQuote.lineItems.map((li) => (
+                      <tr key={li.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '12px 0' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            {(li.product.imageUrl || li.product.images?.primary) && (
+                              <img
+                                src={li.product.images?.primary || li.product.imageUrl || ''}
+                                alt="" style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'cover', border: '1px solid var(--border)' }}
+                              />
+                            )}
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{li.product.productName}</div>
+                              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                {li.product.brandName}{li.room && <> &middot; {li.room.name}</>}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px 0', textAlign: 'right', fontSize: 13 }}>{li.quantity}</td>
+                        <td style={{ padding: '12px 0', textAlign: 'right', fontSize: 13 }}>
+                          {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(li.unitPrice)}
+                        </td>
+                        <td style={{ padding: '12px 0', textAlign: 'right', fontSize: 13, fontWeight: 600 }}>
+                          {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(li.lineTotal)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {/* Pricing breakdown */}
+                <div style={{
+                  background: 'var(--bg-input)', borderRadius: 10, padding: '16px 20px',
+                  display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13.5,
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Subtotal</span>
+                    <span style={{ fontWeight: 600 }}>
+                      {selectedQuote.subtotal != null
+                        ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(selectedQuote.subtotal)
+                        : '--'}
+                    </span>
+                  </div>
+                  {(selectedQuote.taxAmount ?? 0) > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>Tax ({selectedQuote.taxRate}%)</span>
+                      <span>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(selectedQuote.taxAmount!)}</span>
+                    </div>
+                  )}
+                  {(selectedQuote.commissionAmount ?? 0) > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>Design Fee</span>
+                      <span>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(selectedQuote.commissionAmount!)}</span>
+                    </div>
+                  )}
+                  {(selectedQuote.platformFeeAmount ?? 0) > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>Service Fee</span>
+                      <span>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(selectedQuote.platformFeeAmount!)}</span>
+                    </div>
+                  )}
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontWeight: 800, fontSize: 15 }}>Total</span>
+                    <span style={{ fontWeight: 900, fontSize: 18, color: 'var(--text-primary)' }}>
+                      {selectedQuote.grandTotal != null
+                        ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(selectedQuote.grandTotal)
+                        : '--'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Chat — messages now unified in the project chat */}
+              <div style={{
+                background: 'var(--bg-card)', border: '1px solid var(--border)',
+                borderRadius: 12, padding: '18px 22px', textAlign: 'center',
+              }}>
+                <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 6 }}>
+                  Have questions about this quote?
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                  Use the chat button in the bottom-right corner. Messages will be tagged to this quote automatically.
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}

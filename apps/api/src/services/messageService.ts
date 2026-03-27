@@ -10,30 +10,59 @@ export interface MessagePayload {
   senderId?: string;
   senderName: string;
   text: string;
+  contextType?: string;
+  contextId?: string;
+  metadata?: Record<string, unknown>;
 }
 
 /* ─── CRUD ─────────────────────────────────────────────── */
 
 export async function createMessage(payload: MessagePayload) {
-  return prisma.message.create({ data: payload });
+  return prisma.message.create({
+    data: {
+      projectId: payload.projectId,
+      senderType: payload.senderType,
+      senderId: payload.senderId,
+      senderName: payload.senderName,
+      text: payload.text,
+      contextType: payload.contextType ?? null,
+      contextId: payload.contextId ?? null,
+      metadata: payload.metadata ?? undefined,
+    },
+  });
 }
 
-export async function getMessages(projectId: string, after?: string, limit = 100) {
+export async function getMessages(
+  projectId: string,
+  opts?: { after?: string; contextType?: string; contextId?: string; limit?: number },
+) {
+  const { after, contextType, contextId, limit = 200 } = opts ?? {};
   return prisma.message.findMany({
     where: {
       projectId,
       ...(after ? { createdAt: { gt: new Date(after) } } : {}),
+      ...(contextType ? { contextType } : {}),
+      ...(contextId ? { contextId } : {}),
     },
     orderBy: { createdAt: 'asc' },
     take: limit,
   });
 }
 
-export async function markMessagesRead(projectId: string, readerType: 'designer' | 'client') {
-  // If the reader is the designer, mark all client messages as read, and vice versa
+export async function markMessagesRead(
+  projectId: string,
+  readerType: 'designer' | 'client',
+  contextFilter?: { contextType?: string; contextId?: string },
+) {
   const senderType: ActorType = readerType === 'designer' ? 'client' : 'designer';
   const result = await prisma.message.updateMany({
-    where: { projectId, senderType, readAt: null },
+    where: {
+      projectId,
+      senderType,
+      readAt: null,
+      ...(contextFilter?.contextType ? { contextType: contextFilter.contextType } : {}),
+      ...(contextFilter?.contextId ? { contextId: contextFilter.contextId } : {}),
+    },
     data: { readAt: new Date() },
   });
   return result.count;

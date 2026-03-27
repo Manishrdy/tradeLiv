@@ -47,11 +47,36 @@ enum BrandPOStatus {
   cancelled
 }
 
+enum QuoteStatus {
+  draft
+  sent
+  approved
+  revision_requested
+  expired
+  converted
+}
+
+enum FeeType {
+  percentage
+  fixed
+}
+
 enum ActorType {
   designer
   client
   admin
   system
+}
+
+enum NotificationType {
+  message
+  quote_approved
+  quote_revision
+  quote_comment
+  order_update
+  shortlist_change
+  client_portal_view
+  payment_received
 }
 
 model Designer {
@@ -69,14 +94,18 @@ model Designer {
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
 
+  feeDefaults         Json?          // { taxRate, commissionType, commissionValue, platformFeeType, platformFeeValue }
+
   clients             Client[]
   projects            Project[]
   products            Product[]
   shortlistItems      ShortlistItem[]
   pinnedComparisons   PinnedComparison[]
   orders              Order[]
+  quotes              Quote[]
   sessions            DesignerSession[]
   refreshTokens       RefreshToken[]
+  notifications       Notification[]
 }
 
 model Client {
@@ -116,6 +145,7 @@ model Project {
   shortlistItems    ShortlistItem[]
   cartItems         CartItem[]
   orders            Order[]
+  quotes            Quote[]
   pinnedComparisons PinnedComparison[]
   messages          Message[]
 }
@@ -139,6 +169,7 @@ model Room {
   shortlistItems    ShortlistItem[]
   cartItems         CartItem[]
   orderLineItems    OrderLineItem[]
+  quoteLineItems    QuoteLineItem[]
   pinnedComparisons PinnedComparison[]
 }
 
@@ -181,6 +212,7 @@ model Product {
   shortlistItems ShortlistItem[]
   cartItems      CartItem[]
   orderLineItems OrderLineItem[]
+  quoteLineItems QuoteLineItem[]
 
   @@index([designerId, sourceUrl])
 }
@@ -302,20 +334,115 @@ model Payment {
   order Order @relation(fields: [orderId], references: [id])
 }
 
-model Message {
+model Quote {
+  id               String      @id @default(uuid())
+  projectId        String
+  designerId       String
+  version          Int         @default(1)
+  status           QuoteStatus @default(draft)
+  title            String?
+  notes            String?
+
+  // Fee configuration
+  taxRate          Decimal?    // e.g. 8.25 for 8.25%
+  commissionType   FeeType?
+  commissionValue  Decimal?    // percentage value or fixed dollar amount
+  platformFeeType  FeeType?
+  platformFeeValue Decimal?
+
+  // Computed totals (recalculated on save)
+  subtotal          Decimal?
+  taxAmount         Decimal?
+  commissionAmount  Decimal?
+  platformFeeAmount Decimal?
+  grandTotal        Decimal?
+
+  sentAt           DateTime?
+  approvedAt       DateTime?
+  expiresAt        DateTime?
+  convertedOrderId String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  project   Project         @relation(fields: [projectId], references: [id])
+  designer  Designer        @relation(fields: [designerId], references: [id])
+  lineItems QuoteLineItem[]
+  comments  QuoteComment[]
+
+  @@index([projectId, status])
+  @@index([designerId])
+}
+
+model QuoteLineItem {
+  id              String   @id @default(uuid())
+  quoteId         String
+  productId       String
+  roomId          String
+  selectedVariant Json?
+  quantity        Int
+  unitPrice       Decimal  // Snapshot of product retail price
+  lineTotal       Decimal  // unitPrice * quantity + adjustmentValue
+  adjustmentLabel String?  // e.g. "Volume discount", "Rush surcharge"
+  adjustmentValue Decimal? // Positive = surcharge, negative = discount
+  sortOrder       Int      @default(0)
+
+  quote   Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+  room    Room    @relation(fields: [roomId], references: [id])
+}
+
+model QuoteComment {
   id         String    @id @default(uuid())
-  projectId  String
+  quoteId    String
   senderType ActorType
   senderId   String?
   senderName String
   text       String
+  lineItemId String?   // Optional: links comment to a specific line item
   readAt     DateTime?
   createdAt  DateTime  @default(now())
+
+  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([quoteId, createdAt])
+}
+
+model Message {
+  id          String    @id @default(uuid())
+  projectId   String
+  senderType  ActorType
+  senderId    String?
+  senderName  String
+  text        String
+  contextType String?   // "quote", "room", "order", "general"
+  contextId   String?   // e.g. quoteId, roomId, orderId
+  metadata    Json?     // e.g. { lineItemId: "..." }
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
 
   project Project @relation(fields: [projectId], references: [id])
 
   @@index([projectId, createdAt])
   @@index([projectId, senderType, readAt])
+  @@index([projectId, contextType, contextId])
+}
+
+model Notification {
+  id           String           @id @default(uuid())
+  designerId   String
+  type         NotificationType
+  title        String
+  body         String?
+  projectId    String?
+  resourceType String?          // "quote", "order", "message", "shortlist"
+  resourceId   String?
+  read         Boolean          @default(false)
+  createdAt    DateTime         @default(now())
+
+  designer Designer @relation(fields: [designerId], references: [id], onDelete: Cascade)
+
+  @@index([designerId, read, createdAt])
+  @@index([designerId, createdAt])
 }
 
 model AuditLog {
