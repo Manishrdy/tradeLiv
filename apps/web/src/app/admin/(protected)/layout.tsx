@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { api } from '@/lib/api';
+import { api, AdminNotification } from '@/lib/api';
 
 interface AdminUserState {
   id: string;
@@ -137,20 +137,76 @@ export default function AdminProtectedLayout({ children }: { children: React.Rea
   const [admin, setAdmin]       = useState<AdminUserState | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
+  // Notification state
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useState<AdminNotification[]>([]);
+  const [bellOpen, setBellOpen] = useState(false);
+  const bellRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     setHydrated(true);
     api.getAdminMe().then((r) => {
       if (r.data && r.data.isAdmin) {
         setAdmin(r.data);
       } else {
-        router.replace('/login');
+        router.replace('/admin/login');
       }
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // SSE for admin notifications
+  useEffect(() => {
+    if (!admin) return;
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL ?? '';
+    const es = new EventSource(`${baseUrl}/api/admin/notifications/stream`, { withCredentials: true });
+
+    es.addEventListener('admin_unread_count', (e) => {
+      try { setUnreadCount(JSON.parse(e.data).count); } catch (err) {
+        console.warn('Failed to parse admin_unread_count SSE event', err);
+      }
+    });
+
+    es.addEventListener('admin_notification', (e) => {
+      try {
+        const n = JSON.parse(e.data) as AdminNotification;
+        setNotifications((prev) => [n, ...prev].slice(0, 50));
+      } catch (err) {
+        console.warn('Failed to parse admin_notification SSE event', err);
+      }
+    });
+
+    return () => es.close();
+  }, [admin]);
+
+  // Close bell dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (bellRef.current && !bellRef.current.contains(e.target as Node)) setBellOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const loadNotifications = useCallback(() => {
+    api.getAdminNotifications().then((r) => {
+      if (r.data) setNotifications(r.data);
+    });
+  }, []);
+
+  function handleBellClick() {
+    if (!bellOpen) loadNotifications();
+    setBellOpen((v) => !v);
+  }
+
+  async function handleMarkAllRead() {
+    await api.markAllAdminNotificationsRead();
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    setUnreadCount(0);
+  }
+
   async function handleSignOut() {
     await api.logout();
-    router.replace('/login');
+    router.replace('/admin/login');
   }
 
   if (!hydrated || !admin) {
@@ -192,7 +248,7 @@ export default function AdminProtectedLayout({ children }: { children: React.Rea
         {/* Logo + badge */}
         <div style={{ padding: '22px 20px 18px', display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.04em', color: '#fff' }}>
-            Tradeliv
+            tradeLiv
           </span>
           <span style={{
             fontSize: 9, fontWeight: 800, letterSpacing: '0.07em',
@@ -244,6 +300,131 @@ export default function AdminProtectedLayout({ children }: { children: React.Rea
             );
           })}
         </nav>
+
+        {/* Notification bell */}
+        <div ref={bellRef} style={{ padding: '4px 10px', position: 'relative' }}>
+          <button
+            onClick={handleBellClick}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 9, width: '100%',
+              padding: '8px 10px', borderRadius: 8, border: 'none',
+              background: bellOpen ? 'rgba(255,255,255,0.08)' : 'transparent',
+              color: bellOpen ? '#fff' : 'rgba(255,255,255,0.45)',
+              fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit',
+              letterSpacing: '-0.01em', textAlign: 'left',
+              transition: 'all 0.12s ease', position: 'relative',
+            }}
+            onMouseEnter={(e) => { if (!bellOpen) { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = 'rgba(255,255,255,0.75)'; }}}
+            onMouseLeave={(e) => { if (!bellOpen) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.45)'; }}}
+          >
+            <span style={{ flexShrink: 0, opacity: bellOpen ? 1 : 0.5, position: 'relative' }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 01-3.46 0" />
+              </svg>
+              {unreadCount > 0 && (
+                <span style={{
+                  position: 'absolute', top: -4, right: -6,
+                  width: 16, height: 16, borderRadius: '50%',
+                  background: '#ef4444', color: '#fff',
+                  fontSize: 9, fontWeight: 800,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  lineHeight: 1,
+                }}>
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </span>
+            Notifications
+            {unreadCount > 0 && (
+              <span style={{
+                marginLeft: 'auto', fontSize: 10, fontWeight: 700,
+                color: '#fff', background: '#ef4444',
+                padding: '1px 6px', borderRadius: 10,
+              }}>
+                {unreadCount}
+              </span>
+            )}
+          </button>
+
+          {/* Dropdown */}
+          {bellOpen && (
+            <div style={{
+              position: 'absolute', bottom: '100%', left: 10, marginBottom: 6,
+              width: 340, maxHeight: 420, overflowY: 'auto',
+              background: '#fff', border: '1px solid #E4E1DC', borderRadius: 12,
+              boxShadow: '0 12px 40px rgba(0,0,0,0.15)', zIndex: 100,
+            }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '12px 16px', borderBottom: '1px solid #E8E5E0',
+              }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#0F0F0F' }}>Notifications</span>
+                {unreadCount > 0 && (
+                  <button
+                    onClick={handleMarkAllRead}
+                    style={{
+                      background: 'none', border: 'none', fontSize: 11, fontWeight: 600,
+                      color: '#6B6B6B', cursor: 'pointer', fontFamily: 'inherit',
+                    }}
+                  >
+                    Mark all read
+                  </button>
+                )}
+              </div>
+              {notifications.length === 0 ? (
+                <div style={{ padding: '32px 16px', textAlign: 'center', color: '#B0ADA8', fontSize: 13 }}>
+                  No notifications
+                </div>
+              ) : (
+                notifications.map((n) => (
+                  <Link
+                    key={n.id}
+                    href={n.designerId ? `/admin/designers/${n.designerId}` : '/admin/designers'}
+                    onClick={() => {
+                      setBellOpen(false);
+                      if (!n.read) {
+                        api.markAdminNotificationRead(n.id);
+                        setNotifications((prev) => prev.map((x) => x.id === n.id ? { ...x, read: true } : x));
+                        setUnreadCount((c) => Math.max(0, c - 1));
+                      }
+                    }}
+                    style={{
+                      display: 'block', padding: '12px 16px',
+                      borderBottom: '1px solid #F3F2EF', textDecoration: 'none',
+                      background: n.read ? 'transparent' : 'rgba(196,162,101,0.06)',
+                      transition: 'background 0.1s',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = n.read ? '#FAFAF8' : 'rgba(196,162,101,0.1)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = n.read ? 'transparent' : 'rgba(196,162,101,0.06)')}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                      {!n.read && (
+                        <div style={{
+                          width: 6, height: 6, borderRadius: '50%', background: '#C4A265',
+                          marginTop: 5, flexShrink: 0,
+                        }} />
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: '#0F0F0F', marginBottom: 2 }}>
+                          {n.title}
+                        </div>
+                        {n.body && (
+                          <div style={{ fontSize: 11.5, color: '#8C8984', lineHeight: 1.4 }}>
+                            {n.body}
+                          </div>
+                        )}
+                        <div style={{ fontSize: 10.5, color: '#B0ADA8', marginTop: 4 }}>
+                          {new Date(n.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                        </div>
+                      </div>
+                    </div>
+                  </Link>
+                ))
+              )}
+            </div>
+          )}
+        </div>
 
         {/* User + sign out */}
         <div style={{ padding: '8px 10px 14px' }}>

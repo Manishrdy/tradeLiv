@@ -317,6 +317,17 @@ export default function LoginPage() {
           <span style={{ color: '#8C8984', cursor: 'pointer' }}>Privacy Policy</span>.
         </p>
 
+        <div style={{ textAlign: 'center', marginTop: 16 }}>
+          <Link
+            href="/admin/login"
+            style={{ fontSize: 12, color: '#B0ADA8', textDecoration: 'none', letterSpacing: '-0.01em', transition: 'color 0.14s' }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = '#6B6B6B')}
+            onMouseLeave={(e) => (e.currentTarget.style.color = '#B0ADA8')}
+          >
+            Admin login
+          </Link>
+        </div>
+
       </div>
     </div>
   );

@@ -26,8 +26,10 @@ import notificationsRouter from './routes/notifications';
 import { stripeWebhookHandler } from './routes/webhooks';
 import { addProjectListener, emitProjectEvent } from './services/projectEvents';
 import { addDesignerListener } from './services/designerEvents';
+import { addAdminListener } from './services/adminEvents';
 import { setOnline, setOffline, purgeExpiredMessages } from './services/messageService';
 import { purgeOldNotifications, getUnreadCount, notifyProjectDesigner } from './services/notificationService';
+import { getAdminUnreadCount } from './services/adminNotificationService';
 import { requireAuth, requireRole, AuthRequest } from './middleware/auth';
 
 const app = express();
@@ -37,6 +39,7 @@ app.use(helmet());
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
   credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }));
 app.use(cookieParser());
 
@@ -44,6 +47,20 @@ app.use(cookieParser());
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhookHandler);
 
 app.use(express.json({ limit: '1mb' }));
+
+// CSRF mitigation: require X-Requested-With header on state-changing requests.
+// Browsers enforce CORS preflight for custom headers, blocking cross-origin forgery.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    // Skip for webhook endpoints (Stripe sends raw body without custom headers)
+    if (req.path.startsWith('/api/webhooks/')) return next();
+    if (!req.headers['x-requested-with']) {
+      res.status(403).json({ error: 'Missing required X-Requested-With header.' });
+      return;
+    }
+  }
+  next();
+});
 
 app.use((req: Request, res: Response, next: NextFunction) => {
   res.on('finish', () => {
@@ -69,6 +86,16 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many requests. Please try again in 15 minutes.' },
 });
+
+// Admin login: tighter limit — 5 attempts per 15 min per IP
+const adminLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts. Please try again in 15 minutes.' },
+});
+app.use('/api/auth/admin/login', adminLoginLimiter);
 app.use('/api/auth', authLimiter, authRouter);
 app.use('/api/clients', clientsRouter);
 app.use('/api/portal', portalRouter);
@@ -101,6 +128,22 @@ app.get('/api/notifications/stream', requireAuth, requireRole('designer'), async
   res.write(`event: unread_count\ndata: ${JSON.stringify({ count })}\n\n`);
 
   addDesignerListener(designerId, res);
+});
+
+/* ─── SSE: real-time admin notifications ─────────── */
+app.get('/api/admin/notifications/stream', requireAuth, requireRole('admin'), async (_req: AuthRequest, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+  res.write(':\n\n');
+
+  // Send current unread count on connect
+  const count = await getAdminUnreadCount();
+  res.write(`event: admin_unread_count\ndata: ${JSON.stringify({ count })}\n\n`);
+
+  addAdminListener(res);
 });
 
 /* ─── SSE: real-time project events ───────────────── */

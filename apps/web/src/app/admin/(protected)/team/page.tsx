@@ -1,11 +1,14 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { api, AdminUser, AdminDesigner } from '@/lib/api';
 
 export default function AdminTeamPage() {
+  const router = useRouter();
   const [admins, setAdmins]     = useState<AdminUser[]>([]);
   const [loading, setLoading]   = useState(true);
+  const [authorized, setAuthorized] = useState(false);
   const [showAdd, setShowAdd]   = useState(false);
   const [mode, setMode]         = useState<'promote' | 'create'>('promote');
   const [designers, setDesigners] = useState<AdminDesigner[]>([]);
@@ -22,7 +25,17 @@ export default function AdminTeamPage() {
     });
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Gate: only super admins can access this page
+  useEffect(() => {
+    api.getAdminMe().then((r) => {
+      if (r.data?.isSuperAdmin) {
+        setAuthorized(true);
+        load();
+      } else {
+        router.replace('/admin/dashboard');
+      }
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function openAdd() {
     setShowAdd(true);
@@ -31,8 +44,8 @@ export default function AdminTeamPage() {
     setSelectedId('');
     setForm({ email: '', password: '', fullName: '' });
     // Load non-admin designers for promotion
-    api.getAdminDesigners({ status: 'approved' }).then((r) => {
-      if (r.data) setDesigners(r.data.filter((d) => !d.isAdmin));
+    api.getAdminDesigners({ status: 'approved', limit: 100 }).then((r) => {
+      if (r.data) setDesigners(r.data.designers.filter((d) => !d.isAdmin));
     });
   }
 
@@ -67,7 +80,7 @@ export default function AdminTeamPage() {
     }
   }
 
-  if (loading) {
+  if (!authorized || loading) {
     return (
       <div style={{ padding: '60px 40px', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-muted)', fontSize: 13.5 }}>
         <svg className="anim-rotate" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -218,6 +231,11 @@ export default function AdminTeamPage() {
                 <div>
                   <label className="form-label">Password</label>
                   <input className="input-field" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} style={{ fontSize: 13 }} />
+                  {form.password.length > 0 && form.password.length < 8 && (
+                    <p style={{ fontSize: 11.5, color: '#b91c1c', marginTop: 5 }}>
+                      Password must be at least 8 characters.
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -229,7 +247,7 @@ export default function AdminTeamPage() {
               <button
                 className="btn-primary"
                 onClick={handleAdd}
-                disabled={saving || (mode === 'promote' ? !selectedId : !form.email || !form.password || !form.fullName)}
+                disabled={saving || (mode === 'promote' ? !selectedId : !form.email || form.password.length < 8 || !form.fullName)}
                 style={{ fontSize: 13, padding: '9px 18px', opacity: saving ? 0.6 : 1 }}
               >
                 {saving ? 'Adding...' : 'Add Admin'}

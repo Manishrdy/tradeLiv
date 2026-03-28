@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { api, PlatformConfigEntry } from '@/lib/api';
 
 const GROUP_COLORS: Record<string, { color: string; bg: string }> = {
@@ -11,20 +12,30 @@ const GROUP_COLORS: Record<string, { color: string; bg: string }> = {
 };
 
 export default function AdminConfigPage() {
+  const router = useRouter();
   const [configs, setConfigs] = useState<PlatformConfigEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [authorized, setAuthorized] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [newConfig, setNewConfig] = useState({ key: '', value: '', type: 'string', label: '', group: 'general' });
 
+  // Gate: only super admins can access this page
   useEffect(() => {
-    api.getAdminConfig().then((r) => {
-      if (r.data) setConfigs(r.data);
-      setLoading(false);
+    api.getAdminMe().then((r) => {
+      if (r.data?.isSuperAdmin) {
+        setAuthorized(true);
+        api.getAdminConfig().then((cr) => {
+          if (cr.data) setConfigs(cr.data);
+          setLoading(false);
+        });
+      } else {
+        router.replace('/admin/dashboard');
+      }
     });
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSave(key: string) {
     setSaving(true);
@@ -55,7 +66,7 @@ export default function AdminConfigPage() {
     return acc;
   }, {});
 
-  if (loading) {
+  if (!authorized || loading) {
     return (
       <div style={{ padding: '60px 40px', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-muted)', fontSize: 13.5 }}>
         <svg className="anim-rotate" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

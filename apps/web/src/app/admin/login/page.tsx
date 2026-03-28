@@ -90,7 +90,7 @@ export default function AdminLoginPage() {
       <div style={{ width: '100%', maxWidth: 380 }}>
         <div style={{ marginBottom: 40 }}>
           <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.04em', color: '#0F0F0F' }}>
-            Furnlo
+            tradeLiv
           </span>
           <span
             style={{

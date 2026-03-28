@@ -12,6 +12,15 @@ const STATUS_STYLE: Record<string, { color: string; bg: string; label: string }>
   suspended:      { color: '#555',    bg: '#f0f0f0', label: 'Suspended' },
 };
 
+const REFERRAL_LABELS: Record<string, string> = {
+  referral: 'Referral from a colleague',
+  google_search: 'Google Search',
+  ai_chatbots: 'AI Chatbots / Tools',
+  event: 'Trade show or event',
+  social_media: 'Social media',
+  other: 'Other',
+};
+
 function StatusBadge({ status }: { status: string }) {
   const s = STATUS_STYLE[status] ?? { color: '#555', bg: '#f0f0f0', label: status };
   return (
@@ -38,6 +47,12 @@ export default function AdminDesignerDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState('');
+
+  // Rejection modal
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState('');
+
+  // Simple confirm for approve/suspend
   const [confirmStatus, setConfirmStatus] = useState<string | null>(null);
 
   useEffect(() => {
@@ -48,15 +63,17 @@ export default function AdminDesignerDetailPage() {
     });
   }, [id]);
 
-  async function handleStatusChange(newStatus: string) {
+  async function handleStatusChange(newStatus: string, reason?: string) {
     if (!designer) return;
     setUpdating(true);
     setUpdateError('');
-    const r = await api.updateDesignerStatus(id, newStatus);
+    const r = await api.updateDesignerStatus(id, newStatus, reason);
     setUpdating(false);
     setConfirmStatus(null);
+    setShowRejectModal(false);
+    setRejectionReason('');
     if (r.error) { setUpdateError(r.error); return; }
-    setDesigner((prev) => prev ? { ...prev, status: newStatus } : prev);
+    setDesigner((prev) => prev ? { ...prev, status: newStatus, rejectionReason: reason ?? null } : prev);
   }
 
   if (loading) {
@@ -81,14 +98,14 @@ export default function AdminDesignerDetailPage() {
     );
   }
 
-  const actions: { label: string; status: string; style: React.CSSProperties }[] = [
-    designer.status !== 'approved'  && { label: 'Approve',  status: 'approved',  style: { background: '#2d7a4f', color: '#fff', border: 'none' } },
-    designer.status !== 'rejected'  && { label: 'Reject',   status: 'rejected',  style: { background: 'transparent', color: '#8b2635', border: '1px solid rgba(139,38,53,0.3)' } },
-    designer.status !== 'suspended' && { label: 'Suspend',  status: 'suspended', style: { background: 'transparent', color: '#555', border: '1px solid #ccc' } },
-  ].filter(Boolean) as { label: string; status: string; style: React.CSSProperties }[];
+  const actions: { label: string; action: () => void; style: React.CSSProperties }[] = [
+    designer.status !== 'approved'  && { label: 'Approve',  action: () => setConfirmStatus('approved'),  style: { background: '#2d7a4f', color: '#fff', border: 'none' } },
+    designer.status !== 'rejected'  && { label: 'Reject',   action: () => setShowRejectModal(true),      style: { background: 'transparent', color: '#8b2635', border: '1px solid rgba(139,38,53,0.3)' } },
+    designer.status !== 'suspended' && { label: 'Suspend',  action: () => setConfirmStatus('suspended'), style: { background: 'transparent', color: '#555', border: '1px solid #ccc' } },
+  ].filter(Boolean) as { label: string; action: () => void; style: React.CSSProperties }[];
 
   return (
-    <div style={{ padding: '40px 40px 80px', maxWidth: 800 }}>
+    <div style={{ padding: '40px 40px 80px', maxWidth: 860 }}>
 
       {/* Breadcrumb */}
       <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 20 }}>
@@ -128,8 +145,8 @@ export default function AdminDesignerDetailPage() {
         <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
           {actions.map((a) => (
             <button
-              key={a.status}
-              onClick={() => setConfirmStatus(a.status)}
+              key={a.label}
+              onClick={a.action}
               disabled={updating}
               style={{
                 ...a.style,
@@ -144,7 +161,7 @@ export default function AdminDesignerDetailPage() {
         </div>
       </div>
 
-      {/* Confirm dialog */}
+      {/* Confirm dialog for approve/suspend */}
       {confirmStatus && (
         <div style={{
           marginBottom: 20, padding: '14px 18px',
@@ -181,6 +198,77 @@ export default function AdminDesignerDetailPage() {
         </div>
       )}
 
+      {/* Rejection modal */}
+      {showRejectModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 200,
+          background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={() => { setShowRejectModal(false); setRejectionReason(''); }}>
+          <div
+            style={{
+              background: '#fff', borderRadius: 14, width: 440, padding: '28px 28px 24px',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#0F0F0F', margin: '0 0 6px', letterSpacing: '-0.03em' }}>
+              Reject Application
+            </h3>
+            <p style={{ fontSize: 13, color: '#8C8984', margin: '0 0 20px', lineHeight: 1.5 }}>
+              Rejecting <strong style={{ color: '#0F0F0F' }}>{designer.fullName}</strong>.
+              Provide a reason so the designer understands why.
+            </p>
+
+            <label style={{
+              display: 'block', fontSize: 10.5, fontWeight: 700, letterSpacing: '0.09em',
+              textTransform: 'uppercase', color: '#B0ADA8', marginBottom: 7,
+            }}>
+              Rejection Reason
+            </label>
+            <textarea
+              value={rejectionReason}
+              onChange={(e) => setRejectionReason(e.target.value)}
+              placeholder="e.g. We couldn't verify your business. Please re-apply with a valid website or LinkedIn profile."
+              rows={4}
+              style={{
+                display: 'block', width: '100%', background: '#FAFAF8',
+                border: '1.5px solid #E4E1DC', borderRadius: 10,
+                padding: '12px 14px', fontSize: 13.5, color: '#0F0F0F',
+                fontFamily: 'inherit', outline: 'none', resize: 'vertical',
+                letterSpacing: '-0.01em', transition: 'border-color 0.14s',
+              }}
+              onFocus={(e) => (e.target.style.borderColor = '#0F0F0F')}
+              onBlur={(e) => (e.target.style.borderColor = '#E4E1DC')}
+            />
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 20, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setShowRejectModal(false); setRejectionReason(''); }}
+                style={{
+                  border: '1px solid #E4E1DC', borderRadius: 8,
+                  background: 'transparent', color: '#6B6B6B',
+                  padding: '8px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleStatusChange('rejected', rejectionReason || undefined)}
+                disabled={updating}
+                style={{
+                  border: 'none', borderRadius: 8,
+                  background: '#8b2635', color: '#fff',
+                  padding: '8px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                  opacity: updating ? 0.6 : 1,
+                }}
+              >
+                {updating ? 'Rejecting…' : 'Reject Application'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {updateError && (
         <div style={{
           marginBottom: 16, padding: '10px 14px',
@@ -191,29 +279,62 @@ export default function AdminDesignerDetailPage() {
         </div>
       )}
 
+      {/* Rejection reason banner */}
+      {designer.status === 'rejected' && designer.rejectionReason && (
+        <div style={{
+          marginBottom: 20, padding: '14px 18px',
+          background: 'rgba(139,38,53,0.04)', border: '1px solid rgba(139,38,53,0.12)',
+          borderRadius: 10,
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#8b2635', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+            Rejection Reason
+          </div>
+          <div style={{ fontSize: 13.5, color: '#4a1520', lineHeight: 1.5 }}>
+            {designer.rejectionReason}
+          </div>
+        </div>
+      )}
+
       {/* Info grid */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 20 }}>
         <div className="card" style={{ padding: '20px 22px' }}>
           <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 14 }}>
-            Account Details
+            Business Details
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <InfoRow label="Business" value={designer.businessName ?? '—'} />
             <InfoRow label="Phone" value={designer.phone ?? '—'} />
-            <InfoRow label="Member since" value={new Date(designer.createdAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
-            <InfoRow label="Last updated" value={new Date(designer.updatedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
+            <InfoRow label="Location" value={designer.city && designer.state ? `${designer.city}, ${designer.state}` : '—'} />
+            <InfoRow label="Experience" value={designer.yearsOfExperience ? `${designer.yearsOfExperience} years` : '—'} />
+            <InfoRow label="Referral" value={designer.referralSource ? (REFERRAL_LABELS[designer.referralSource] ?? designer.referralSource) : '—'} />
           </div>
         </div>
 
         <div className="card" style={{ padding: '20px 22px' }}>
           <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 14 }}>
-            Activity
+            Links & Activity
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {designer.websiteUrl && (
+              <InfoRow label="Website" value={designer.websiteUrl} isLink />
+            )}
+            {designer.linkedinUrl && (
+              <InfoRow label="LinkedIn" value={designer.linkedinUrl} isLink />
+            )}
+            {designer.instagramUrl && (
+              <InfoRow label="Instagram" value={designer.instagramUrl} />
+            )}
             <InfoRow label="Projects" value={String(designer._count.projects)} />
             <InfoRow label="Clients" value={String(designer._count.clients)} />
             <InfoRow label="Orders" value={String(designer._count.orders)} />
           </div>
         </div>
+      </div>
+
+      {/* Account info */}
+      <div className="card" style={{ padding: '16px 22px', marginBottom: 20, display: 'flex', gap: 32 }}>
+        <InfoRow label="Member since" value={new Date(designer.createdAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
+        <InfoRow label="Last updated" value={new Date(designer.updatedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
       </div>
 
       {/* Recent projects */}
@@ -277,11 +398,25 @@ export default function AdminDesignerDetailPage() {
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function InfoRow({ label, value, isLink }: { label: string; value: string; isLink?: boolean }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-      <span style={{ fontSize: 12.5, color: 'var(--text-muted)', fontWeight: 500 }}>{label}</span>
-      <span style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600, textAlign: 'right' }}>{value}</span>
+      <span style={{ fontSize: 12.5, color: 'var(--text-muted)', fontWeight: 500, flexShrink: 0 }}>{label}</span>
+      {isLink ? (
+        <a
+          href={value}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            fontSize: 13, color: '#2563eb', fontWeight: 600, textAlign: 'right',
+            textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220,
+          }}
+        >
+          {value.replace(/^https?:\/\//, '')}
+        </a>
+      ) : (
+        <span style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600, textAlign: 'right' }}>{value}</span>
+      )}
     </div>
   );
 }

@@ -55,25 +55,20 @@ function formatCurrency(amount: number) {
 
 /* ── Mini revenue chart (pure CSS) (#84) ───────────── */
 
-function RevenueChart({ total, thisMonth }: { total: number; thisMonth: number }) {
-  // Fake 6-month data derived from current values
-  const months = ['Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
-  const base = Math.max(1, Math.floor(total / 8));
-  const data = months.map((_, i) => base + Math.floor(Math.random() * base * 0.5) + (i > 3 ? base * 0.3 : 0));
-  data[data.length - 1] = thisMonth;
-  const max = Math.max(...data, 1);
+function RevenueChart({ trends }: { trends: { month: string; revenue: number }[] }) {
+  const max = Math.max(...trends.map((t) => t.revenue), 1);
 
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 60 }}>
-      {data.map((v, i) => (
-        <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flex: 1 }}>
+      {trends.map((t, i) => (
+        <div key={t.month} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flex: 1 }}>
           <div style={{
             width: '100%', borderRadius: 4,
-            height: `${Math.max(8, (v / max) * 100)}%`,
-            background: i === data.length - 1 ? '#2d7a4f' : 'rgba(45,122,79,0.2)',
+            height: `${Math.max(8, (t.revenue / max) * 100)}%`,
+            background: i === trends.length - 1 ? '#2d7a4f' : 'rgba(45,122,79,0.2)',
             transition: 'height 0.4s',
           }} />
-          <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 500 }}>{months[i]}</span>
+          <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 500 }}>{t.month}</span>
         </div>
       ))}
     </div>
@@ -96,24 +91,38 @@ export default function AdminDashboardPage() {
   const [pending, setPending] = useState<AdminDesigner[]>([]);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod]   = useState<'7d' | '30d' | '90d' | 'ytd'>('30d');
+  const [rejectModal, setRejectModal] = useState<{ designerId: string; name: string } | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   useEffect(() => {
-    Promise.all([
-      api.getAdminEnhancedStats(),
-      api.getAdminDesigners({ status: 'pending_review' }),
-    ]).then(([sRes, pRes]) => {
-      if (sRes.data)  setStats(sRes.data);
-      if (pRes.data)  setPending(pRes.data);
-      setLoading(false);
+    // Pending designers don't change by period — only fetch once
+    api.getAdminDesigners({ status: 'pending_review', limit: 25 }).then((pRes) => {
+      if (pRes.data) setPending(pRes.data.designers);
     });
   }, []);
 
+  useEffect(() => {
+    setLoading(true);
+    api.getAdminEnhancedStats({ period }).then((sRes) => {
+      if (sRes.data) setStats(sRes.data);
+      setLoading(false);
+    });
+  }, [period]);
+
   /* ── Inline approve/reject for pending designers (#83) */
-  async function handleQuickAction(designerId: string, status: 'approved' | 'rejected') {
-    await api.updateDesignerStatus(designerId, status);
+  async function handleApprove(designerId: string) {
+    await api.updateDesignerStatus(designerId, 'approved');
     setPending((prev) => prev.filter((d) => d.id !== designerId));
-    // Refresh stats
-    api.getAdminEnhancedStats().then((r) => { if (r.data) setStats(r.data); });
+    api.getAdminEnhancedStats({ period }).then((r) => { if (r.data) setStats(r.data); });
+  }
+
+  async function handleRejectSubmit() {
+    if (!rejectModal) return;
+    await api.updateDesignerStatus(rejectModal.designerId, 'rejected', rejectReason || undefined);
+    setPending((prev) => prev.filter((d) => d.id !== rejectModal.designerId));
+    setRejectModal(null);
+    setRejectReason('');
+    api.getAdminEnhancedStats({ period }).then((r) => { if (r.data) setStats(r.data); });
   }
 
   /* ── Export orders (#88) */
@@ -233,7 +242,7 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
               {/* Revenue bar chart (#84) */}
-              <RevenueChart total={stats.revenue.total} thisMonth={stats.revenue.thisMonth} />
+              <RevenueChart trends={stats.monthlyTrends} />
             </div>
 
             <div className="card" style={{ padding: '20px 22px' }}>
@@ -390,7 +399,7 @@ export default function AdminDashboardPage() {
                     <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                         <button
-                          onClick={() => handleQuickAction(d.id, 'approved')}
+                          onClick={() => handleApprove(d.id)}
                           style={{
                             fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 6,
                             border: '1px solid var(--green-border)', background: 'var(--green-dim)',
@@ -400,7 +409,7 @@ export default function AdminDashboardPage() {
                           Approve
                         </button>
                         <button
-                          onClick={() => handleQuickAction(d.id, 'rejected')}
+                          onClick={() => setRejectModal({ designerId: d.id, name: d.fullName })}
                           style={{
                             fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 6,
                             border: '1px solid rgba(185,28,28,0.15)', background: 'rgba(185,28,28,0.04)',
@@ -437,6 +446,51 @@ export default function AdminDashboardPage() {
                 </span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Rejection reason modal */}
+      {rejectModal && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 100,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setRejectModal(null); setRejectReason(''); } }}
+        >
+          <div className="card" style={{ width: 420, padding: '28px 30px' }}>
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: '0 0 6px' }}>
+              Reject Application
+            </h3>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 18px' }}>
+              Rejecting <strong>{rejectModal.name}</strong>. Provide a reason so the designer knows why.
+            </p>
+            <label className="form-label">Rejection reason</label>
+            <textarea
+              className="input-field"
+              rows={3}
+              placeholder="e.g. Portfolio does not meet our quality standards at this time."
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              style={{ fontSize: 13, resize: 'vertical' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+              <button className="btn-ghost" onClick={() => { setRejectModal(null); setRejectReason(''); }} style={{ fontSize: 13 }}>
+                Cancel
+              </button>
+              <button
+                className="btn-primary"
+                onClick={handleRejectSubmit}
+                disabled={!rejectReason.trim()}
+                style={{
+                  fontSize: 13, padding: '9px 18px',
+                  background: '#b91c1c', opacity: !rejectReason.trim() ? 0.5 : 1,
+                }}
+              >
+                Reject Application
+              </button>
+            </div>
           </div>
         </div>
       )}

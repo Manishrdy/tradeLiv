@@ -31,19 +31,28 @@ export default function AdminDesignersPage() {
   const [status, setStatus]       = useState('');
   const [search, setSearch]       = useState('');
   const [searchInput, setSearchInput] = useState('');
+  const [page, setPage]           = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal]         = useState(0);
 
-  const load = useCallback((s: string, q: string) => {
+  const load = useCallback((s: string, q: string, p: number) => {
     setLoading(true);
-    api.getAdminDesigners({ status: s || undefined, search: q || undefined }).then((r) => {
-      if (r.data) setDesigners(r.data);
+    api.getAdminDesigners({ status: s || undefined, search: q || undefined, page: p }).then((r) => {
+      if (r.data) {
+        setDesigners(r.data.designers);
+        setTotal(r.data.total);
+        setTotalPages(r.data.totalPages);
+        setPage(r.data.page);
+      }
       setLoading(false);
     });
   }, []);
 
-  useEffect(() => { load(status, search); }, [status, search, load]);
+  useEffect(() => { load(status, search, page); }, [status, search, page, load]);
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
+    setPage(1);
     setSearch(searchInput.trim());
   }
 
@@ -80,7 +89,7 @@ export default function AdminDesignersPage() {
               type="button"
               className="btn-ghost"
               style={{ fontSize: 13, padding: '8px 10px' }}
-              onClick={() => { setSearch(''); setSearchInput(''); }}
+              onClick={() => { setPage(1); setSearch(''); setSearchInput(''); }}
             >
               ×
             </button>
@@ -90,7 +99,7 @@ export default function AdminDesignersPage() {
         {/* Status filter */}
         <select
           value={status}
-          onChange={(e) => setStatus(e.target.value)}
+          onChange={(e) => { setPage(1); setStatus(e.target.value); }}
           className="input-field"
           style={{ fontSize: 13, padding: '8px 12px', width: 'auto' }}
         >
@@ -179,8 +188,33 @@ export default function AdminDesignersPage() {
         </div>
       )}
 
-      <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-muted)' }}>
-        {designers.length} result{designers.length !== 1 ? 's' : ''}
+      <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          {total} result{total !== 1 ? 's' : ''}
+        </div>
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button
+              className="btn-ghost"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => p - 1)}
+              style={{ fontSize: 12, padding: '5px 10px', opacity: page <= 1 ? 0.4 : 1 }}
+            >
+              Previous
+            </button>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              Page {page} of {totalPages}
+            </span>
+            <button
+              className="btn-ghost"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => p + 1)}
+              style={{ fontSize: 12, padding: '5px 10px', opacity: page >= totalPages ? 0.4 : 1 }}
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

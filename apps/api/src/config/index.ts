@@ -15,8 +15,10 @@ export function assertAuthEnv(): void {
 function parseSameSite(v: string | undefined): 'strict' | 'lax' | 'none' {
   const s = (v || '').toLowerCase();
   if (s === 'lax' || s === 'strict' || s === 'none') return s;
-  // Local dev: lax works across localhost ports. Production split origins: set AUTH_COOKIE_SAME_SITE=none + HTTPS.
-  return process.env.NODE_ENV === 'production' ? 'none' : 'lax';
+  // Default to 'lax' — provides CSRF protection while allowing same-site navigation.
+  // For cross-origin API/frontend, set AUTH_COOKIE_SAME_SITE=none + HTTPS,
+  // and ensure the frontend sends a custom header (X-Requested-With) to mitigate CSRF.
+  return 'lax';
 }
 
 function parseDurationToMs(s: string): number {

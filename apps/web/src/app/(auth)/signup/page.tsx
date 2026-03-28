@@ -1,13 +1,29 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 
 type Phase = 1 | 2 | 'success';
 
-const DESIGNER_SPECS = ['Residential', 'Commercial', 'Hospitality', 'Retail', 'Healthcare', 'Luxury Villas', 'Offices', 'Show Homes'];
+const US_STATES = [
+  'Alabama','Alaska','Arizona','Arkansas','California','Colorado','Connecticut','Delaware',
+  'Florida','Georgia','Hawaii','Idaho','Illinois','Indiana','Iowa','Kansas','Kentucky',
+  'Louisiana','Maine','Maryland','Massachusetts','Michigan','Minnesota','Mississippi',
+  'Missouri','Montana','Nebraska','Nevada','New Hampshire','New Jersey','New Mexico',
+  'New York','North Carolina','North Dakota','Ohio','Oklahoma','Oregon','Pennsylvania',
+  'Rhode Island','South Carolina','South Dakota','Tennessee','Texas','Utah','Vermont',
+  'Virginia','Washington','West Virginia','Wisconsin','Wyoming',
+];
+
+const REFERRAL_OPTIONS = [
+  { value: 'referral', label: 'Referral from a colleague' },
+  { value: 'google_search', label: 'Google Search' },
+  { value: 'ai_chatbots', label: 'AI Chatbots / Tools' },
+  { value: 'event', label: 'Trade show or event' },
+  { value: 'social_media', label: 'Social media' },
+  { value: 'other', label: 'Other' },
+];
 
 const INPUT: React.CSSProperties = {
   display: 'block',
@@ -76,7 +92,7 @@ function StepIndicator({ phase }: { phase: Phase }) {
         <span style={{
           fontSize: 10.5, fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase',
           color: step >= 2 ? '#0F0F0F' : '#C8C5BF', transition: 'color 0.3s',
-        }}>02 <span style={{ fontWeight: 400, fontSize: 10, color: step >= 2 ? '#B0ADA8' : '#D4D1CC' }}>Studio</span></span>
+        }}>02 <span style={{ fontWeight: 400, fontSize: 10, color: step >= 2 ? '#B0ADA8' : '#D4D1CC' }}>Business</span></span>
       </div>
       <div style={{ height: 1.5, background: '#E8E5E0', borderRadius: 999, overflow: 'hidden' }}>
         <div style={{
@@ -125,104 +141,14 @@ function PasswordChecklist({ password, confirmPw, showMatch }: { password: strin
   );
 }
 
-/* ── Searchable multi-select for specializations ───── */
+/* ── Chevron for dropdowns ─────────────────────────── */
 
-function SpecSelect({ specs, onToggle }: { specs: string[]; onToggle: (v: string) => void }) {
-  const [search, setSearch] = useState('');
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
-
-  const filtered = DESIGNER_SPECS.filter((s) => s.toLowerCase().includes(search.toLowerCase()));
-
+function ChevronDown() {
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      {/* Selected chips */}
-      {specs.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-          {specs.map((s) => (
-            <span key={s} style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '4px 10px 4px 12px',
-              background: '#0F0F0F', color: '#fff', borderRadius: 999,
-              fontSize: 12, fontWeight: 500, letterSpacing: '-0.01em',
-            }}>
-              {s}
-              <button type="button" onClick={() => onToggle(s)}
-                aria-label={`Remove ${s}`}
-                style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer', padding: '0 2px', fontSize: 14, lineHeight: 1, display: 'flex' }}>
-                &times;
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Search input */}
-      <input
-        type="text"
-        placeholder={specs.length ? 'Add more…' : 'Search specializations…'}
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        onFocus={() => setOpen(true)}
-        aria-label="Search specializations"
-        aria-expanded={open}
-        role="combobox"
-        aria-controls="spec-listbox"
-        style={{ ...INPUT, borderColor: open ? '#0F0F0F' : undefined }}
-      />
-
-      {/* Dropdown */}
-      {open && (
-        <div
-          id="spec-listbox"
-          role="listbox"
-          aria-label="Specializations"
-          style={{
-            position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10,
-            marginTop: 4, background: '#fff', border: '1.5px solid #E4E1DC',
-            borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
-            maxHeight: 200, overflowY: 'auto',
-          }}
-        >
-          {filtered.length === 0 && (
-            <div style={{ padding: '12px 14px', fontSize: 13, color: '#B0ADA8' }}>No results</div>
-          )}
-          {filtered.map((s) => {
-            const active = specs.includes(s);
-            return (
-              <button
-                key={s} type="button"
-                role="option"
-                aria-selected={active}
-                onClick={() => { onToggle(s); setSearch(''); }}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  width: '100%', padding: '10px 14px',
-                  background: active ? 'rgba(15,15,15,0.04)' : 'transparent',
-                  border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                  fontSize: 13, color: active ? '#0F0F0F' : '#6B6B6B',
-                  fontWeight: active ? 600 : 400,
-                  transition: 'background 0.1s',
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(15,15,15,0.04)')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = active ? 'rgba(15,15,15,0.04)' : 'transparent')}
-              >
-                {s}
-                {active && <CheckIcon size={12} color="#0F0F0F" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B0ADA8" strokeWidth="2"
+      style={{ position: 'absolute', right: 13, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+      <path d="M6 9l6 6 6-6" />
+    </svg>
   );
 }
 
@@ -231,7 +157,6 @@ function SpecSelect({ specs, onToggle }: { specs: string[]; onToggle: (v: string
    ══════════════════════════════════════════════════════ */
 
 export default function SignupPage() {
-  const router = useRouter();
   const [phase,   setPhase]   = useState<Phase>(1);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
@@ -245,24 +170,29 @@ export default function SignupPage() {
   const [touched1,  setTouched1]  = useState<Record<string, boolean>>({});
 
   // Phase 2
-  const [businessName, setBusinessName] = useState('');
-  const [phone,        setPhone]        = useState('');
-  const [experience,   setExperience]   = useState('');
-  const [specs,        setSpecs]        = useState<string[]>([]);
-  const [portfolio,    setPortfolio]    = useState('');
-
-  // Success
-  const [progress, setProgress] = useState(0);
-
-  function toggleSpec(val: string) {
-    setSpecs((prev) => prev.includes(val) ? prev.filter((x) => x !== val) : [...prev, val]);
-  }
+  const [businessName,     setBusinessName]     = useState('');
+  const [phone,            setPhone]            = useState('');
+  const [city,             setCity]             = useState('');
+  const [state,            setState]            = useState('');
+  const [yearsOfExperience, setYearsOfExperience] = useState('');
+  const [websiteUrl,       setWebsiteUrl]       = useState('');
+  const [linkedinUrl,      setLinkedinUrl]      = useState('');
+  const [instagramUrl,     setInstagramUrl]     = useState('');
+  const [referralSource,   setReferralSource]   = useState('');
+  const [touched2,         setTouched2]         = useState<Record<string, boolean>>({});
 
   /* ── Inline validations (Phase 1) ─────────────────── */
-  const nameErr    = touched1.fullName && !fullName.trim() ? 'Full name is required.' : '';
+  const nameErr    = touched1.fullName && (!fullName.trim() || fullName.trim().split(/\s+/).length < 2) ? 'Enter your first and last name.' : '';
   const emailErr   = touched1.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? 'Enter a valid email address.' : '';
   const pwErr      = touched1.password && password.length > 0 && password.length < 8 ? 'At least 8 characters required.' : '';
   const confirmErr = touched1.confirmPw && confirmPw && password !== confirmPw ? 'Passwords do not match.' : '';
+
+  /* ── Inline validations (Phase 2) ─────────────────── */
+  const bizErr  = touched2.businessName && !businessName.trim() ? 'Business name is required.' : '';
+  const phoneErr = touched2.phone && !phone.trim() ? 'Phone number is required.' : '';
+  const cityErr  = touched2.city && !city.trim() ? 'City is required.' : '';
+  const stateErr = touched2.state && !state ? 'State is required.' : '';
+  const expErr   = touched2.yearsOfExperience && !yearsOfExperience ? 'Select your experience level.' : '';
 
   /* ── Password strength ───────────────────────────── */
   const pwChecks = [
@@ -276,10 +206,20 @@ export default function SignupPage() {
   const strengthColor = ['transparent', '#ef4444', '#f97316', '#eab308', '#22c55e'][pwStrength] ?? 'transparent';
 
   function validateP1(): string | null {
-    if (!fullName.trim())                            return 'Full name is required.';
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Valid email required.';
-    if (password.length < 8)                         return 'Password must be at least 8 characters.';
-    if (password !== confirmPw)                      return 'Passwords do not match.';
+    if (!fullName.trim())                              return 'Full name is required.';
+    if (fullName.trim().split(/\s+/).length < 2)       return 'Please enter your first and last name.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))   return 'Valid email required.';
+    if (password.length < 8)                            return 'Password must be at least 8 characters.';
+    if (password !== confirmPw)                         return 'Passwords do not match.';
+    return null;
+  }
+
+  function validateP2(): string | null {
+    if (!businessName.trim())   return 'Business name is required.';
+    if (!phone.trim())          return 'Phone number is required.';
+    if (!city.trim())           return 'City is required.';
+    if (!state)                 return 'State is required.';
+    if (!yearsOfExperience)     return 'Years of experience is required.';
     return null;
   }
 
@@ -294,34 +234,24 @@ export default function SignupPage() {
 
   async function handleP2(e: React.FormEvent) {
     e.preventDefault();
+    setTouched2({ businessName: true, phone: true, city: true, state: true, yearsOfExperience: true });
+    const err = validateP2();
+    if (err) { setError(err); return; }
+
     setLoading(true);
     setError('');
-    const result = await api.signupDesigner({ fullName, email, password, businessName, phone });
+    const result = await api.signupDesigner({
+      fullName, email, password,
+      businessName, phone, city, state, yearsOfExperience,
+      websiteUrl: websiteUrl || undefined,
+      linkedinUrl: linkedinUrl || undefined,
+      instagramUrl: instagramUrl || undefined,
+      referralSource: referralSource || undefined,
+    });
     setLoading(false);
     if (result.error) { setError(result.error); return; }
     setPhase('success');
   }
-
-  async function handleSkip() {
-    setLoading(true);
-    setError('');
-    const result = await api.signupDesigner({ fullName, email, password });
-    setLoading(false);
-    if (result.error) { setError(result.error); return; }
-    setPhase('success');
-  }
-
-  /* ── Success redirect ────────────────────────────── */
-  useEffect(() => {
-    if (phase !== 'success') return;
-    let p = 0;
-    const iv = setInterval(() => {
-      p += 1.6;
-      setProgress(Math.min(p, 100));
-      if (p >= 100) { clearInterval(iv); router.push('/dashboard'); }
-    }, 40);
-    return () => clearInterval(iv);
-  }, [phase, router]);
 
   /* ── Page wrapper ─────────────────────────────────── */
   const pageStyle: React.CSSProperties = {
@@ -334,68 +264,62 @@ export default function SignupPage() {
     padding: '48px 24px',
   };
 
-  /* ══ Success screen with onboarding prompt ══════════ */
+  /* ══ Success screen — Application under review ═════ */
   if (phase === 'success') {
     return (
       <div style={pageStyle}>
-        <div className="anim-scale-in" style={{ textAlign: 'center', padding: 24, maxWidth: 380 }}>
-          {/* Checkmark */}
+        <div className="anim-scale-in" style={{ textAlign: 'center', padding: 24, maxWidth: 420 }}>
+          {/* Clock icon */}
           <div style={{
-            width: 56, height: 56, borderRadius: '50%', background: '#0F0F0F',
+            width: 56, height: 56, borderRadius: '50%', background: '#FDF5E6',
             margin: '0 auto 28px', display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <svg width="22" height="22" viewBox="0 0 32 32" fill="none">
-              <path d="M8 16.5L13 21.5L24 10.5" stroke="#fff" strokeWidth="2.5"
-                strokeLinecap="round" strokeLinejoin="round"
-                strokeDasharray="50"
-                style={{ animation: 'checkStroke 0.6s ease-out 0.1s both' }}
-              />
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#7a5c2d" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
             </svg>
           </div>
 
           <h2 style={{ fontSize: 28, fontWeight: 300, letterSpacing: '-0.04em', color: '#0F0F0F', marginBottom: 8 }}>
-            Welcome to Tradeliv, {fullName.split(' ')[0]}!
+            Application submitted
           </h2>
-          <p style={{ fontSize: 14, color: '#8C8984', marginBottom: 32, letterSpacing: '-0.01em', lineHeight: 1.5 }}>
-            Your studio is ready. Here&apos;s what you can do first:
+          <p style={{ fontSize: 14, color: '#8C8984', marginBottom: 28, letterSpacing: '-0.01em', lineHeight: 1.6 }}>
+            Thanks, {fullName.split(' ')[0]}! We&apos;re reviewing your application. This usually takes 1–2 business days.
           </p>
 
-          {/* Onboarding quick-start cards */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 36, textAlign: 'left' }}>
-            {[
-              { icon: '1', title: 'Add your first client', desc: 'Start building your client directory' },
-              { icon: '2', title: 'Create a project', desc: 'Set up room briefs and budgets' },
-              { icon: '3', title: 'Browse the catalog', desc: 'Discover products for your projects' },
-            ].map((item) => (
-              <div key={item.icon} style={{
-                display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
-                background: '#fff', border: '1px solid #E8E5E0', borderRadius: 10,
-              }}>
-                <div style={{
-                  width: 28, height: 28, borderRadius: '50%',
-                  background: '#F3F2EF', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 12, fontWeight: 700, color: '#0F0F0F', flexShrink: 0,
-                }}>
-                  {item.icon}
-                </div>
-                <div>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, color: '#0F0F0F', letterSpacing: '-0.01em' }}>{item.title}</div>
-                  <div style={{ fontSize: 12, color: '#B0ADA8', marginTop: 2 }}>{item.desc}</div>
-                </div>
-              </div>
-            ))}
+          <div style={{
+            background: '#fff', border: '1px solid #E8E5E0', borderRadius: 12,
+            padding: '20px 24px', textAlign: 'left', marginBottom: 28,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7a5c2d" strokeWidth="2" strokeLinecap="round">
+                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                <polyline points="22,6 12,13 2,6" />
+              </svg>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#0F0F0F' }}>What happens next?</span>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <li style={{ fontSize: 13, color: '#6B6B6B', lineHeight: 1.5 }}>
+                Our team will review your business details.
+              </li>
+              <li style={{ fontSize: 13, color: '#6B6B6B', lineHeight: 1.5 }}>
+                You&apos;ll receive an email at <strong style={{ color: '#0F0F0F' }}>{email}</strong> once your account is approved.
+              </li>
+              <li style={{ fontSize: 13, color: '#6B6B6B', lineHeight: 1.5 }}>
+                After approval, sign in to start using tradeLiv.
+              </li>
+            </ul>
           </div>
 
-          {/* Progress bar */}
-          <p style={{ fontSize: 12, color: '#B0ADA8', marginBottom: 10, letterSpacing: '-0.01em' }}>
-            Taking you to your studio…
-          </p>
-          <div style={{ height: 1.5, background: '#E8E5E0', borderRadius: 999, overflow: 'hidden' }}>
-            <div style={{
-              height: '100%', background: '#0F0F0F', borderRadius: 999,
-              width: `${progress}%`, transition: 'width 0.04s linear',
-            }} />
-          </div>
+          <Link
+            href="/login"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              fontSize: 13, fontWeight: 600, color: '#0F0F0F',
+              textDecoration: 'none', borderBottom: '1.5px solid #0F0F0F', paddingBottom: 1,
+            }}
+          >
+            Back to sign in
+          </Link>
         </div>
       </div>
     );
@@ -408,7 +332,7 @@ export default function SignupPage() {
         <div className="anim-fade-up" style={{ width: '100%', maxWidth: 380 }}>
 
           <div style={{ marginBottom: 48 }}>
-            <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.04em', color: '#0F0F0F' }}>Tradeliv</span>
+            <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.04em', color: '#0F0F0F' }}>tradeLiv</span>
           </div>
 
           <StepIndicator phase={phase} />
@@ -418,7 +342,7 @@ export default function SignupPage() {
               Create your account.
             </h1>
             <p style={{ fontSize: 14, color: '#8C8984', letterSpacing: '-0.01em' }}>
-              Join trade professionals on Tradeliv.
+              Join trade professionals on tradeLiv.
             </p>
           </div>
 
@@ -558,7 +482,7 @@ export default function SignupPage() {
               </Link>
             </p>
             <p style={{ marginTop: 14, fontSize: 11, color: '#C8C5BF', lineHeight: 1.6 }}>
-              By continuing you agree to Tradeliv&apos;s{' '}
+              By continuing you agree to tradeLiv&apos;s{' '}
               <span style={{ color: '#8C8984', cursor: 'pointer' }}>Terms of Service</span>{' '}
               and <span style={{ color: '#8C8984', cursor: 'pointer' }}>Privacy Policy</span>.
             </p>
@@ -569,67 +493,119 @@ export default function SignupPage() {
     );
   }
 
-  /* ══ Phase 2 ════════════════════════════════════════ */
+  /* ══ Phase 2 — Business Details ════════════════════ */
   return (
     <div style={pageStyle}>
-      <div className="anim-fade-up" style={{ width: '100%', maxWidth: 420 }}>
+      <div className="anim-fade-up" style={{ width: '100%', maxWidth: 460 }}>
 
         <div style={{ marginBottom: 48 }}>
-          <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.04em', color: '#0F0F0F' }}>Tradeliv</span>
+          <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.04em', color: '#0F0F0F' }}>tradeLiv</span>
         </div>
 
         <StepIndicator phase={phase} />
 
         <div style={{ marginBottom: 44 }}>
           <h1 style={{ fontSize: 40, fontWeight: 300, letterSpacing: '-0.05em', color: '#0F0F0F', lineHeight: 1.05, marginBottom: 14 }}>
-            Your studio.
+            Your business.
           </h1>
-          <p style={{ fontSize: 14, color: '#8C8984', letterSpacing: '-0.01em' }}>
-            Help us personalise your trade experience.{' '}
-            <span style={{ color: '#B0ADA8' }}>All fields are optional.</span>
+          <p style={{ fontSize: 14, color: '#8C8984', letterSpacing: '-0.01em', lineHeight: 1.5 }}>
+            Help us verify your practice. Fields marked with <span style={{ color: '#ef4444' }}>*</span> are required.
           </p>
         </div>
 
-        <form onSubmit={handleP2} noValidate aria-label="Studio details - step 2">
+        <form onSubmit={handleP2} noValidate aria-label="Business details - step 2">
+
+          {/* Business Name */}
+          <div style={{ marginBottom: 16 }}>
+            <label htmlFor="signup-business" style={LABEL}>Business Name <span style={{ color: '#ef4444' }}>*</span></label>
+            <input
+              id="signup-business"
+              type="text" placeholder="Chen Design Studio" value={businessName}
+              onChange={(e) => setBusinessName(e.target.value)}
+              onBlur={() => setTouched2((t) => ({ ...t, businessName: true }))}
+              aria-required="true"
+              aria-invalid={!!bizErr}
+              style={{ ...INPUT, borderColor: bizErr ? '#ef4444' : undefined }}
+              onFocus={(e) => (e.target.style.borderColor = bizErr ? '#ef4444' : '#0F0F0F')}
+            />
+            {bizErr && <p role="alert" style={FIELD_ERROR}>{bizErr}</p>}
+          </div>
+
+          {/* Phone */}
+          <div style={{ marginBottom: 16 }}>
+            <label htmlFor="signup-phone" style={LABEL}>Phone Number <span style={{ color: '#ef4444' }}>*</span></label>
+            <input
+              id="signup-phone"
+              type="tel" placeholder="+1 (555) 000-0000" value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              onBlur={() => setTouched2((t) => ({ ...t, phone: true }))}
+              aria-required="true"
+              aria-invalid={!!phoneErr}
+              style={{ ...INPUT, borderColor: phoneErr ? '#ef4444' : undefined }}
+              onFocus={(e) => (e.target.style.borderColor = phoneErr ? '#ef4444' : '#0F0F0F')}
+            />
+            {phoneErr && <p role="alert" style={FIELD_ERROR}>{phoneErr}</p>}
+          </div>
+
+          {/* City + State */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
             <div>
-              <label htmlFor="signup-business" style={LABEL}>Business Name</label>
+              <label htmlFor="signup-city" style={LABEL}>City <span style={{ color: '#ef4444' }}>*</span></label>
               <input
-                id="signup-business"
-                type="text" placeholder="Chen Studio" value={businessName}
-                onChange={(e) => setBusinessName(e.target.value)}
-                style={INPUT}
-                onFocus={(e) => (e.target.style.borderColor = '#0F0F0F')}
-                onBlur={(e) => (e.target.style.borderColor = '#E4E1DC')}
+                id="signup-city"
+                type="text" placeholder="San Francisco" value={city}
+                onChange={(e) => setCity(e.target.value)}
+                onBlur={() => setTouched2((t) => ({ ...t, city: true }))}
+                aria-required="true"
+                aria-invalid={!!cityErr}
+                style={{ ...INPUT, borderColor: cityErr ? '#ef4444' : undefined }}
+                onFocus={(e) => (e.target.style.borderColor = cityErr ? '#ef4444' : '#0F0F0F')}
               />
+              {cityErr && <p role="alert" style={FIELD_ERROR}>{cityErr}</p>}
             </div>
             <div>
-              <label htmlFor="signup-phone" style={LABEL}>Phone Number</label>
-              <input
-                id="signup-phone"
-                type="tel" placeholder="+1 555 000 0000" value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                style={INPUT}
-                onFocus={(e) => (e.target.style.borderColor = '#0F0F0F')}
-                onBlur={(e) => (e.target.style.borderColor = '#E4E1DC')}
-              />
+              <label htmlFor="signup-state" style={LABEL}>State <span style={{ color: '#ef4444' }}>*</span></label>
+              <div style={{ position: 'relative' }}>
+                <select
+                  id="signup-state"
+                  value={state}
+                  onChange={(e) => setState(e.target.value)}
+                  onBlur={() => setTouched2((t) => ({ ...t, state: true }))}
+                  aria-required="true"
+                  aria-invalid={!!stateErr}
+                  style={{
+                    ...INPUT, paddingRight: 40, appearance: 'none', cursor: 'pointer',
+                    color: state ? '#0F0F0F' : '#C8C5BF',
+                    borderColor: stateErr ? '#ef4444' : undefined,
+                  }}
+                  onFocus={(e) => (e.target.style.borderColor = stateErr ? '#ef4444' : '#0F0F0F')}
+                >
+                  <option value="" disabled>Select state</option>
+                  {US_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <ChevronDown />
+              </div>
+              {stateErr && <p role="alert" style={FIELD_ERROR}>{stateErr}</p>}
             </div>
           </div>
 
+          {/* Years of Experience */}
           <div style={{ marginBottom: 20 }}>
-            <label htmlFor="signup-experience" style={LABEL}>Years of Experience</label>
+            <label htmlFor="signup-experience" style={LABEL}>Years of Experience <span style={{ color: '#ef4444' }}>*</span></label>
             <div style={{ position: 'relative' }}>
               <select
                 id="signup-experience"
-                value={experience} onChange={(e) => setExperience(e.target.value)}
-                aria-label="Years of experience"
+                value={yearsOfExperience}
+                onChange={(e) => setYearsOfExperience(e.target.value)}
+                onBlur={() => setTouched2((t) => ({ ...t, yearsOfExperience: true }))}
+                aria-required="true"
+                aria-invalid={!!expErr}
                 style={{
-                  ...INPUT,
-                  paddingRight: 40, appearance: 'none',
-                  cursor: 'pointer', color: experience ? '#0F0F0F' : '#C8C5BF',
+                  ...INPUT, paddingRight: 40, appearance: 'none', cursor: 'pointer',
+                  color: yearsOfExperience ? '#0F0F0F' : '#C8C5BF',
+                  borderColor: expErr ? '#ef4444' : undefined,
                 }}
-                onFocus={(e) => (e.target.style.borderColor = '#0F0F0F')}
-                onBlur={(e) => (e.target.style.borderColor = '#E4E1DC')}
+                onFocus={(e) => (e.target.style.borderColor = expErr ? '#ef4444' : '#0F0F0F')}
               >
                 <option value="" disabled>Select range</option>
                 <option value="<2">Less than 2 years</option>
@@ -637,31 +613,76 @@ export default function SignupPage() {
                 <option value="5-10">5 – 10 years</option>
                 <option value="10+">10+ years</option>
               </select>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B0ADA8" strokeWidth="2"
-                style={{ position: 'absolute', right: 13, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
-                <path d="M6 9l6 6 6-6" />
-              </svg>
+              <ChevronDown />
             </div>
+            {expErr && <p role="alert" style={FIELD_ERROR}>{expErr}</p>}
           </div>
 
-          <div style={{ marginBottom: 20 }}>
-            <label style={LABEL}>Specializations</label>
-            <SpecSelect specs={specs} onToggle={toggleSpec} />
-          </div>
+          {/* Divider — optional fields */}
+          <div style={{ height: 1, background: '#E8E5E0', margin: '24px 0 20px' }} />
+          <p style={{ fontSize: 11, fontWeight: 600, color: '#B0ADA8', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 16 }}>
+            Optional
+          </p>
 
-          <div style={{ marginBottom: 32 }}>
-            <label htmlFor="signup-portfolio" style={LABEL}>
-              Portfolio URL{' '}
-              <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: '#C8C5BF' }}>(optional)</span>
-            </label>
+          {/* Website / Portfolio */}
+          <div style={{ marginBottom: 16 }}>
+            <label htmlFor="signup-website" style={LABEL}>Website / Portfolio</label>
             <input
-              id="signup-portfolio"
-              type="url" placeholder="https://yourportfolio.com" value={portfolio}
-              onChange={(e) => setPortfolio(e.target.value)}
+              id="signup-website"
+              type="url" placeholder="https://yourstudio.com" value={websiteUrl}
+              onChange={(e) => setWebsiteUrl(e.target.value)}
               style={INPUT}
               onFocus={(e) => (e.target.style.borderColor = '#0F0F0F')}
               onBlur={(e) => (e.target.style.borderColor = '#E4E1DC')}
             />
+          </div>
+
+          {/* LinkedIn + Instagram */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
+            <div>
+              <label htmlFor="signup-linkedin" style={LABEL}>LinkedIn Profile</label>
+              <input
+                id="signup-linkedin"
+                type="url" placeholder="https://linkedin.com/in/..." value={linkedinUrl}
+                onChange={(e) => setLinkedinUrl(e.target.value)}
+                style={INPUT}
+                onFocus={(e) => (e.target.style.borderColor = '#0F0F0F')}
+                onBlur={(e) => (e.target.style.borderColor = '#E4E1DC')}
+              />
+            </div>
+            <div>
+              <label htmlFor="signup-instagram" style={LABEL}>Instagram</label>
+              <input
+                id="signup-instagram"
+                type="text" placeholder="@yourstudio" value={instagramUrl}
+                onChange={(e) => setInstagramUrl(e.target.value)}
+                style={INPUT}
+                onFocus={(e) => (e.target.style.borderColor = '#0F0F0F')}
+                onBlur={(e) => (e.target.style.borderColor = '#E4E1DC')}
+              />
+            </div>
+          </div>
+
+          {/* How did you hear about us */}
+          <div style={{ marginBottom: 32 }}>
+            <label htmlFor="signup-referral" style={LABEL}>How did you hear about us?</label>
+            <div style={{ position: 'relative' }}>
+              <select
+                id="signup-referral"
+                value={referralSource}
+                onChange={(e) => setReferralSource(e.target.value)}
+                style={{
+                  ...INPUT, paddingRight: 40, appearance: 'none', cursor: 'pointer',
+                  color: referralSource ? '#0F0F0F' : '#C8C5BF',
+                }}
+                onFocus={(e) => (e.target.style.borderColor = '#0F0F0F')}
+                onBlur={(e) => (e.target.style.borderColor = '#E4E1DC')}
+              >
+                <option value="" disabled>Select an option</option>
+                {REFERRAL_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <ChevronDown />
+            </div>
           </div>
 
           {error && (
@@ -690,7 +711,7 @@ export default function SignupPage() {
               onMouseEnter={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = '#0F0F0F'; b.style.color = '#0F0F0F'; }}
               onMouseLeave={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = '#E4E1DC'; b.style.color = '#6B6B6B'; }}
             >
-              ← Back
+              &larr; Back
             </button>
             <button
               type="submit"
@@ -709,31 +730,11 @@ export default function SignupPage() {
               onMouseLeave={(e) => { if (!loading) { const b = e.currentTarget as HTMLButtonElement; b.style.background = '#0F0F0F'; b.style.transform = 'translateY(0)'; }}}
             >
               {loading
-                ? <><svg className="anim-rotate" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg> Creating account…</>
-                : 'Create account'
+                ? <><svg className="anim-rotate" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg> Submitting…</>
+                : 'Submit application'
               }
             </button>
           </div>
-
-          {/* Skip for now */}
-          <button
-            type="button"
-            onClick={handleSkip}
-            disabled={loading}
-            style={{
-              display: 'block', width: '100%', marginTop: 12,
-              padding: '10px 0', background: 'transparent', border: 'none',
-              fontSize: 13, fontWeight: 500, color: '#B0ADA8',
-              cursor: loading ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
-              letterSpacing: '-0.01em',
-              transition: 'color 0.14s',
-              textAlign: 'center',
-            }}
-            onMouseEnter={(e) => { if (!loading) e.currentTarget.style.color = '#6B6B6B'; }}
-            onMouseLeave={(e) => { if (!loading) e.currentTarget.style.color = '#B0ADA8'; }}
-          >
-            Skip for now — complete in Settings
-          </button>
         </form>
 
       </div>

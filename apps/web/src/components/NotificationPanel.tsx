@@ -1,10 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { api, Notification, NotificationType } from '@/lib/api';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 /* ── Helpers ─────────────────────────────────────────── */
 
@@ -81,6 +80,20 @@ const ICON_MAP: Record<NotificationType, { color: string; bg: string; icon: Reac
     color: '#16a34a', bg: 'rgba(22,163,74,0.08)',
     icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>,
   },
+  application_approved: {
+    color: '#16a34a', bg: 'rgba(22,163,74,0.08)',
+    icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><path d="M22 4L12 14.01l-3-3" /></svg>,
+  },
+  application_rejected: {
+    color: '#ef4444', bg: 'rgba(239,68,68,0.08)',
+    icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>,
+  },
+};
+
+const DEFAULT_ICON_CFG = {
+  color: '#6b7280',
+  bg: 'rgba(107,114,128,0.08)',
+  icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>,
 };
 
 /* ── Component ───────────────────────────────────────── */
@@ -90,24 +103,28 @@ interface Props {
   onClose: () => void;
   unreadCount: number;
   onUnreadChange: (count: number) => void;
+  sidebarWidth?: number;
 }
 
-export default function NotificationPanel({ open, onClose, unreadCount, onUnreadChange }: Props) {
+export default function NotificationPanel({ open, onClose, unreadCount, onUnreadChange, sidebarWidth }: Props) {
   const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
-    const r = await api.getNotifications({ limit: 50 });
-    if (r.data) setNotifications(r.data);
-    setLoading(false);
+    const r = await api.getNotifications({ unread: true, limit: 50 });
+    if (!signal?.aborted && r.data) setNotifications(r.data);
+    if (!signal?.aborted) setLoading(false);
   }, []);
 
   useEffect(() => {
-    if (open) load();
+    if (!open) return;
+    const ac = new AbortController();
+    load(ac.signal);
+    return () => ac.abort();
   }, [open, load]);
 
   // Close on click outside
@@ -133,18 +150,22 @@ export default function NotificationPanel({ open, onClose, unreadCount, onUnread
 
   async function handleMarkAllRead() {
     setMarkingAll(true);
-    await api.markAllNotificationsRead();
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-    onUnreadChange(0);
+    const r = await api.markAllNotificationsRead();
+    if (!r.error) {
+      setNotifications([]);
+      onUnreadChange(0);
+    }
     setMarkingAll(false);
   }
 
   async function handleClick(n: Notification) {
-    // Mark as read
+    // Mark as read and remove from list
     if (!n.read) {
-      api.markNotificationRead(n.id);
-      setNotifications((prev) => prev.map((item) => item.id === n.id ? { ...item, read: true } : item));
-      onUnreadChange(Math.max(0, unreadCount - 1));
+      const r = await api.markNotificationRead(n.id);
+      if (!r.error) {
+        setNotifications((prev) => prev.filter((item) => item.id !== n.id));
+        onUnreadChange(Math.max(0, unreadCount - 1));
+      }
     }
     // Navigate to resource
     if (n.projectId && n.resourceType === 'quote' && n.resourceId) {
@@ -159,15 +180,16 @@ export default function NotificationPanel({ open, onClose, unreadCount, onUnread
 
   const groups = groupByDate(notifications);
 
-  return (
+  const panel = (
     <div
       ref={panelRef}
       role="dialog"
       aria-label="Notifications"
+      onMouseDown={(e) => e.stopPropagation()}
       style={{
-        position: 'absolute',
-        bottom: 56,
-        left: 8,
+        position: 'fixed',
+        bottom: 60,
+        left: (sidebarWidth ?? 0) + 8,
         width: 340,
         maxHeight: 480,
         background: '#fff',
@@ -257,7 +279,7 @@ export default function NotificationPanel({ open, onClose, unreadCount, onUnread
                 {group.label}
               </div>
               {group.items.map((n) => {
-                const iconCfg = ICON_MAP[n.type];
+                const iconCfg = ICON_MAP[n.type as NotificationType] ?? DEFAULT_ICON_CFG;
                 return (
                   <button
                     key={n.id}
@@ -331,4 +353,6 @@ export default function NotificationPanel({ open, onClose, unreadCount, onUnread
       </div>
     </div>
   );
+
+  return createPortal(panel, document.body);
 }

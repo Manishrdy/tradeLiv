@@ -560,6 +560,7 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
             onClose={() => setNotifOpen(false)}
             unreadCount={notifUnread}
             onUnreadChange={setNotifUnread}
+            sidebarWidth={w}
           />
         </div>
 

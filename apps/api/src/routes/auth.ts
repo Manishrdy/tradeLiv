@@ -7,6 +7,7 @@ import { prisma } from '@furnlo/db';
 import { config, buildCookieOptions, clearCookieOptions } from '../config';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { writeAuditLog } from '../services/auditLog';
+import { createAdminNotification } from '../services/adminNotificationService';
 import logger from '../config/logger';
 
 const router = Router();
@@ -143,7 +144,10 @@ async function resetFailedLogin(designerId: string) {
 /* ─── Validation schemas ───────────────────────────── */
 
 const designerSignupSchema = z.object({
-  fullName: z.string().min(2, 'Full name must be at least 2 characters'),
+  fullName: z
+    .string()
+    .min(2, 'Full name must be at least 2 characters')
+    .refine((v) => v.trim().split(/\s+/).length >= 2, 'Please enter your first and last name'),
   email: z.string().email('Invalid email address'),
   password: z
     .string()
@@ -151,8 +155,15 @@ const designerSignupSchema = z.object({
     .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
     .regex(/[0-9]/, 'Password must contain at least one number')
     .regex(/[^A-Za-z0-9]/, 'Password must contain at least one special character'),
-  businessName: z.string().max(100).optional(),
-  phone: z.string().max(30).optional(),
+  businessName: z.string().min(1, 'Business name is required').max(100),
+  phone: z.string().min(1, 'Phone number is required').max(30),
+  city: z.string().min(1, 'City is required').max(100),
+  state: z.string().min(1, 'State is required').max(100),
+  yearsOfExperience: z.enum(['<2', '2-5', '5-10', '10+'], { required_error: 'Years of experience is required' }),
+  websiteUrl: z.string().url('Invalid URL').max(500).optional().or(z.literal('')),
+  linkedinUrl: z.string().url('Invalid URL').max(500).optional().or(z.literal('')),
+  instagramUrl: z.string().max(100).optional().or(z.literal('')),
+  referralSource: z.string().max(100).optional().or(z.literal('')),
 });
 
 const loginSchema = z.object({
@@ -187,7 +198,10 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
     return;
   }
 
-  const { fullName, email, password, businessName, phone } = parsed.data;
+  const {
+    fullName, email, password, businessName, phone,
+    city, state, yearsOfExperience, websiteUrl, linkedinUrl, instagramUrl, referralSource,
+  } = parsed.data;
 
   try {
     const existing = await prisma.designer.findUnique({ where: { email } });
@@ -198,7 +212,15 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
     const designer = await prisma.designer.create({
-      data: { fullName, email, passwordHash, businessName, phone, status: 'approved' },
+      data: {
+        fullName, email, passwordHash, businessName, phone,
+        city, state, yearsOfExperience,
+        websiteUrl: websiteUrl || null,
+        linkedinUrl: linkedinUrl || null,
+        instagramUrl: instagramUrl || null,
+        referralSource: referralSource || null,
+        status: 'pending_review',
+      },
     });
 
     writeAuditLog({
@@ -209,8 +231,15 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
       entityId: designer.id,
     });
 
-    await issueTokenPair(res, designer, 'designer', req, { refreshTtlMs: REFRESH_TTL_LONG_MS });
+    // Notify admins about new application
+    createAdminNotification({
+      type: 'new_application',
+      title: `New application from ${designer.fullName}`,
+      body: businessName ? `${businessName} — ${city}, ${state}` : `${city}, ${state}`,
+      designerId: designer.id,
+    }).catch((err) => logger.error('Failed to create admin notification', { err }));
 
+    // No tokens issued — designer must wait for admin approval
     res.status(201).json({
       role: 'designer',
       user: { id: designer.id, fullName: designer.fullName, email: designer.email, status: designer.status },
@@ -261,6 +290,14 @@ router.post('/login', async (req: Request, res: Response) => {
     }
 
     // Designer status checks
+    if (designer.status === 'pending_review') {
+      res.status(403).json({
+        error: 'Your application is still under review. You\'ll receive an email once approved.',
+        code: 'PENDING_REVIEW',
+      });
+      return;
+    }
+
     if (designer.status === 'rejected') {
       res.status(403).json({
         error: 'Your application was not approved. Please contact support.',

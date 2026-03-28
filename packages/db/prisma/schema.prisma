@@ -77,6 +77,19 @@ enum NotificationType {
   shortlist_change
   client_portal_view
   payment_received
+  application_approved
+  application_rejected
+}
+
+enum AdminNotificationType {
+  new_application
+  designer_approved
+  designer_rejected
+  order_placed
+  order_paid
+  payment_failed
+  brand_po_update
+  system_alert
 }
 
 model Designer {
@@ -86,6 +99,14 @@ model Designer {
   fullName     String
   businessName String?
   phone        String?
+  city         String?
+  state        String?
+  yearsOfExperience String?
+  websiteUrl   String?
+  linkedinUrl  String?
+  instagramUrl String?
+  referralSource   String?
+  rejectionReason  String?
   status       DesignerStatus @default(pending_review)
   isAdmin      Boolean        @default(false)
   isSuperAdmin Boolean        @default(false)
@@ -106,6 +127,7 @@ model Designer {
   sessions            DesignerSession[]
   refreshTokens       RefreshToken[]
   notifications       Notification[]
+  adminNotifications  AdminNotification[]
 }
 
 model Client {
@@ -443,6 +465,20 @@ model Notification {
 
   @@index([designerId, read, createdAt])
   @@index([designerId, createdAt])
+}
+
+model AdminNotification {
+  id           String                @id @default(uuid())
+  type         AdminNotificationType
+  title        String
+  body         String?
+  designerId   String?               // the designer this notification is about
+  read         Boolean               @default(false)
+  createdAt    DateTime              @default(now())
+
+  designer     Designer?             @relation(fields: [designerId], references: [id], onDelete: SetNull)
+
+  @@index([read, createdAt])
 }
 
 model AuditLog {

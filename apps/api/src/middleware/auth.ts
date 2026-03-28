@@ -43,11 +43,24 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
 }
 
 export function requireRole(...roles: Array<'designer' | 'client' | 'admin'>) {
-  return (req: AuthRequest, res: Response, next: NextFunction) => {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user || !roles.includes(req.user.role)) {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
+
+    // For admin role, verify against DB — a revoked admin's JWT still carries role:'admin'
+    if (req.user.role === 'admin') {
+      const designer = await prisma.designer.findUnique({
+        where: { id: req.user.id },
+        select: { isAdmin: true },
+      });
+      if (!designer?.isAdmin) {
+        res.status(403).json({ error: 'Admin access has been revoked.' });
+        return;
+      }
+    }
+
     next();
   };
 }

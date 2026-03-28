@@ -11,7 +11,7 @@ async function attemptTokenRefresh(): Promise<boolean> {
     const res = await fetch(`${API_URL}/api/auth/refresh`, {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' },
     });
     return res.ok;
   } catch {
@@ -41,6 +41,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<ApiR
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
+        'X-Requested-With': 'fetch',
         ...options.headers,
       },
     });
@@ -54,6 +55,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<ApiR
           credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
+            'X-Requested-With': 'fetch',
             ...options.headers,
           },
         });
@@ -85,8 +87,15 @@ export interface SignupDesignerPayload {
   fullName: string;
   email: string;
   password: string;
-  businessName?: string;
-  phone?: string;
+  businessName: string;
+  phone: string;
+  city: string;
+  state: string;
+  yearsOfExperience: string;
+  websiteUrl?: string;
+  linkedinUrl?: string;
+  instagramUrl?: string;
+  referralSource?: string;
 }
 
 export interface SignupResponse {
@@ -806,7 +815,37 @@ export interface PresenceStatus {
 
 export type NotificationType =
   | 'message' | 'quote_approved' | 'quote_revision' | 'quote_comment'
-  | 'order_update' | 'shortlist_change' | 'client_portal_view' | 'payment_received';
+  | 'order_update' | 'shortlist_change' | 'client_portal_view' | 'payment_received'
+  | 'application_approved' | 'application_rejected';
+
+const KNOWN_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new Set([
+  'message',
+  'quote_approved',
+  'quote_revision',
+  'quote_comment',
+  'order_update',
+  'shortlist_change',
+  'client_portal_view',
+  'payment_received',
+  'application_approved',
+  'application_rejected',
+]);
+
+const loggedUnknownNotificationTypes = new Set<string>();
+
+function normalizeNotificationType(type: unknown): NotificationType {
+  if (typeof type === 'string' && KNOWN_NOTIFICATION_TYPES.has(type as NotificationType)) {
+    return type as NotificationType;
+  }
+
+  const rawType = typeof type === 'string' && type.trim().length > 0 ? type : '<invalid>';
+  if (!loggedUnknownNotificationTypes.has(rawType)) {
+    loggedUnknownNotificationTypes.add(rawType);
+    console.warn(`[api] Unknown notification type "${rawType}". Falling back to "message".`);
+  }
+
+  return 'message';
+}
 
 export interface Notification {
   id: string;
@@ -819,6 +858,15 @@ export interface Notification {
   resourceId: string | null;
   read: boolean;
   createdAt: string;
+}
+
+type NotificationWire = Omit<Notification, 'type'> & { type: unknown };
+
+function normalizeNotification(input: NotificationWire): Notification {
+  return {
+    ...input,
+    type: normalizeNotificationType(input.type),
+  };
 }
 
 /* ─── Admin types ───────────────────────────────────── */
@@ -846,6 +894,7 @@ export interface AdminEnhancedStats {
     designer: { fullName: string };
     project: { name: string; client: { name: string } | null };
   }[];
+  monthlyTrends: { month: string; revenue: number }[];
 }
 
 export interface AdminUser {
@@ -939,11 +988,19 @@ export interface AdminDesigner {
   status: string;
   isAdmin: boolean;
   createdAt: string;
+  rejectionReason?: string | null;
   _count: { clients: number; projects: number; orders: number };
 }
 
 export interface AdminDesignerDetail extends AdminDesigner {
   updatedAt: string;
+  city: string | null;
+  state: string | null;
+  yearsOfExperience: string | null;
+  websiteUrl: string | null;
+  linkedinUrl: string | null;
+  instagramUrl: string | null;
+  referralSource: string | null;
   projects: {
     id: string;
     name: string;
@@ -952,6 +1009,17 @@ export interface AdminDesignerDetail extends AdminDesigner {
     client: { name: string };
     _count: { rooms: number; shortlistItems: number };
   }[];
+}
+
+export interface AdminNotification {
+  id: string;
+  type: string;
+  title: string;
+  body: string | null;
+  designerId: string | null;
+  read: boolean;
+  createdAt: string;
+  designer: { id: string; fullName: string; email: string; businessName: string | null; status: string } | null;
 }
 
 /* ─── Platform Health types ────────────────────────── */
@@ -1532,22 +1600,37 @@ export const api = {
   getAdminStats: () =>
     request<AdminStats>('/api/admin/stats'),
 
-  getAdminDesigners: (params?: { status?: string; search?: string }) => {
+  getAdminDesigners: (params?: { status?: string; search?: string; page?: number; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set('status', params.status);
     if (params?.search) qs.set('search', params.search);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.limit) qs.set('limit', String(params.limit));
     const q = qs.toString();
-    return request<AdminDesigner[]>(`/api/admin/designers${q ? `?${q}` : ''}`);
+    return request<{ designers: AdminDesigner[]; total: number; page: number; totalPages: number }>(`/api/admin/designers${q ? `?${q}` : ''}`);
   },
 
   getAdminDesigner: (id: string) =>
     request<AdminDesignerDetail>(`/api/admin/designers/${id}`),
 
-  updateDesignerStatus: (id: string, status: string) =>
+  updateDesignerStatus: (id: string, status: string, rejectionReason?: string) =>
     request<AdminDesigner>(`/api/admin/designers/${id}/status`, {
       method: 'PUT',
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, ...(rejectionReason ? { rejectionReason } : {}) }),
     }),
+
+  // Admin notifications
+  getAdminNotifications: () =>
+    request<AdminNotification[]>('/api/admin/notifications'),
+
+  getAdminUnreadCount: () =>
+    request<{ count: number }>('/api/admin/notifications/unread-count'),
+
+  markAdminNotificationRead: (id: string) =>
+    request<{ success: boolean }>(`/api/admin/notifications/${id}/read`, { method: 'PUT' }),
+
+  markAllAdminNotificationsRead: () =>
+    request<{ success: boolean }>('/api/admin/notifications/read-all', { method: 'PUT' }),
 
   getAdminActivity: () =>
     request<AuditLogEntry[]>('/api/admin/activity'),
@@ -1614,8 +1697,8 @@ export const api = {
     }),
 
   // Admin enhanced stats
-  getAdminEnhancedStats: () =>
-    request<AdminEnhancedStats>('/api/admin/enhanced-stats'),
+  getAdminEnhancedStats: (opts?: { period?: string }) =>
+    request<AdminEnhancedStats>(`/api/admin/enhanced-stats${opts?.period ? `?period=${opts.period}` : ''}`),
 
   // Admin health
   getAdminHealth: () =>
@@ -1657,6 +1740,9 @@ export const api = {
 
   getAdminDesignerSessions: (designerId: string) =>
     request<DesignerSessionDetail[]>(`/api/admin/time-tracking/${designerId}`),
+
+  cleanupStaleSessions: () =>
+    request<{ closedSessions: number; backfilledDurations: number }>('/api/admin/time-tracking/cleanup', { method: 'POST' }),
 
   // Session tracking (designer-facing)
   startSession: () =>
@@ -1732,7 +1818,10 @@ export const api = {
     if (opts?.limit) params.set('limit', String(opts.limit));
     if (opts?.cursor) params.set('cursor', opts.cursor);
     const qs = params.toString();
-    return request<Notification[]>(`/api/notifications${qs ? `?${qs}` : ''}`);
+    return request<NotificationWire[]>(`/api/notifications${qs ? `?${qs}` : ''}`).then((result) => {
+      if (!result.data) return result;
+      return { data: result.data.map(normalizeNotification) };
+    });
   },
 
   getNotificationUnreadCount: () =>

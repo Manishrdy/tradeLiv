@@ -30,6 +30,16 @@ router.get('/unread', async (req: AuthRequest, res: Response) => {
   }
 });
 
+/* ─── PUT /api/notifications/read-all ────────────────── */
+router.put('/read-all', async (req: AuthRequest, res: Response) => {
+  try {
+    const count = await markAllRead(req.user!.id);
+    res.json({ marked: count });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to mark notifications read' });
+  }
+});
+
 /* ─── PUT /api/notifications/:id/read ────────────────── */
 router.put('/:id/read', async (req: AuthRequest, res: Response) => {
   try {
@@ -41,16 +51,6 @@ router.put('/:id/read', async (req: AuthRequest, res: Response) => {
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to mark notification read' });
-  }
-});
-
-/* ─── PUT /api/notifications/read-all ────────────────── */
-router.put('/read-all', async (req: AuthRequest, res: Response) => {
-  try {
-    const count = await markAllRead(req.user!.id);
-    res.json({ marked: count });
-  } catch (err: any) {
-    res.status(500).json({ error: 'Failed to mark notifications read' });
   }
 });
 
