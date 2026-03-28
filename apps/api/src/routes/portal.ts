@@ -129,7 +129,6 @@ router.get('/:portalToken', async (req: Request, res: Response) => {
             createdAt: true,
           },
           orderBy: { createdAt: 'desc' },
-          take: 1,
         },
       },
     });
@@ -180,6 +179,12 @@ router.put('/:portalToken/shortlist/:itemId', async (req: Request, res: Response
 
     if (!item) {
       res.status(404).json({ error: 'Item not found.' });
+      return;
+    }
+
+    // Items past the review stage cannot have their status changed
+    if (status && ['added_to_cart', 'ordered'].includes(item.status)) {
+      res.status(400).json({ error: 'This item can no longer be reviewed.' });
       return;
     }
 
@@ -478,6 +483,23 @@ router.put('/:portalToken/quotes/:quoteId', async (req: Request, res: Response) 
   try {
     const project = await getProjectByPortalToken(req.params.portalToken);
     if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+
+    // Pre-check quote status for client-friendly error messages
+    const quote = await prisma.quote.findFirst({
+      where: { id: req.params.quoteId, projectId: project.id },
+      select: { status: true },
+    });
+    if (!quote) { res.status(404).json({ error: 'Quote not found.' }); return; }
+    if (quote.status === 'draft') { res.status(404).json({ error: 'Quote not found.' }); return; }
+    if (quote.status === 'approved') {
+      res.status(400).json({ error: 'This quote has already been approved.' }); return;
+    }
+    if (quote.status === 'revision_requested') {
+      res.status(400).json({ error: 'A revision has already been requested for this quote.' }); return;
+    }
+    if (quote.status !== 'sent') {
+      res.status(400).json({ error: 'This quote can no longer be modified.' }); return;
+    }
 
     if (parsed.data.action === 'approve') {
       const updated = await approveQuote(req.params.quoteId, project.id);

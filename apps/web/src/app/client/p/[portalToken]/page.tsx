@@ -48,11 +48,11 @@ function statusBadge(status: string) {
 
 /* ── Project progress indicator (#80) ──────────────── */
 
-function ProjectProgress({ totalItems, approvedCount, rejectedCount, hasOrders }: { totalItems: number; approvedCount: number; rejectedCount: number; hasOrders: boolean }) {
+function ProjectProgress({ totalItems, reviewedCount, hasOrders }: { totalItems: number; reviewedCount: number; hasOrders: boolean }) {
   const steps = [
     { label: 'Products selected', done: totalItems > 0 },
-    { label: 'Your review', done: approvedCount + rejectedCount > 0 },
-    { label: 'All reviewed', done: totalItems > 0 && approvedCount + rejectedCount >= totalItems },
+    { label: 'Your review', done: reviewedCount > 0 },
+    { label: 'All reviewed', done: totalItems > 0 && reviewedCount >= totalItems },
     { label: 'Order placed', done: hasOrders },
   ];
   const doneCount = steps.filter((s) => s.done).length;
@@ -97,8 +97,15 @@ function ProjectProgress({ totalItems, approvedCount, rejectedCount, hasOrders }
 
 /* ── Chat widget (#78) ─────────────────────────────── */
 
-function ChatWidget({ portalToken, clientName, designerName }: {
+export interface ChatSSEHandlers {
+  onNewMessage: (msg: ChatMessage) => void;
+  onMessagesRead: (data: { readerType: string }) => void;
+  onPresence: (data: { actorType: string; online: boolean }) => void;
+}
+
+function ChatWidget({ portalToken, clientName, designerName, onRegisterSSE }: {
   portalToken: string; clientName: string; designerName: string;
+  onRegisterSSE: (handlers: ChatSSEHandlers) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -108,9 +115,7 @@ function ChatWidget({ portalToken, clientName, designerName }: {
   const [designerOnline, setDesignerOnline] = useState(false);
   const [designerLastSeen, setDesignerLastSeen] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const sseRef = useRef<EventSource | null>(null);
-
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+  const prevOpenRef = useRef(false);
 
   const loadMessages = useCallback(async () => {
     const r = await api.getPortalMessages(portalToken);
@@ -129,47 +134,59 @@ function ChatWidget({ portalToken, clientName, designerName }: {
     }
   }, [portalToken]);
 
+  // SSE event handlers — called by parent's single SSE connection
+  const handleSSENewMessage = useCallback((msg: ChatMessage) => {
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === msg.id)) return prev;
+      return [...prev, msg];
+    });
+    if (msg.senderType === 'designer') setUnread((prev) => prev + 1);
+  }, []);
+
+  const handleSSEMessagesRead = useCallback((data: { readerType: string }) => {
+    if (data.readerType === 'designer') {
+      setMessages((prev) => prev.map((m) =>
+        m.senderType === 'client' && !m.readAt ? { ...m, readAt: new Date().toISOString() } : m
+      ));
+    }
+  }, []);
+
+  const handleSSEPresence = useCallback((data: { actorType: string; online: boolean }) => {
+    if (data.actorType === 'designer') {
+      setDesignerOnline(data.online);
+      if (!data.online) setDesignerLastSeen(new Date().toISOString());
+    }
+  }, []);
+
+  // Register SSE handlers with parent so it can forward events from the single connection
+  useEffect(() => {
+    onRegisterSSE({
+      onNewMessage: handleSSENewMessage,
+      onMessagesRead: handleSSEMessagesRead,
+      onPresence: handleSSEPresence,
+    });
+  }, [onRegisterSSE, handleSSENewMessage, handleSSEMessagesRead, handleSSEPresence]);
+
   useEffect(() => {
     loadMessages();
     loadPresence();
+  }, [loadMessages, loadPresence]);
 
-    const es = new EventSource(`${apiBase}/api/portal/${portalToken}/events`);
-    sseRef.current = es;
-
-    es.addEventListener('new_message', (e) => {
-      const msg = JSON.parse(e.data) as ChatMessage;
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === msg.id)) return prev;
-        return [...prev, msg];
-      });
-      if (msg.senderType === 'designer') setUnread((prev) => prev + 1);
-    });
-
-    es.addEventListener('messages_read', (e) => {
-      const data = JSON.parse(e.data) as { readerType: string };
-      if (data.readerType === 'designer') {
-        setMessages((prev) => prev.map((m) =>
-          m.senderType === 'client' && !m.readAt ? { ...m, readAt: new Date().toISOString() } : m
-        ));
-      }
-    });
-
-    es.addEventListener('presence', (e) => {
-      const data = JSON.parse(e.data) as { actorType: string; online: boolean };
-      if (data.actorType === 'designer') {
-        setDesignerOnline(data.online);
-        if (!data.online) setDesignerLastSeen(new Date().toISOString());
-      }
-    });
-
-    return () => { es.close(); };
-  }, [portalToken, apiBase, loadMessages, loadPresence]);
-
+  // Mark messages as read when chat opens, or when new messages arrive while already open.
+  // Debounce to avoid firing on every SSE tick — only call API when unread transitions from 0→N while open.
   useEffect(() => {
-    if (open && unread > 0) {
+    if (!open || unread === 0) {
+      prevOpenRef.current = open;
+      return;
+    }
+    // Chat is open and there are unread messages — mark them read.
+    // Small delay so rapid SSE bursts don't fire multiple API calls.
+    const timer = setTimeout(() => {
       api.markPortalMessagesRead(portalToken);
       setUnread(0);
-    }
+    }, 300);
+    prevOpenRef.current = open;
+    return () => clearTimeout(timer);
   }, [open, unread, portalToken]);
 
   useEffect(() => {
@@ -670,7 +687,8 @@ function ShortlistCard({
       return;
     }
     const clientNotes = feedbackText.trim() || undefined;
-    const optimistic = { ...item, status, clientNotes: clientNotes ?? item.clientNotes };
+    const isPinned = status === 'approved' ? true : status === 'rejected' ? false : item.isPinned;
+    const optimistic = { ...item, status, isPinned, clientNotes: clientNotes ?? item.clientNotes };
     onUpdate(optimistic);
     setFeedbackOpen(false);
     setFeedbackText('');
@@ -986,8 +1004,8 @@ function ShortlistCard({
               {isSelectedForCompare ? 'Selected' : 'Compare'}
             </button>
 
-            {/* Approve / Reject */}
-            {item.status !== 'added_to_cart' && (
+            {/* Approve / Reject — hidden for items past review stage */}
+            {item.status !== 'added_to_cart' && item.status !== 'ordered' && (
               <>
                 <button
                   onClick={() => handleStatusChange('approved')}
@@ -1039,11 +1057,10 @@ function RoomSection({
 
   if (room.shortlistItems.length === 0) return null;
 
-  // Category of first selected item — all selections must match
-  const selectedCategory = room.shortlistItems
-    .filter((i) => selectedForCompare.has(i.id))
-    .map((i) => i.product.category)
-    .find(Boolean) ?? null;
+  // Category of first selected item — all selections must match (null treated as its own group)
+  const selectedItems = room.shortlistItems.filter((i) => selectedForCompare.has(i.id));
+  const hasSelection = selectedItems.length > 0;
+  const selectedCategory = hasSelection ? (selectedItems[0].product.category ?? null) : null;
 
   function handleToggleCompare(itemId: string) {
     const item = room.shortlistItems.find((i) => i.id === itemId);
@@ -1054,7 +1071,8 @@ function RoomSection({
         next.delete(itemId);
       } else {
         if (next.size >= 4) return prev;
-        if (selectedCategory && item.product.category && item.product.category !== selectedCategory) return prev;
+        // Enforce same-category constraint (null === null is valid)
+        if (hasSelection && (item.product.category ?? null) !== selectedCategory) return prev;
         next.add(itemId);
       }
       return next;
@@ -1126,9 +1144,7 @@ function RoomSection({
       {/* Items */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {room.shortlistItems.map((item) => {
-          const categoryMismatch = selectedCategory !== null
-            && item.product.category != null
-            && item.product.category !== selectedCategory;
+          const categoryMismatch = hasSelection && (item.product.category ?? null) !== selectedCategory;
           const compareDisabled = (!selectedForCompare.has(item.id) && selectedForCompare.size >= 4) || categoryMismatch;
           return (
             <ShortlistCard
@@ -1201,6 +1217,10 @@ export default function PortalPage() {
   const [quotes, setQuotes] = useState<QuoteSummary[]>([]);
   const [selectedQuote, setSelectedQuote] = useState<QuoteDetail | null>(null);
   const [quoteActioning, setQuoteActioning] = useState(false);
+  const selectedQuoteRef = useRef<QuoteDetail | null>(null);
+  const chatSSERef = useRef<ChatSSEHandlers | null>(null);
+  const registerChatSSE = useCallback((h: ChatSSEHandlers) => { chatSSERef.current = h; }, []);
+
   const loadProject = useCallback(() => {
     if (!portalToken) return;
     api.getPortalProject(portalToken).then((r) => {
@@ -1229,16 +1249,44 @@ export default function PortalPage() {
     }
   }, [portalToken]);
 
-  // ── SSE: real-time sync ────────────────────────────
+  // Keep ref in sync so SSE callbacks read current value without re-creating the EventSource
+  selectedQuoteRef.current = selectedQuote;
+
+  // ── SSE: single connection for all real-time events ──
   useEffect(() => {
     if (!portalToken) return;
     const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
     const es = new EventSource(`${API_URL}/api/portal/${portalToken}/events`);
+
+    // Project events
     es.addEventListener('shortlist_updated', () => { loadProject(); });
-    es.addEventListener('quote_sent', () => { loadQuotes(); if (selectedQuote) loadQuoteDetail(selectedQuote.id); });
-    es.addEventListener('quote_updated', () => { if (selectedQuote) loadQuoteDetail(selectedQuote.id); loadQuotes(); });
+    es.addEventListener('quote_sent', () => {
+      loadQuotes();
+      const sq = selectedQuoteRef.current;
+      if (sq) loadQuoteDetail(sq.id);
+    });
+    es.addEventListener('quote_updated', () => {
+      const sq = selectedQuoteRef.current;
+      if (sq) loadQuoteDetail(sq.id);
+      loadQuotes();
+    });
+
+    // Chat events — forward to ChatWidget via ref
+    es.addEventListener('new_message', (e) => {
+      const msg = JSON.parse(e.data) as ChatMessage;
+      chatSSERef.current?.onNewMessage(msg);
+    });
+    es.addEventListener('messages_read', (e) => {
+      const data = JSON.parse(e.data) as { readerType: string };
+      chatSSERef.current?.onMessagesRead(data);
+    });
+    es.addEventListener('presence', (e) => {
+      const data = JSON.parse(e.data) as { actorType: string; online: boolean };
+      chatSSERef.current?.onPresence(data);
+    });
+
     return () => es.close();
-  }, [portalToken, loadProject, loadQuotes, loadQuoteDetail, selectedQuote]);
+  }, [portalToken, loadProject, loadQuotes, loadQuoteDetail]);
 
   const handleQuoteAction = async (quoteId: string, action: 'approve' | 'request_revision') => {
     setQuoteActioning(true);
@@ -1299,13 +1347,19 @@ export default function PortalPage() {
 
   const hasOrders    = project.orders.length > 0;
   const totalItems   = project.rooms.reduce((sum, r) => sum + r.shortlistItems.length, 0);
+  const reviewedStatuses = ['approved', 'rejected', 'added_to_cart', 'ordered'];
   const approvedCount = project.rooms.reduce(
-    (sum, r) => sum + r.shortlistItems.filter((i) => i.status === 'approved').length, 0
+    (sum, r) => sum + r.shortlistItems.filter((i) => ['approved', 'added_to_cart', 'ordered'].includes(i.status)).length, 0
   );
   const rejectedCount = project.rooms.reduce(
     (sum, r) => sum + r.shortlistItems.filter((i) => i.status === 'rejected').length, 0
   );
-  const pendingCount = totalItems - approvedCount - rejectedCount;
+  const reviewedCount = project.rooms.reduce(
+    (sum, r) => sum + r.shortlistItems.filter((i) => reviewedStatuses.includes(i.status)).length, 0
+  );
+  const pendingCount = project.rooms.reduce(
+    (sum, r) => sum + r.shortlistItems.filter((i) => i.status === 'suggested').length, 0
+  );
   const designerDisplayName = project.designer.businessName || project.designer.fullName;
   const clientName = project.client?.name || 'Client';
 
@@ -1330,8 +1384,7 @@ export default function PortalPage() {
       {/* Project progress (#80) */}
       <ProjectProgress
         totalItems={totalItems}
-        approvedCount={approvedCount}
-        rejectedCount={rejectedCount}
+        reviewedCount={reviewedCount}
         hasOrders={hasOrders}
       />
 
@@ -1498,18 +1551,21 @@ export default function PortalPage() {
                         style={{
                           padding: '9px 18px', fontSize: 12.5, fontWeight: 600,
                           background: 'none', border: '1px solid var(--border)', borderRadius: 8,
-                          cursor: 'pointer', color: 'var(--text-secondary)',
+                          cursor: quoteActioning ? 'not-allowed' : 'pointer',
+                          color: 'var(--text-secondary)',
+                          opacity: quoteActioning ? 0.6 : 1,
                         }}
                       >
-                        Request Revision
+                        {quoteActioning ? 'Processing...' : 'Request Revision'}
                       </button>
                       <button
                         onClick={() => handleQuoteAction(selectedQuote.id, 'approve')}
                         disabled={quoteActioning}
                         style={{
                           padding: '9px 18px', fontSize: 12.5, fontWeight: 600,
-                          background: '#16a34a', color: '#fff', border: 'none', borderRadius: 8,
-                          cursor: 'pointer',
+                          background: quoteActioning ? '#86efac' : '#16a34a',
+                          color: '#fff', border: 'none', borderRadius: 8,
+                          cursor: quoteActioning ? 'not-allowed' : 'pointer',
                         }}
                       >
                         {quoteActioning ? 'Processing...' : 'Approve Quote'}
@@ -1683,6 +1739,7 @@ export default function PortalPage() {
         portalToken={portalToken}
         clientName={clientName}
         designerName={designerDisplayName}
+        onRegisterSSE={registerChatSSE}
       />
 
       {/* Mobile responsive styles (#81) */}
