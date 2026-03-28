@@ -784,8 +784,8 @@ export interface PortalProject {
   name: string;
   status: string;
   createdAt: string;
-  designer: { fullName: string; businessName: string | null; phone: string | null; email: string };
-  client: { name: string; shippingAddress: Record<string, unknown> | null };
+  designer: { fullName: string; businessName: string | null };
+  client: { name: string };
   rooms: PortalRoom[];
   orders: PortalOrder[];
 }
@@ -1180,8 +1180,12 @@ export interface QuoteSummary {
   subtotal: number | null;
   grandTotal: number | null;
   taxAmount: number | null;
-  commissionAmount: number | null;
-  platformFeeAmount: number | null;
+  commissionAmount?: number | null;
+  platformFeeAmount?: number | null;
+  /** Client-facing label for commissionAmount (portal only) */
+  designFee?: number | null;
+  /** Client-facing label for platformFeeAmount (portal only) */
+  serviceFee?: number | null;
   sentAt: string | null;
   approvedAt: string | null;
   createdAt: string;
@@ -1199,14 +1203,18 @@ export interface QuoteDetail {
   title: string | null;
   notes: string | null;
   taxRate: number | null;
-  commissionType: 'percentage' | 'fixed' | null;
-  commissionValue: number | null;
-  platformFeeType: 'percentage' | 'fixed' | null;
-  platformFeeValue: number | null;
+  commissionType?: 'percentage' | 'fixed' | null;
+  commissionValue?: number | null;
+  platformFeeType?: 'percentage' | 'fixed' | null;
+  platformFeeValue?: number | null;
   subtotal: number | null;
   taxAmount: number | null;
-  commissionAmount: number | null;
-  platformFeeAmount: number | null;
+  commissionAmount?: number | null;
+  platformFeeAmount?: number | null;
+  /** Client-facing label for commissionAmount (portal only) */
+  designFee?: number | null;
+  /** Client-facing label for platformFeeAmount (portal only) */
+  serviceFee?: number | null;
   grandTotal: number | null;
   sentAt: string | null;
   approvedAt: string | null;

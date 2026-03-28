@@ -10,7 +10,18 @@ import logger from '../config/logger';
 
 const router = Router();
 
+// Prevent portal tokens from leaking via Referer header
+router.use((_req, res, next) => {
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+});
+
 /* ─── Helpers ───────────────────────────────────────── */
+
+/** Strip HTML tags to prevent stored XSS via user-supplied text */
+function stripHtml(str: string): string {
+  return str.replace(/<[^>]*>/g, '');
+}
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -58,14 +69,13 @@ router.get('/:portalToken', async (req: Request, res: Response) => {
           select: {
             fullName: true,
             businessName: true,
-            phone: true,
-            email: true,
+            // phone and email intentionally omitted — PII not needed in public portal
           },
         },
         client: {
           select: {
             name: true,
-            shippingAddress: true,
+            // shippingAddress intentionally omitted — not needed in portal view
           },
         },
         rooms: {
@@ -139,7 +149,7 @@ router.get('/:portalToken', async (req: Request, res: Response) => {
 /* ─── PUT /api/portal/:portalToken/shortlist/:itemId ── */
 
 const reviewSchema = z.object({
-  clientNotes: z.string().optional(),
+  clientNotes: z.string().max(5000).transform(stripHtml).optional(),
   status: z.enum(['suggested', 'approved', 'rejected']).optional(),
 });
 
@@ -257,8 +267,8 @@ router.get('/:portalToken/messages', async (req: Request, res: Response) => {
 /* ─── POST /api/portal/:portalToken/messages ───────── */
 
 const portalMessageSchema = z.object({
-  text: z.string().min(1, 'Message cannot be empty').max(5000),
-  senderName: z.string().min(1).max(120),
+  text: z.string().min(1, 'Message cannot be empty').max(5000).transform(stripHtml),
+  senderName: z.string().min(1).max(120).transform(stripHtml),
   contextType: z.string().optional(),
   contextId: z.string().optional(),
   metadata: z.record(z.unknown()).optional(),
@@ -373,12 +383,24 @@ router.get('/:portalToken/quotes', async (req: Request, res: Response) => {
     });
 
     res.json(quotes.map((q) => ({
-      ...q,
+      id: q.id,
+      projectId: q.projectId,
+      designerId: q.designerId,
+      version: q.version,
+      status: q.status,
+      title: q.title,
       subtotal: toNum(q.subtotal),
       grandTotal: toNum(q.grandTotal),
       taxAmount: toNum(q.taxAmount),
-      commissionAmount: toNum(q.commissionAmount),
-      platformFeeAmount: toNum(q.platformFeeAmount),
+      // Expose as display-friendly amounts only; strip internal fee config
+      designFee: toNum(q.commissionAmount),
+      serviceFee: toNum(q.platformFeeAmount),
+      sentAt: q.sentAt,
+      approvedAt: q.approvedAt,
+      createdAt: q.createdAt,
+      updatedAt: q.updatedAt,
+      _count: q._count,
+      designer: q.designer,
     })));
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
@@ -398,22 +420,44 @@ router.get('/:portalToken/quotes/:quoteId', async (req: Request, res: Response) 
       res.status(404).json({ error: 'Quote not found.' }); return;
     }
 
-    // Serialize with client-friendly labels
+    // Serialize with client-friendly labels — strip internal fee config
     res.json({
-      ...quote,
+      id: quote.id,
+      projectId: quote.projectId,
+      designerId: quote.designerId,
+      version: quote.version,
+      status: quote.status,
+      title: quote.title,
+      notes: quote.notes,
       subtotal: toNum(quote.subtotal),
       taxRate: toNum(quote.taxRate),
       taxAmount: toNum(quote.taxAmount),
-      commissionAmount: toNum(quote.commissionAmount),
-      platformFeeAmount: toNum(quote.platformFeeAmount),
+      // Expose amounts with display-friendly keys; hide commission/fee structure
+      designFee: toNum(quote.commissionAmount),
+      serviceFee: toNum(quote.platformFeeAmount),
       grandTotal: toNum(quote.grandTotal),
+      sentAt: quote.sentAt,
+      approvedAt: quote.approvedAt,
+      expiresAt: quote.expiresAt,
+      createdAt: quote.createdAt,
+      updatedAt: quote.updatedAt,
       lineItems: quote.lineItems.map((li: any) => ({
-        ...li,
+        id: li.id,
+        quoteId: li.quoteId,
+        productId: li.productId,
+        roomId: li.roomId,
+        selectedVariant: li.selectedVariant,
+        quantity: li.quantity,
         unitPrice: toNum(li.unitPrice),
         lineTotal: toNum(li.lineTotal),
+        adjustmentLabel: li.adjustmentLabel,
         adjustmentValue: toNum(li.adjustmentValue),
+        sortOrder: li.sortOrder,
         product: li.product ? { ...li.product, price: toNum(li.product.price) } : undefined,
+        room: li.room,
       })),
+      designer: quote.designer,
+      project: quote.project,
     });
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
@@ -489,8 +533,8 @@ router.get('/:portalToken/quotes/:quoteId/comments', async (req: Request, res: R
 /* ─── POST /api/portal/:portalToken/quotes/:quoteId/comments */
 
 const portalQuoteCommentSchema = z.object({
-  text: z.string().min(1).max(5000),
-  senderName: z.string().min(1).max(120),
+  text: z.string().min(1).max(5000).transform(stripHtml),
+  senderName: z.string().min(1).max(120).transform(stripHtml),
   lineItemId: z.string().uuid().optional(),
 });
 

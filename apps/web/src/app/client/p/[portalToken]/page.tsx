@@ -1603,16 +1603,16 @@ export default function PortalPage() {
                       <span>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(selectedQuote.taxAmount!)}</span>
                     </div>
                   )}
-                  {(selectedQuote.commissionAmount ?? 0) > 0 && (
+                  {(selectedQuote.designFee ?? 0) > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ color: 'var(--text-muted)' }}>Design Fee</span>
-                      <span>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(selectedQuote.commissionAmount!)}</span>
+                      <span>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(selectedQuote.designFee!)}</span>
                     </div>
                   )}
-                  {(selectedQuote.platformFeeAmount ?? 0) > 0 && (
+                  {(selectedQuote.serviceFee ?? 0) > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ color: 'var(--text-muted)' }}>Service Fee</span>
-                      <span>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(selectedQuote.platformFeeAmount!)}</span>
+                      <span>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(selectedQuote.serviceFee!)}</span>
                     </div>
                   )}
                   <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>

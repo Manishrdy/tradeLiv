@@ -95,10 +95,19 @@ const adminLoginLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many login attempts. Please try again in 15 minutes.' },
 });
+// Portal: public endpoints — rate-limit per IP to prevent token probing
+const portalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 120,                  // 120 requests per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please try again later.' },
+});
+
 app.use('/api/auth/admin/login', adminLoginLimiter);
 app.use('/api/auth', authLimiter, authRouter);
 app.use('/api/clients', clientsRouter);
-app.use('/api/portal', portalRouter);
+app.use('/api/portal', portalLimiter, portalRouter);
 app.use('/api/projects', projectsRouter);
 app.use('/api/catalog', catalogRouter);
 app.use('/api/orders', ordersRouter);
@@ -167,13 +176,29 @@ app.get('/api/projects/:projectId/events', (req, res) => {
 });
 
 /* ─── SSE: portal events (public, by portalToken) ── */
+
+// Track concurrent SSE connections per portal token to prevent resource exhaustion
+const portalSSEConnections = new Map<string, number>();
+const MAX_PORTAL_SSE_PER_TOKEN = 3;
+const PORTAL_SSE_KEEPALIVE_MS = 30_000;  // 30s keepalive ping
+const PORTAL_SSE_TIMEOUT_MS = 30 * 60_000; // 30 min max connection
+
 app.get('/api/portal/:portalToken/events', async (req, res) => {
   const { prisma } = await import('@furnlo/db');
+  const portalToken = req.params.portalToken;
   const project = await prisma.project.findUnique({
-    where: { portalToken: req.params.portalToken },
+    where: { portalToken },
     select: { id: true },
   });
   if (!project) { res.status(404).json({ error: 'Not found' }); return; }
+
+  // Enforce concurrent connection limit per token
+  const current = portalSSEConnections.get(portalToken) ?? 0;
+  if (current >= MAX_PORTAL_SSE_PER_TOKEN) {
+    res.status(429).json({ error: 'Too many open connections. Please close other tabs.' });
+    return;
+  }
+  portalSSEConnections.set(portalToken, current + 1);
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -181,6 +206,11 @@ app.get('/api/portal/:portalToken/events', async (req, res) => {
     Connection: 'keep-alive',
   });
   res.write(':\n\n');
+
+  // Keepalive ping to detect dead connections
+  const keepalive = setInterval(() => { res.write(':\n\n'); }, PORTAL_SSE_KEEPALIVE_MS);
+  // Hard timeout — close stale connections after 30 minutes
+  const timeout = setTimeout(() => { res.end(); }, PORTAL_SSE_TIMEOUT_MS);
 
   setOnline(project.id, 'client');
   emitProjectEvent(project.id, 'presence', { actorType: 'client', online: true });
@@ -193,6 +223,12 @@ app.get('/api/portal/:portalToken/events', async (req, res) => {
   ).catch(() => {});
 
   res.on('close', () => {
+    clearInterval(keepalive);
+    clearTimeout(timeout);
+    const count = portalSSEConnections.get(portalToken) ?? 1;
+    if (count <= 1) portalSSEConnections.delete(portalToken);
+    else portalSSEConnections.set(portalToken, count - 1);
+
     setOffline(project.id, 'client');
     emitProjectEvent(project.id, 'presence', { actorType: 'client', online: false });
   });
