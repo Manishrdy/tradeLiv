@@ -72,6 +72,18 @@ router.post('/create-checkout-session', async (req: AuthRequest, res: Response) 
 
     const totalAmount = Number(order.totalAmount ?? 0);
 
+    // Check for an existing pending payment
+    const existingPayment = await prisma.payment.findFirst({
+      where: { orderId: order.id, status: 'pending' },
+    });
+    if (existingPayment && existingPayment.stripeSessionId) {
+       const existingSession = await getStripe().checkout.sessions.retrieve(existingPayment.stripeSessionId);
+       if (existingSession && existingSession.url && existingSession.status === 'open') {
+         res.json({ sessionUrl: existingSession.url });
+         return;
+       }
+    }
+
     // Create Stripe Checkout Session
     const session = await getStripe().checkout.sessions.create({
       mode: 'payment',

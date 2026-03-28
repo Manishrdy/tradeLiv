@@ -46,6 +46,12 @@ export async function stripeWebhookHandler(req: Request, res: Response) {
         });
 
         // Update order status to paid
+        const existingOrder = await prisma.order.findUnique({ where: { id: orderId } });
+        if (!existingOrder) {
+          logger.warn(`Stripe webhook: order not found ${orderId}`);
+          break;
+        }
+
         const order = await prisma.order.update({
           where: { id: orderId },
           data: {

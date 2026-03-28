@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { prisma } from '@furnlo/db';
 import { writeAuditLog } from '../services/auditLog';
@@ -10,9 +11,36 @@ import logger from '../config/logger';
 
 const router = Router();
 
+const portalWriteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 50,                   // 50 requests per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many actions performed. Please try again later.' },
+});
+
+const portalMessageLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30,                   // 30 messages per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many messages sent. Please wait before sending more.' },
+});
+
 // Prevent portal tokens from leaking via Referer header
 router.use((_req, res, next) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+});
+
+// Explicit CSRF mitigation for state-changing portal endpoints
+router.use((req, res, next) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    if (req.headers['x-requested-with'] !== 'XMLHttpRequest') {
+      res.status(403).json({ error: 'Missing required X-Requested-With header.' });
+      return;
+    }
+  }
   next();
 });
 
@@ -153,7 +181,7 @@ const reviewSchema = z.object({
 });
 
 // Public — client updates their own notes or approves/rejects an item.
-router.put('/:portalToken/shortlist/:itemId', async (req: Request, res: Response) => {
+router.put('/:portalToken/shortlist/:itemId', portalWriteLimiter, async (req: Request, res: Response) => {
   const parsed = reviewSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.errors[0].message });
@@ -273,13 +301,13 @@ router.get('/:portalToken/messages', async (req: Request, res: Response) => {
 
 const portalMessageSchema = z.object({
   text: z.string().min(1, 'Message cannot be empty').max(5000).transform(stripHtml),
-  senderName: z.string().min(1).max(120).transform(stripHtml),
+  senderName: z.string().max(120).transform(stripHtml).optional(),
   contextType: z.string().optional(),
   contextId: z.string().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 
-router.post('/:portalToken/messages', async (req: Request, res: Response) => {
+router.post('/:portalToken/messages', portalMessageLimiter, async (req: Request, res: Response) => {
   const parsed = portalMessageSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.errors[0].message }); return; }
 
@@ -290,7 +318,7 @@ router.post('/:portalToken/messages', async (req: Request, res: Response) => {
     const message = await createMessage({
       projectId: project.id,
       senderType: 'client',
-      senderName: parsed.data.senderName,
+      senderName: project.client?.name || 'Client',
       text: parsed.data.text,
       contextType: parsed.data.contextType,
       contextId: parsed.data.contextId,
@@ -476,7 +504,7 @@ const quoteReviewSchema = z.object({
   action: z.enum(['approve', 'request_revision']),
 });
 
-router.put('/:portalToken/quotes/:quoteId', async (req: Request, res: Response) => {
+router.put('/:portalToken/quotes/:quoteId', portalWriteLimiter, async (req: Request, res: Response) => {
   const parsed = quoteReviewSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.errors[0].message }); return; }
 
@@ -556,11 +584,11 @@ router.get('/:portalToken/quotes/:quoteId/comments', async (req: Request, res: R
 
 const portalQuoteCommentSchema = z.object({
   text: z.string().min(1).max(5000).transform(stripHtml),
-  senderName: z.string().min(1).max(120).transform(stripHtml),
+  senderName: z.string().max(120).transform(stripHtml).optional(),
   lineItemId: z.string().uuid().optional(),
 });
 
-router.post('/:portalToken/quotes/:quoteId/comments', async (req: Request, res: Response) => {
+router.post('/:portalToken/quotes/:quoteId/comments', portalMessageLimiter, async (req: Request, res: Response) => {
   const parsed = portalQuoteCommentSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.errors[0].message }); return; }
 
@@ -574,7 +602,7 @@ router.post('/:portalToken/quotes/:quoteId/comments', async (req: Request, res: 
     const message = await createMessage({
       projectId: project.id,
       senderType: 'client',
-      senderName: parsed.data.senderName,
+      senderName: project.client?.name || 'Client',
       text: parsed.data.text,
       contextType: 'quote',
       contextId: req.params.quoteId,

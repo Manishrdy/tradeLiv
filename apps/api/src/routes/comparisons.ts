@@ -401,7 +401,7 @@ router.post('/recommend', async (req: AuthRequest, res: Response) => {
   } catch (err: any) {
     const errMsg = err?.message || String(err);
     logger.error('recommendation error', { message: errMsg, status: err?.status, name: err?.name });
-    res.status(500).json({ error: errMsg });
+    res.status(500).json({ error: 'Failed to generate recommendation. Please try again.' });
   }
 });
 

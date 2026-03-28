@@ -138,7 +138,41 @@ function serializeProduct(p: any) {
   };
 }
 
+function isSafeUrl(input: string): boolean {
+  try {
+    const parsed = new URL(input);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+    const host = parsed.hostname.toLowerCase();
+    
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.local')) return false;
+    
+    // Check for private IPv4 subnets
+    const parts = host.split('.');
+    if (parts.length === 4 && parts.every(p => !isNaN(Number(p)))) {
+      const [a, b] = parts.map(Number);
+      if (
+        (a === 10) ||
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168) ||
+        (a === 169 && b === 254) ||
+        (a === 127)
+      ) {
+        return false;
+      }
+    }
+    
+    // Check for unique local address IPv6 and loopback
+    if (host.includes('fc00::') || host.includes('fd00::') || host === '[::1]') return false;
+    
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function validateImageUrl(url: string): Promise<boolean> {
+  if (!isSafeUrl(url)) return false;
+
   try {
     const headCtrl = new AbortController();
     const headTimeout = setTimeout(() => headCtrl.abort(), 5_000);

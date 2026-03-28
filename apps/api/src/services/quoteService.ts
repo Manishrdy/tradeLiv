@@ -313,6 +313,11 @@ export async function removeLineItem(quoteId: string, lineItemId: string, design
   });
   if (!quote) throw new Error('Quote not found or not editable.');
 
+  const existingItem = await prisma.quoteLineItem.findFirst({ where: { id: lineItemId, quoteId } });
+  if (!existingItem) {
+    throw new Error('Line item not found in this quote.');
+  }
+
   await prisma.quoteLineItem.delete({ where: { id: lineItemId } });
   await recalculateQuoteTotals(quoteId);
 

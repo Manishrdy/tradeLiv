@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
-import { prisma } from '@furnlo/db';
+import { prisma, Prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { writeAuditLog } from '../services/auditLog';
 import { emitProjectEvent } from '../services/projectEvents';
@@ -210,64 +210,73 @@ router.post('/projects/:projectId/shortlist', async (req: AuthRequest, res: Resp
     }
 
     // Check if product already shortlisted in this room (skip ordered items — allow re-adding for new orders)
-    const existing = await prisma.shortlistItem.findFirst({
-      where: { projectId: req.params.projectId, roomId, productId, status: { not: 'ordered' } },
-    });
-    if (existing) {
-      res.status(400).json({ error: 'Product is already shortlisted in this room.' });
-      return;
-    }
+    try {
+      const item = await prisma.$transaction(async (tx) => {
+        const existing = await tx.shortlistItem.findFirst({
+          where: { projectId: req.params.projectId, roomId, productId, status: { not: 'ordered' } },
+        });
+        if (existing) {
+          throw new Error('DUPLICATE_SHORTLIST');
+        }
 
-    // Get next priority rank
-    const maxRank = await prisma.shortlistItem.aggregate({
-      where: { projectId: req.params.projectId, roomId },
-      _max: { priorityRank: true },
-    });
-    const nextRank = (maxRank._max.priorityRank ?? 0) + 1;
+        // Get next priority rank
+        const maxRank = await tx.shortlistItem.aggregate({
+          where: { projectId: req.params.projectId, roomId },
+          _max: { priorityRank: true },
+        });
+        const nextRank = (maxRank._max.priorityRank ?? 0) + 1;
 
-    const item = await prisma.shortlistItem.create({
-      data: {
-        projectId: req.params.projectId,
-        roomId,
-        productId,
-        designerId: req.user!.id,
-        quantity,
-        selectedVariant: selectedVariant ?? undefined,
-        designerNotes: designerNotes || null,
-        sharedNotes: sharedNotes || null,
-        fitAssessment: fitAssessment || null,
-        priorityRank: nextRank,
-      },
-      include: {
-        product: {
-          select: {
-            id: true,
-            productName: true,
-            brandName: true,
-            price: true,
-            imageUrl: true,
-            category: true,
-            material: true,
-            dimensions: true,
-            finishes: true,
-            leadTime: true,
-            productUrl: true,
-            metadata: true,
+        return await tx.shortlistItem.create({
+          data: {
+            projectId: req.params.projectId,
+            roomId,
+            productId,
+            designerId: req.user!.id,
+            quantity,
+            selectedVariant: selectedVariant ?? undefined,
+            designerNotes: designerNotes || null,
+            sharedNotes: sharedNotes || null,
+            fitAssessment: fitAssessment || null,
+            priorityRank: nextRank,
           },
-        },
-      },
-    });
+          include: {
+            product: {
+              select: {
+                id: true,
+                productName: true,
+                brandName: true,
+                price: true,
+                imageUrl: true,
+                category: true,
+                material: true,
+                dimensions: true,
+                finishes: true,
+                leadTime: true,
+                productUrl: true,
+                metadata: true,
+              },
+            },
+          },
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
-    writeAuditLog({
-      actorType: 'designer',
-      actorId: req.user!.id,
-      action: 'shortlist_item_added',
-      entityType: 'project',
-      entityId: req.params.projectId,
-      payload: { roomId, productId, productName: product.productName, roomName: room.name },
-    });
+      writeAuditLog({
+        actorType: 'designer',
+        actorId: req.user!.id,
+        action: 'shortlist_item_added',
+        entityType: 'project',
+        entityId: req.params.projectId,
+        payload: { roomId, productId, productName: product.productName, roomName: room.name },
+      });
 
-    res.status(201).json(serializeShortlistItem(item));
+      res.status(201).json(serializeShortlistItem(item));
+    } catch (txErr: any) {
+      if (txErr.message === 'DUPLICATE_SHORTLIST') {
+        res.status(400).json({ error: 'Product is already shortlisted in this room.' });
+        return;
+      }
+      throw txErr;
+    }
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
     res.status(500).json({ error: 'An error occurred. Please try again.' });
@@ -468,7 +477,12 @@ router.delete('/projects/:projectId/shortlist/:itemId', async (req: AuthRequest,
       return;
     }
 
-    await prisma.shortlistItem.delete({ where: { id: req.params.itemId } });
+    await prisma.$transaction([
+      prisma.cartItem.deleteMany({
+        where: { projectId: req.params.projectId, productId: existing.productId, roomId: existing.roomId },
+      }),
+      prisma.shortlistItem.delete({ where: { id: req.params.itemId } }),
+    ]);
 
     writeAuditLog({
       actorType: 'designer',
@@ -560,34 +574,55 @@ router.post('/projects/:projectId/cart', async (req: AuthRequest, res: Response)
       res.status(400).json({ error: 'Cannot add a rejected item to cart.' }); return;
     }
 
-    // Check for duplicate in cart
-    const existingCartItem = await prisma.cartItem.findFirst({
-      where: { projectId: req.params.projectId, productId: shortlistItem.productId, roomId: shortlistItem.roomId },
-    });
-    if (existingCartItem) {
-      res.status(400).json({ error: 'This product is already in the cart for this room.' }); return;
-    }
+    // Check for duplicate in cart in a serializable transaction
+    try {
+      const cartItem = await prisma.$transaction(async (tx) => {
+        const existingCartItem = await tx.cartItem.findFirst({
+          where: { projectId: req.params.projectId, productId: shortlistItem.productId, roomId: shortlistItem.roomId },
+        });
+        if (existingCartItem) {
+          throw new Error('DUPLICATE_CART');
+        }
 
-    const [cartItem] = await prisma.$transaction([
-      prisma.cartItem.create({
-        data: {
-          projectId: req.params.projectId,
-          productId: shortlistItem.productId,
-          roomId: shortlistItem.roomId,
-          selectedVariant: shortlistItem.selectedVariant ?? undefined,
-          quantity: quantity ?? shortlistItem.quantity,
-          unitPrice: shortlistItem.product.price,
-        },
-        include: {
-          product: { select: productSelect },
-          room: { select: { id: true, name: true } },
-        },
-      }),
-      prisma.shortlistItem.update({
-        where: { id: shortlistItemId },
-        data: { status: 'added_to_cart' },
-      }),
-    ]);
+        const newCartItem = await tx.cartItem.create({
+          data: {
+            projectId: req.params.projectId,
+            productId: shortlistItem.productId,
+            roomId: shortlistItem.roomId,
+            selectedVariant: shortlistItem.selectedVariant ?? undefined,
+            quantity: quantity ?? shortlistItem.quantity,
+            unitPrice: shortlistItem.product.price,
+          },
+          include: {
+            product: { select: productSelect },
+            room: { select: { id: true, name: true } },
+          },
+        });
+
+        await tx.shortlistItem.update({
+          where: { id: shortlistItemId },
+          data: { status: 'added_to_cart' },
+        });
+
+        return newCartItem;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+      writeAuditLog({
+        actorType: 'designer', actorId: req.user!.id,
+        action: 'cart_item_added', entityType: 'project', entityId: req.params.projectId,
+        payload: { productId: shortlistItem.productId, productName: shortlistItem.product.productName, roomId: shortlistItem.roomId, roomName: shortlistItem.room.name },
+      });
+
+      emitProjectEvent(req.params.projectId, 'cart_updated', { action: 'added' });
+
+      res.status(201).json(serializeCartItem(cartItem));
+    } catch (txErr: any) {
+      if (txErr.message === 'DUPLICATE_CART') {
+        res.status(400).json({ error: 'This product is already in the cart for this room.' });
+        return;
+      }
+      throw txErr;
+    }
 
     writeAuditLog({
       actorType: 'designer', actorId: req.user!.id,
@@ -695,11 +730,16 @@ router.post('/projects/:projectId/orders', async (req: AuthRequest, res: Respons
     }
 
     // Calculate line totals
-    const lineItemsData = cartItems.map((ci) => {
+    const lineItemsData = [];
+    for (const ci of cartItems) {
       const unitPrice = ci.unitPrice ?? ci.product.price;
       const up = Number(unitPrice ?? 0);
+      if (up <= 0) {
+        res.status(400).json({ error: `Product "${ci.product.productName}" must have a valid price greater than $0 before creating an order.` });
+        return;
+      }
       const lt = up * ci.quantity;
-      return {
+      lineItemsData.push({
         productId: ci.productId,
         roomId: ci.roomId,
         selectedVariant: ci.selectedVariant ?? undefined,
@@ -707,8 +747,8 @@ router.post('/projects/:projectId/orders', async (req: AuthRequest, res: Respons
         unitPrice: up,
         lineTotal: lt,
         brandName: ci.product.brandName || 'Unknown',
-      };
-    });
+      });
+    }
 
     const totalAmount = lineItemsData.reduce((sum, li) => sum + li.lineTotal, 0);
 

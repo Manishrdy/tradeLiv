@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
 import crypto from 'crypto';
+import sharp from 'sharp';
 import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { writeAuditLog } from '../services/auditLog';
@@ -21,6 +22,8 @@ const projectCreateSchema = z.object({
   budgetMax: z.number().positive().optional(),
   stylePreference: z.string().max(200).optional(),
   status: z.enum(['draft', 'active']).optional().default('draft'),
+}).refine(d => !d.budgetMin || !d.budgetMax || d.budgetMin <= d.budgetMax, {
+  message: 'Minimum budget cannot exceed maximum'
 });
 
 const projectUpdateSchema = z.object({
@@ -31,6 +34,8 @@ const projectUpdateSchema = z.object({
   stylePreference: z.string().max(200).nullable().optional(),
   status: z.enum(['draft', 'active', 'ordered', 'closed']).optional(),
   imageUrl: z.string().url().nullable().optional(),
+}).refine(d => d.budgetMin == null || d.budgetMax == null || d.budgetMin <= d.budgetMax, {
+  message: 'Minimum budget cannot exceed maximum'
 });
 
 const imageUploadSchema = z.object({
@@ -56,6 +61,8 @@ const roomSchema = z.object({
     inspirationLinks: z.array(z.string().url('Invalid URL')).max(10).optional(),
   }).optional(),
   notes: z.string().max(1000).optional(),
+}).refine(d => !d.budgetMin || !d.budgetMax || d.budgetMin <= d.budgetMax, {
+  message: 'Minimum budget cannot exceed maximum'
 });
 
 /* ─── Helpers ───────────────────────────────────────── */
@@ -622,18 +629,31 @@ router.post('/:id/image', async (req: AuthRequest, res: Response) => {
 
     const { imageData: base64Data, mimeType } = parsed.data;
 
-    // Decode base64 and check size
-    const buffer = Buffer.from(base64Data, 'base64');
-    if (buffer.length > MAX_IMAGE_SIZE) {
-      res.status(400).json({ error: `Image too large (${Math.round(buffer.length / 1024)}KB). Max ${MAX_IMAGE_SIZE / 1024}KB after compression.` });
+    // Decode base64 and process with sharp to validate it is a real image
+    const rawBuffer = Buffer.from(base64Data, 'base64');
+    if (rawBuffer.length > MAX_IMAGE_SIZE * 5) {
+      res.status(400).json({ error: 'Image payload is excessively large.' });
+      return;
+    }
+
+    let processedBuffer: Buffer;
+    try {
+      processedBuffer = await sharp(rawBuffer).jpeg({ quality: 80 }).toBuffer();
+    } catch (processErr) {
+      res.status(400).json({ error: 'Invalid or corrupted image data.' });
+      return;
+    }
+
+    if (processedBuffer.length > MAX_IMAGE_SIZE) {
+      res.status(400).json({ error: `Image too large (${Math.round(processedBuffer.length / 1024)}KB after compression). Max ${MAX_IMAGE_SIZE / 1024}KB.` });
       return;
     }
 
     const project = await prisma.project.update({
       where: { id: req.params.id },
       data: {
-        imageData: buffer,
-        imageMimeType: mimeType,
+        imageData: processedBuffer,
+        imageMimeType: 'image/jpeg',
         imageUrl: null, // clear URL when uploading file
       },
       include: {
