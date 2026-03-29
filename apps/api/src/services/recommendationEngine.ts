@@ -1,14 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk';
-import { config } from '../config';
+import { generateText } from './aiProvider';
 import logger from '../config/logger';
-
-let _client: Anthropic | null = null;
-function getClient() {
-  if (!_client) _client = new Anthropic({ apiKey: config.claudeApiKey });
-  return _client;
-}
-
-const MODEL = 'claude-sonnet-4-6';
 
 /* ─── Types ──────────────────────────────────────── */
 
@@ -78,8 +69,6 @@ Respond in the following JSON format ONLY — no markdown, no extra text:
 export async function generateRecommendation(
   input: RecommendationInput,
 ): Promise<RecommendationResult> {
-  const client = getClient();
-
   const userPayload: Record<string, unknown> = {};
 
   if (input.room) {
@@ -121,18 +110,11 @@ export async function generateRecommendation(
   const userMessage = JSON.stringify(userPayload, null, 2);
 
   try {
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 1024,
+    const text = await generateText({
       system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userMessage }],
+      userMessage,
+      maxTokens: 1024,
     });
-
-    // Extract text from response
-    const text = response.content
-      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-      .map((block) => block.text)
-      .join('');
 
     // Parse JSON from response (handle potential markdown code fences)
     const jsonStr = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();

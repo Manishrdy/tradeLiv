@@ -1,25 +1,20 @@
 /**
  * Tests for recommendationEngine.
  *
- * The engine calls Claude API which is mocked via moduleNameMapper.
- * We test: response parsing, and error handling.
+ * The engine calls the unified AI provider which is mocked here.
+ * We test: response parsing, input building, and error handling.
  */
 
 import { generateRecommendation, RecommendationInput } from '../../services/recommendationEngine';
 
-// Access the mocked Anthropic client. The module creates a singleton internally
-// via `new Anthropic()`. Our mock in __mocks__/anthropic.ts returns an object
-// with messages.create as a jest.fn(). We can retrieve it by instantiating the mock.
-import Anthropic from '@anthropic-ai/sdk';
+// Mock the AI provider — intercept generateText calls
+jest.mock('../../services/aiProvider', () => ({
+  generateText: jest.fn().mockResolvedValue('{}'),
+}));
 
-function getMockCreate(): jest.Mock {
-  // The recommendationEngine creates a singleton on first call.
-  // Our mock always returns the same shape. We need to get at the instance's
-  // messages.create. Since the mock constructor returns the same object shape
-  // each time, we can just create one to get the reference.
-  const instance = new (Anthropic as any)();
-  return instance.messages.create;
-}
+import { generateText } from '../../services/aiProvider';
+
+const mockGenerateText = generateText as jest.Mock;
 
 const BASIC_INPUT: RecommendationInput = {
   room: {
@@ -61,7 +56,7 @@ const BASIC_INPUT: RecommendationInput = {
 };
 
 beforeEach(() => {
-  getMockCreate().mockReset();
+  mockGenerateText.mockReset();
 });
 
 /* ═══════════════════════════════════════════════════════
@@ -69,18 +64,13 @@ beforeEach(() => {
    ═══════════════════════════════════════════════════════ */
 
 describe('generateRecommendation — success', () => {
-  it('returns parsed recommendation from Claude response', async () => {
-    getMockCreate().mockResolvedValue({
-      content: [{
-        type: 'text',
-        text: JSON.stringify({
-          recommendedProduct: 'Haven Sofa',
-          recommendation: 'The Haven Sofa is the best fit for your living room.',
-          tradeOffs: ['Haven is cheaper but has longer lead time', 'Harmony offers modular design'],
-          internalNotes: ['Check if camel leather matches existing furniture'],
-        }),
-      }],
-    });
+  it('returns parsed recommendation from AI response', async () => {
+    mockGenerateText.mockResolvedValue(JSON.stringify({
+      recommendedProduct: 'Haven Sofa',
+      recommendation: 'The Haven Sofa is the best fit for your living room.',
+      tradeOffs: ['Haven is cheaper but has longer lead time', 'Harmony offers modular design'],
+      internalNotes: ['Check if camel leather matches existing furniture'],
+    }));
 
     const result = await generateRecommendation(BASIC_INPUT);
     expect(result.recommendedProduct).toBe('Haven Sofa');
@@ -96,24 +86,17 @@ describe('generateRecommendation — success', () => {
       tradeOffs: ['Higher price point'],
       internalNotes: ['Made to order — confirm timeline with client'],
     };
-    getMockCreate().mockResolvedValue({
-      content: [{ type: 'text', text: '```json\n' + JSON.stringify(json) + '\n```' }],
-    });
+    mockGenerateText.mockResolvedValue('```json\n' + JSON.stringify(json) + '\n```');
 
     const result = await generateRecommendation(BASIC_INPUT);
     expect(result.recommendedProduct).toBe('Harmony Sofa');
   });
 
   it('handles missing optional fields gracefully', async () => {
-    getMockCreate().mockResolvedValue({
-      content: [{
-        type: 'text',
-        text: JSON.stringify({
-          recommendation: 'Both products are suitable.',
-          tradeOffs: ['Price difference'],
-        }),
-      }],
-    });
+    mockGenerateText.mockResolvedValue(JSON.stringify({
+      recommendation: 'Both products are suitable.',
+      tradeOffs: ['Price difference'],
+    }));
 
     const result = await generateRecommendation(BASIC_INPUT);
     expect(result.recommendedProduct).toBeNull();
@@ -123,22 +106,20 @@ describe('generateRecommendation — success', () => {
 });
 
 /* ═══════════════════════════════════════════════════════
-   Input building — verify what gets sent to Claude
+   Input building — verify what gets sent to AI
    ═══════════════════════════════════════════════════════ */
 
 describe('generateRecommendation — input building', () => {
-  it('sends room context, client requirements, and products to Claude', async () => {
-    getMockCreate().mockResolvedValue({
-      content: [{ type: 'text', text: '{"recommendedProduct":null,"recommendation":"OK","tradeOffs":[],"internalNotes":[]}' }],
-    });
+  it('sends room context, client requirements, and products to AI', async () => {
+    mockGenerateText.mockResolvedValue('{"recommendedProduct":null,"recommendation":"OK","tradeOffs":[],"internalNotes":[]}');
 
     await generateRecommendation(BASIC_INPUT);
 
-    expect(getMockCreate()).toHaveBeenCalledTimes(1);
-    const callArgs = getMockCreate().mock.calls[0][0];
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    const callArgs = mockGenerateText.mock.calls[0][0];
 
-    const userMessage = callArgs.messages[0].content;
-    const parsed = JSON.parse(userMessage);
+    // The userMessage is a JSON string of the payload
+    const parsed = JSON.parse(callArgs.userMessage);
 
     expect(parsed.room.name).toBe('Living Room');
     expect(parsed.room.dimensions).toBe('18ft × 14ft (252 sqft)');
@@ -149,9 +130,7 @@ describe('generateRecommendation — input building', () => {
   });
 
   it('handles null room gracefully', async () => {
-    getMockCreate().mockResolvedValue({
-      content: [{ type: 'text', text: '{"recommendedProduct":null,"recommendation":"OK","tradeOffs":[],"internalNotes":[]}' }],
-    });
+    mockGenerateText.mockResolvedValue('{"recommendedProduct":null,"recommendation":"OK","tradeOffs":[],"internalNotes":[]}');
 
     const input: RecommendationInput = {
       room: null,
@@ -163,7 +142,7 @@ describe('generateRecommendation — input building', () => {
 
     await generateRecommendation(input);
 
-    const userMessage = JSON.parse(getMockCreate().mock.calls[0][0].messages[0].content);
+    const userMessage = JSON.parse(mockGenerateText.mock.calls[0][0].userMessage);
     expect(userMessage.room).toBeUndefined();
     expect(userMessage.client_requirements).toBeUndefined();
     expect(userMessage.compared_products).toHaveLength(1);
@@ -173,9 +152,7 @@ describe('generateRecommendation — input building', () => {
   });
 
   it('truncates features to max 5 items', async () => {
-    getMockCreate().mockResolvedValue({
-      content: [{ type: 'text', text: '{"recommendedProduct":null,"recommendation":"OK","tradeOffs":[],"internalNotes":[]}' }],
-    });
+    mockGenerateText.mockResolvedValue('{"recommendedProduct":null,"recommendation":"OK","tradeOffs":[],"internalNotes":[]}');
 
     const input: RecommendationInput = {
       room: null,
@@ -197,22 +174,20 @@ describe('generateRecommendation — input building', () => {
 
     await generateRecommendation(input);
 
-    const userMessage = JSON.parse(getMockCreate().mock.calls[0][0].messages[0].content);
+    const userMessage = JSON.parse(mockGenerateText.mock.calls[0][0].userMessage);
     expect(userMessage.compared_products[0].features).toHaveLength(5);
     expect(userMessage.compared_products[0].features).toEqual(['F1', 'F2', 'F3', 'F4', 'F5']);
   });
 
   it('uses system prompt with correct role instructions', async () => {
-    getMockCreate().mockResolvedValue({
-      content: [{ type: 'text', text: '{"recommendedProduct":null,"recommendation":"OK","tradeOffs":[],"internalNotes":[]}' }],
-    });
+    mockGenerateText.mockResolvedValue('{"recommendedProduct":null,"recommendation":"OK","tradeOffs":[],"internalNotes":[]}');
 
     await generateRecommendation(BASIC_INPUT);
 
-    const callArgs = getMockCreate().mock.calls[0][0];
+    const callArgs = mockGenerateText.mock.calls[0][0];
     expect(callArgs.system).toContain('interior designer');
     expect(callArgs.system).toContain('JSON');
-    expect(callArgs.max_tokens).toBe(1024);
+    expect(callArgs.maxTokens).toBe(1024);
   });
 });
 
@@ -221,16 +196,14 @@ describe('generateRecommendation — input building', () => {
    ═══════════════════════════════════════════════════════ */
 
 describe('generateRecommendation — errors', () => {
-  it('throws when Claude returns invalid JSON', async () => {
-    getMockCreate().mockResolvedValue({
-      content: [{ type: 'text', text: 'This is not JSON at all' }],
-    });
+  it('throws when AI returns invalid JSON', async () => {
+    mockGenerateText.mockResolvedValue('This is not JSON at all');
 
     await expect(generateRecommendation(BASIC_INPUT)).rejects.toThrow();
   });
 
-  it('throws when Claude API call fails', async () => {
-    getMockCreate().mockRejectedValue(new Error('Rate limited'));
+  it('throws when AI provider call fails', async () => {
+    mockGenerateText.mockRejectedValue(new Error('Rate limited'));
 
     await expect(generateRecommendation(BASIC_INPUT)).rejects.toThrow('Rate limited');
   });
@@ -239,13 +212,13 @@ describe('generateRecommendation — errors', () => {
     const apiError = new Error('overloaded_error');
     (apiError as any).status = 529;
     (apiError as any).error = { type: 'overloaded_error' };
-    getMockCreate().mockRejectedValue(apiError);
+    mockGenerateText.mockRejectedValue(apiError);
 
     await expect(generateRecommendation(BASIC_INPUT)).rejects.toThrow('overloaded_error');
   });
 
-  it('handles empty content array', async () => {
-    getMockCreate().mockResolvedValue({ content: [] });
+  it('handles empty response', async () => {
+    mockGenerateText.mockResolvedValue('');
 
     // Should throw because JSON.parse('') fails
     await expect(generateRecommendation(BASIC_INPUT)).rejects.toThrow();

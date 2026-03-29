@@ -1,18 +1,7 @@
-import Anthropic from '@anthropic-ai/sdk';
 import puppeteer from 'puppeteer-core';
 import { config } from '../config';
 import logger from '../config/logger';
-
-let _client: Anthropic | null = null;
-function getClient() {
-  if (!_client) _client = new Anthropic({ apiKey: config.claudeApiKey });
-  return _client;
-}
-
-/* ─── Models ─────────────────────────────────────────── */
-
-const MODEL_FAST = 'claude-sonnet-4-6';            // Direct extraction (no tools)
-const MODEL_SEARCH = 'claude-sonnet-4-6';          // Web search fallback
+import { generateText, generateWithTools } from './aiProvider';
 
 /* ─── Constants ─────────────────────────────────────── */
 
@@ -2157,18 +2146,26 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
       signals: dimSignals.slice(0, 15),
     });
 
+    // DEBUG: Log full scraped signals before AI normalization
+    console.log('\n========== SCRAPED OUTPUT (Normal Fetch) ==========');
+    console.log('URL:', sourceUrl);
+    console.log('HTML length:', html.length);
+    console.log('Signal count:', signalLines.length);
+    console.log('--- SIGNALS START ---');
+    console.log(signals);
+    console.log('--- SIGNALS END ---');
+    console.log('====================================================\n');
+
     try {
       const userContent = `Extract product data from these page signals.\n\nPRICE: If "selected_variant_price" is present, use that — it's the exact price for the URL's variant. Do NOT use og:price or meta tag prices when selected_variant_price exists.\n\nDIMENSIONS (HIGHEST PRIORITY): Look for "explicit_dimensions_label" signals FIRST — these contain the raw text near a "Dimensions" heading on the page and are the MOST AUTHORITATIVE source. Parse width, depth, height, and unit values from that text. Then use dim_labelled and dim_label signals. Do NOT confuse variant titles (like "22 x 22") with actual product dimensions. Only labelled measurements (Width/Depth/Height) are real dimensions. NEVER return a product without dimensions if ANY dimension signal (explicit_dimensions_label, dim_label, dim_labelled, dim_WxDxH, spec_sections with measurements) exists in the signals below.\n\n${signals}`;
-      const response = await getClient().messages.create({
-        model: MODEL_FAST,
-        max_tokens: 2048,
+      const responseText = await generateText({
         system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userContent }],
+        userMessage: userContent,
+        maxTokens: 2048,
       });
 
-      const textBlock = response.content.find((b) => b.type === 'text') as any;
-      if (textBlock?.text) {
-        const parsed = tryParseJson(textBlock.text);
+      if (responseText) {
+        const parsed = tryParseJson(responseText);
         if (parsed) {
           logger.info('Direct extraction succeeded', { url: sourceUrl });
           const result = buildResult(parsed, sourceUrl, preCategory);
@@ -2261,19 +2258,34 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
                 fullBodyTextLen: rendered.fullBodyText.length,
               });
 
+              // DEBUG: Log full browser-rendered content before AI normalization
+              console.log('\n========== SCRAPED OUTPUT (Browserless Fallback) ==========');
+              console.log('URL:', sourceUrl);
+              console.log('productText length:', rendered.productText.length);
+              console.log('dimensionText length:', rendered.dimensionText.length);
+              console.log('fullBodyText length:', rendered.fullBodyText.length);
+              console.log('--- PRODUCT TEXT START ---');
+              console.log(rendered.productText.slice(0, 5000));
+              console.log('--- PRODUCT TEXT END ---');
+              console.log('--- DIMENSION TEXT START ---');
+              console.log(rendered.dimensionText);
+              console.log('--- DIMENSION TEXT END ---');
+              console.log('--- FULL BODY TEXT (first 3000 chars) START ---');
+              console.log(rendered.fullBodyText.slice(0, 3000));
+              console.log('--- FULL BODY TEXT END ---');
+              console.log('============================================================\n');
+
               // If score is very low, re-extract the full product from browser content
               if (completeness.score < 50 && rendered.productText.length > 200) {
                 try {
                   const reUserContent = `Extract product data from this page content rendered by a headless browser.\n\nPRICE: Look for price patterns like "$1,234" or "Price: 1234".\n\nDIMENSIONS (HIGHEST PRIORITY):\nDimension-specific text found on the page:\n${rendered.dimensionText || '(none found)'}\n\nFull product area text:\n${rendered.productText.slice(0, 15_000)}`;
-                  const reExtractResponse = await getClient().messages.create({
-                    model: MODEL_FAST,
-                    max_tokens: 2048,
+                  const reExtractText = await generateText({
                     system: SYSTEM_PROMPT,
-                    messages: [{ role: 'user', content: reUserContent }],
+                    userMessage: reUserContent,
+                    maxTokens: 2048,
                   });
-                  const reTextBlock = reExtractResponse.content.find((b) => b.type === 'text') as any;
-                  if (reTextBlock?.text) {
-                    const reParsed = tryParseJson(reTextBlock.text);
+                  if (reExtractText) {
+                    const reParsed = tryParseJson(reExtractText);
                     if (reParsed) {
                       const reResult = buildResult(reParsed, sourceUrl, preCategory);
                       const reProduct = reResult.type === 'single' ? reResult.product : reResult.products?.[0];
@@ -2364,18 +2376,33 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
         dimensionText: rendered.dimensionText,
       });
 
+      // DEBUG: Log full browser-rendered content before AI normalization (bot-blocked path)
+      console.log('\n========== SCRAPED OUTPUT (Browserless - Bot Blocked) ==========');
+      console.log('URL:', sourceUrl);
+      console.log('productText length:', rendered.productText.length);
+      console.log('dimensionText length:', rendered.dimensionText.length);
+      console.log('fullBodyText length:', rendered.fullBodyText.length);
+      console.log('--- PRODUCT TEXT START ---');
+      console.log(rendered.productText.slice(0, 5000));
+      console.log('--- PRODUCT TEXT END ---');
+      console.log('--- DIMENSION TEXT START ---');
+      console.log(rendered.dimensionText);
+      console.log('--- DIMENSION TEXT END ---');
+      console.log('--- FULL BODY TEXT (first 3000 chars) START ---');
+      console.log(rendered.fullBodyText.slice(0, 3000));
+      console.log('--- FULL BODY TEXT END ---');
+      console.log('================================================================\n');
+
       try {
         const browserUserContent = `Extract product data from this page content rendered by a headless browser.\n\nPRICE: Look for price patterns like "$1,234" or "Price: 1234".\n\nDIMENSIONS (HIGHEST PRIORITY):\nDimension-specific text found on the page:\n${rendered.dimensionText || '(none found)'}\n\nFull product area text:\n${rendered.productText.slice(0, 15_000)}`;
-        const response = await getClient().messages.create({
-          model: MODEL_FAST,
-          max_tokens: 2048,
+        const browserResponseText = await generateText({
           system: SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: browserUserContent }],
+          userMessage: browserUserContent,
+          maxTokens: 2048,
         });
 
-        const textBlock = response.content.find((b) => b.type === 'text') as any;
-        if (textBlock?.text) {
-          const parsed = tryParseJson(textBlock.text);
+        if (browserResponseText) {
+          const parsed = tryParseJson(browserResponseText);
           if (parsed) {
             logger.info('Browser-rendered extraction succeeded', { url: sourceUrl });
             const result = buildResult(parsed, sourceUrl);
@@ -2432,31 +2459,25 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
 /* ─── Web search fallback ────────────────────────────── */
 
 async function extractWithWebSearch(sourceUrl: string): Promise<ExtractionResult> {
-  // Single Claude call — web_search handles iterations internally.
-  // Multi-turn accumulated web search results that blew past the 30k token/min org limit.
+  // Single AI call — web_search tool handles iterations internally (Claude/Agent Router only).
+  // For Gemini, falls back to plain generation without web search.
   const wsUserContent = `Search for the product at this URL and extract its full details:\n${sourceUrl}\n\nI need: name, price, currency, main image URL, furniture category, and metadata (description, key features, materials, assembly, care instructions, warranty, style, etc.).\n\nDIMENSIONS ARE THE MOST IMPORTANT DATA — find the product's width, depth, height measurements. Almost every furniture product page has dimensions (e.g. "68.5 x 85 x 54" or "68.5"W x 85"D x 54"H"). Search thoroughly for these. Include them in the dimensions object with numeric values and unit.\n\nReturn ONLY the JSON object as specified.`;
-  const response = await getClient().messages.create({
-    model: MODEL_SEARCH,
-    max_tokens: 3072,
+  const wsResponseText = await generateWithTools({
     system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: wsUserContent }],
-    tools: [{ type: 'web_search_20250305', name: 'web_search' }] as any,
+    userMessage: wsUserContent,
+    maxTokens: 3072,
+    tools: [{ type: 'web_search_20250305', name: 'web_search' }],
   });
 
-  const textBlocks = response.content.filter((b) => b.type === 'text');
-  if (textBlocks.length > 0) {
-    const parsed = tryParseJsonFromBlocks(textBlocks);
+  if (wsResponseText) {
+    const parsed = tryParseJson(wsResponseText);
     if (parsed) {
       logger.info('Web search extraction succeeded', { url: sourceUrl });
       return buildResult(parsed, sourceUrl);
     }
   }
 
-  const responseText = response.content
-    .filter((b: any) => b?.type === 'text')
-    .map((b: any) => b.text)
-    .join('\n')
-    .slice(0, 200);
+  const responseText = (wsResponseText || '').slice(0, 200);
 
   logger.warn('Web search extraction failed', { url: sourceUrl, responseText });
   throw new ExtractionError(

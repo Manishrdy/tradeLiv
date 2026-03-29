@@ -11,6 +11,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
     "@furnlo/db": "*",
+    "@google/generative-ai": "^0.24.1",
     "@types/cookie-parser": "^1.4.10",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",

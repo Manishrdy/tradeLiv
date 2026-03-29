@@ -94,8 +94,19 @@ export const config = {
   get frontendUrl() {
     return process.env.FRONTEND_URL || 'http://localhost:3000';
   },
+  get useAi(): 'claude' | 'gemini' | 'agent-router' {
+    const v = (process.env.USE_AI || 'claude').toLowerCase().trim();
+    if (v === 'gemini' || v === 'agent-router') return v;
+    return 'claude';
+  },
   get claudeApiKey() {
     return process.env.CLAUDE_API_KEY!;
+  },
+  get agentRouterApiKey() {
+    return process.env.AGENT_ROUTER_API_KEY!;
+  },
+  get geminiApiKey() {
+    return process.env.GEMINI_API_KEY!;
   },
   get stripeSecretKey() {
     return process.env.STRIPE_SECRET_KEY!;
