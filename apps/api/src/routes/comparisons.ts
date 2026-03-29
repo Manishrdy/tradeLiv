@@ -6,6 +6,7 @@ import { writeAuditLog } from '../services/auditLog';
 import { logComparisonEvent } from '../services/comparisonEvents';
 import { generateRecommendation, type RecommendationInput } from '../services/recommendationEngine';
 import logger from '../config/logger';
+import { logRouteError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
@@ -87,6 +88,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     res.json(comparisons);
   } catch (err) {
     logger.error('comparisons route error', { err, path: req.path });
+    logRouteError('routes/comparisons.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -118,6 +120,7 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
     });
   } catch (err) {
     logger.error('comparisons route error', { err, path: req.path });
+    logRouteError('routes/comparisons.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -175,6 +178,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     res.status(201).json(comparison);
   } catch (err) {
     logger.error('comparisons route error', { err, path: req.path });
+    logRouteError('routes/comparisons.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -219,6 +223,7 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
     res.json(updated);
   } catch (err) {
     logger.error('comparisons route error', { err, path: req.path });
+    logRouteError('routes/comparisons.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -248,6 +253,7 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
     res.json({ message: 'Comparison deleted.' });
   } catch (err) {
     logger.error('comparisons route error', { err, path: req.path });
+    logRouteError('routes/comparisons.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -275,6 +281,7 @@ router.post('/quick', async (req: AuthRequest, res: Response) => {
     res.json({ products: products.map(serializeProduct) });
   } catch (err) {
     logger.error('comparisons route error', { err, path: req.path });
+    logRouteError('routes/comparisons.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -403,6 +410,7 @@ router.post('/recommend', async (req: AuthRequest, res: Response) => {
   } catch (err: any) {
     const errMsg = err?.message || String(err);
     logger.error('recommendation error', { message: errMsg, status: err?.status, name: err?.name });
+    logRouteError('routes/comparisons.ts', err, req);
     res.status(500).json({ error: 'Failed to generate recommendation. Please try again.' });
   }
 });

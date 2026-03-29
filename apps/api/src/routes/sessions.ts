@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import logger from '../config/logger';
+import { logRouteError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
@@ -26,6 +27,7 @@ router.post('/start', async (req: AuthRequest, res: Response) => {
     res.status(201).json({ sessionId: session.id });
   } catch (err) {
     logger.error('session start error', { err });
+    logRouteError('routes/sessions.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -49,6 +51,7 @@ router.put('/:id/heartbeat', async (req: AuthRequest, res: Response) => {
     res.json({ ok: true });
   } catch (err) {
     logger.error('session heartbeat error', { err });
+    logRouteError('routes/sessions.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -80,6 +83,7 @@ router.put('/:id/end', async (req: AuthRequest, res: Response) => {
     res.json({ ok: true });
   } catch (err) {
     logger.error('session end error', { err });
+    logRouteError('routes/sessions.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });

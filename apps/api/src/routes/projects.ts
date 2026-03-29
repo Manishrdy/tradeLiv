@@ -8,6 +8,7 @@ import { writeAuditLog } from '../services/auditLog';
 import { emitProjectEvent } from '../services/projectEvents';
 import { createMessage, getMessages, markMessagesRead, getUnreadCount, getProjectPresence } from '../services/messageService';
 import logger from '../config/logger';
+import { logRouteError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
@@ -125,6 +126,7 @@ router.get('/stats', async (req: AuthRequest, res: Response) => {
     res.json({ activeProjects, totalClients, totalShortlisted, totalOrders });
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -167,6 +169,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     })));
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -221,6 +224,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     res.status(201).json(serializeProject(project));
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -254,6 +258,7 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
     res.json(serializeProject(project));
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -321,6 +326,7 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
     res.json(serializeProject(project));
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -344,6 +350,7 @@ router.get('/:id/activity', async (req: AuthRequest, res: Response) => {
     res.json(logs);
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -372,6 +379,7 @@ router.post('/:id/generate-token', async (req: AuthRequest, res: Response) => {
     res.json({ portalToken: updated.portalToken });
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -424,6 +432,7 @@ router.post('/:id/rooms', async (req: AuthRequest, res: Response) => {
     res.status(201).json(serializeRoom(room));
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -475,6 +484,7 @@ router.put('/:id/rooms/:roomId', async (req: AuthRequest, res: Response) => {
     res.json(serializeRoom(room));
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -519,6 +529,7 @@ router.delete('/:id/rooms/:roomId', async (req: AuthRequest, res: Response) => {
     res.json({ message: 'Room deleted.' });
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -550,6 +561,7 @@ router.get('/:id/messages', async (req: AuthRequest, res: Response) => {
     res.json(result);
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -601,6 +613,7 @@ router.post('/:id/messages', async (req: AuthRequest, res: Response) => {
     res.status(201).json(message);
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -619,6 +632,7 @@ router.put('/:id/messages/read', async (req: AuthRequest, res: Response) => {
     res.json({ markedRead: count });
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -634,6 +648,7 @@ router.get('/:id/messages/unread', async (req: AuthRequest, res: Response) => {
     res.json({ unread: count });
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -649,6 +664,7 @@ router.get('/:id/presence', async (req: AuthRequest, res: Response) => {
     res.json(presence);
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -711,6 +727,7 @@ router.post('/:id/image', async (req: AuthRequest, res: Response) => {
     res.json(serializeProject(project));
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -752,6 +769,7 @@ router.put('/:id/image-url', async (req: AuthRequest, res: Response) => {
     res.json(serializeProject(project));
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -787,6 +805,7 @@ router.get('/:id/image/thumbnail', async (req: AuthRequest, res: Response) => {
     res.send(Buffer.from(project.imageData));
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -817,6 +836,7 @@ router.delete('/:id/image', async (req: AuthRequest, res: Response) => {
     res.json(serializeProject(project));
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -867,6 +887,7 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
     res.json({ message: 'Project archived.' });
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -908,6 +929,7 @@ router.put('/:id/restore', async (req: AuthRequest, res: Response) => {
     res.json(serializeProject(restored));
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/projects.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });

@@ -9,6 +9,7 @@ import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { writeAuditLog } from '../services/auditLog';
 import { createAdminNotification } from '../services/adminNotificationService';
 import logger from '../config/logger';
+import { logRouteError } from '../services/errorLogger';
 
 const router = Router();
 
@@ -246,6 +247,7 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
     });
   } catch (err) {
     logger.error('auth route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/auth.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -322,6 +324,7 @@ router.post('/login', async (req: Request, res: Response) => {
     });
   } catch (err) {
     logger.error('auth route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/auth.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -367,6 +370,7 @@ router.post('/admin/login', async (req: Request, res: Response) => {
     });
   } catch (err) {
     logger.error('auth route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/auth.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -484,6 +488,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
     res.json({ message: 'Token refreshed.' });
   } catch (err) {
     logger.error('refresh token error', { err });
+    logRouteError('routes/auth.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -501,6 +506,7 @@ router.post('/logout', async (req: Request, res: Response) => {
       });
     } catch (err) {
       logger.error('logout revoke error', { err });
+      logRouteError('routes/auth.ts', err, req);
     }
   }
 
@@ -520,6 +526,7 @@ router.post('/logout-all', requireAuth, async (req: AuthRequest, res: Response) 
     res.json({ message: 'All sessions revoked.' });
   } catch (err) {
     logger.error('logout-all error', { err });
+    logRouteError('routes/auth.ts', err, req);
     res.status(500).json({ error: 'An error occurred.' });
   }
 });
@@ -542,6 +549,7 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     res.json(designer);
   } catch (err) {
     logger.error('auth route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/auth.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -567,6 +575,7 @@ router.put('/me', requireAuth, requireRole('designer'), async (req: AuthRequest,
     res.json(designer);
   } catch (err) {
     logger.error('auth route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/auth.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -600,6 +609,7 @@ router.put('/me/fee-defaults', requireAuth, requireRole('designer'), async (req:
     res.json(designer);
   } catch (err) {
     logger.error('auth route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/auth.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -663,6 +673,7 @@ router.put('/change-password', requireAuth, async (req: AuthRequest, res: Respon
     res.json({ message: 'Password changed successfully.' });
   } catch (err) {
     logger.error('change-password error', { err });
+    logRouteError('routes/auth.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });

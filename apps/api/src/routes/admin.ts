@@ -13,6 +13,7 @@ import {
 } from '../services/adminNotificationService';
 import { addAdminListener } from '../services/adminEvents';
 import logger from '../config/logger';
+import { logRouteError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
@@ -52,6 +53,7 @@ router.get('/me', async (req: AuthRequest, res: Response) => {
     res.json(designer);
   } catch (err) {
     logger.error('admin route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -83,6 +85,7 @@ router.get('/stats', async (_req: AuthRequest, res: Response) => {
     });
   } catch (err) {
     logger.error('admin route error', { err });
+    logRouteError('routes/admin.ts', err, _req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -134,6 +137,7 @@ router.get('/designers', async (req: AuthRequest, res: Response) => {
     res.json({ designers, total, page: Math.floor(skip / take) + 1, totalPages: Math.ceil(total / take) });
   } catch (err) {
     logger.error('admin route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -173,6 +177,7 @@ router.get('/designers/:id', async (req: AuthRequest, res: Response) => {
     res.json(designer);
   } catch (err) {
     logger.error('admin route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -245,6 +250,7 @@ router.put('/designers/:id/status', async (req: AuthRequest, res: Response) => {
     res.json(designer);
   } catch (err) {
     logger.error('admin route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -257,6 +263,7 @@ router.get('/notifications', async (_req: AuthRequest, res: Response) => {
     res.json(notifications);
   } catch (err) {
     logger.error('admin route error', { err, path: '/notifications' });
+    logRouteError('routes/admin.ts', err, _req);
     res.status(500).json({ error: 'An error occurred.' });
   }
 });
@@ -267,6 +274,7 @@ router.get('/notifications/unread-count', async (_req: AuthRequest, res: Respons
     res.json({ count });
   } catch (err) {
     logger.error('admin route error', { err, path: '/notifications/unread-count' });
+    logRouteError('routes/admin.ts', err, _req);
     res.status(500).json({ error: 'An error occurred.' });
   }
 });
@@ -277,6 +285,7 @@ router.put('/notifications/read-all', async (_req: AuthRequest, res: Response) =
     res.json({ success: true });
   } catch (err) {
     logger.error('admin route error', { err, path: '/notifications/read-all' });
+    logRouteError('routes/admin.ts', err, _req);
     res.status(500).json({ error: 'An error occurred.' });
   }
 });
@@ -289,6 +298,7 @@ router.put('/notifications/:id/read', async (req: AuthRequest, res: Response) =>
     res.json({ success: true });
   } catch (err) {
     logger.error('admin route error', { err, path: '/notifications/:id/read' });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred.' });
   }
 });
@@ -308,6 +318,7 @@ router.get('/notifications/stream', async (_req: AuthRequest, res: Response) => 
     res.write(`event: admin_unread_count\ndata: ${JSON.stringify({ count })}\n\n`);
   } catch (err) {
     logger.error('SSE initial unread count error', { err });
+    logRouteError('routes/admin.ts', err, _req);
   }
 
   addAdminListener(res);
@@ -332,6 +343,7 @@ router.get('/activity', async (req: AuthRequest, res: Response) => {
     res.json({ logs, total, page: Math.floor(skip / take) + 1, totalPages: Math.ceil(total / take) });
   } catch (err) {
     logger.error('admin route error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -351,6 +363,7 @@ router.get('/admins', async (_req: AuthRequest, res: Response) => {
     res.json(admins);
   } catch (err) {
     logger.error('admin route error', { err });
+    logRouteError('routes/admin.ts', err, _req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -429,6 +442,7 @@ router.post('/admins', requireSuperAdmin, async (req: AuthRequest, res: Response
     }
   } catch (err) {
     logger.error('admin route error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -474,6 +488,7 @@ router.delete('/admins/:id', requireSuperAdmin, async (req: AuthRequest, res: Re
     res.json({ message: 'Admin privileges revoked.' });
   } catch (err) {
     logger.error('admin route error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -529,6 +544,7 @@ router.get('/orders', async (req: AuthRequest, res: Response) => {
     res.json({ orders, total, page: Math.floor(skip / take) + 1, totalPages: Math.ceil(total / take) });
   } catch (err) {
     logger.error('admin route error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -572,6 +588,7 @@ router.get('/orders/:orderId', async (req: AuthRequest, res: Response) => {
     res.json({ ...order, auditLogs });
   } catch (err) {
     logger.error('admin route error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -628,6 +645,7 @@ router.put('/orders/:orderId/status', async (req: AuthRequest, res: Response) =>
     res.json(order);
   } catch (err) {
     logger.error('admin route error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -672,6 +690,7 @@ router.get('/payments', async (req: AuthRequest, res: Response) => {
     res.json({ payments, total, page: Math.floor(skip / take) + 1, totalPages: Math.ceil(total / take) });
   } catch (err) {
     logger.error('admin route error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -702,6 +721,7 @@ router.get('/payments/:paymentId', async (req: AuthRequest, res: Response) => {
     res.json(payment);
   } catch (err) {
     logger.error('admin route error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -750,6 +770,7 @@ router.get('/brand-pos', async (req: AuthRequest, res: Response) => {
     res.json({ brandPOs, total, page: Math.floor(skip / take) + 1, totalPages: Math.ceil(total / take) });
   } catch (err) {
     logger.error('admin route error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -806,6 +827,7 @@ router.put('/brand-pos/:poId/status', async (req: AuthRequest, res: Response) =>
     res.json(po);
   } catch (err) {
     logger.error('admin route error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -926,6 +948,7 @@ router.get('/enhanced-stats', async (req: AuthRequest, res: Response) => {
     res.json(data);
   } catch (err) {
     logger.error('admin route error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -971,6 +994,7 @@ router.get('/health', async (_req: AuthRequest, res: Response) => {
     res.json(data);
   } catch (err) {
     logger.error('admin health error', { err });
+    logRouteError('routes/admin.ts', err, _req);
     res.status(503).json({
       db: { connected: false, latencyMs: -1 },
       api: { uptimeSeconds: Math.floor(process.uptime()), memoryMB: 0 },
@@ -991,6 +1015,7 @@ router.get('/config', async (_req: AuthRequest, res: Response) => {
     res.json(configs);
   } catch (err) {
     logger.error('admin config error', { err });
+    logRouteError('routes/admin.ts', err, _req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -1026,6 +1051,7 @@ router.put('/config/:key', requireSuperAdmin, async (req: AuthRequest, res: Resp
     res.json(config);
   } catch (err) {
     logger.error('admin config error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -1063,6 +1089,7 @@ router.post('/config', requireSuperAdmin, async (req: AuthRequest, res: Response
     res.status(201).json(config);
   } catch (err) {
     logger.error('admin config error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -1148,6 +1175,7 @@ router.get('/analytics/revenue', async (req: AuthRequest, res: Response) => {
     });
   } catch (err) {
     logger.error('admin analytics error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -1209,6 +1237,7 @@ router.get('/analytics/products', async (_req: AuthRequest, res: Response) => {
     res.json({ mostShortlisted, approvalRates, popularBrands });
   } catch (err) {
     logger.error('admin analytics error', { err });
+    logRouteError('routes/admin.ts', err, _req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -1291,6 +1320,7 @@ router.get('/analytics/clients', async (_req: AuthRequest, res: Response) => {
     });
   } catch (err) {
     logger.error('admin analytics error', { err });
+    logRouteError('routes/admin.ts', err, _req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -1327,6 +1357,7 @@ router.post('/time-tracking/cleanup', async (_req: AuthRequest, res: Response) =
     res.json({ closedSessions: closed.count, backfilledDurations: nodurations.length });
   } catch (err) {
     logger.error('admin time-tracking cleanup error', { err });
+    logRouteError('routes/admin.ts', err, _req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -1397,6 +1428,7 @@ router.get('/time-tracking', async (req: AuthRequest, res: Response) => {
     });
   } catch (err) {
     logger.error('admin time-tracking error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -1414,6 +1446,7 @@ router.get('/time-tracking/:designerId', async (req: AuthRequest, res: Response)
     res.json(sessions);
   } catch (err) {
     logger.error('admin time-tracking error', { err });
+    logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import logger from '../config/logger';
+import { logRouteError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
@@ -20,6 +21,7 @@ router.get('/', requireAuth, requireRole('designer'), async (_req: AuthRequest, 
     res.json(categories);
   } catch (err) {
     logger.error('furniture-categories route error', { err });
+    logRouteError('routes/furnitureCategories.ts', err, _req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -48,6 +50,7 @@ adminRouter.get('/', async (_req: AuthRequest, res: Response) => {
     res.json(categories);
   } catch (err) {
     logger.error('admin furniture-categories error', { err });
+    logRouteError('routes/furnitureCategories.ts', err, _req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -78,6 +81,7 @@ adminRouter.post('/', async (req: AuthRequest, res: Response) => {
       return;
     }
     logger.error('admin furniture-categories error', { err });
+    logRouteError('routes/furnitureCategories.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -115,6 +119,7 @@ adminRouter.put('/:id', async (req: AuthRequest, res: Response) => {
       return;
     }
     logger.error('admin furniture-categories error', { err });
+    logRouteError('routes/furnitureCategories.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -133,6 +138,7 @@ adminRouter.delete('/:id', async (req: AuthRequest, res: Response) => {
     res.json({ message: 'Category deleted.' });
   } catch (err) {
     logger.error('admin furniture-categories error', { err });
+    logRouteError('routes/furnitureCategories.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });

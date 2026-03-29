@@ -17,6 +17,7 @@ import {
 import { createMessage, getMessages, markMessagesRead } from '../services/messageService';
 import { emitProjectEvent } from '../services/projectEvents';
 import logger from '../config/logger';
+import { logRouteError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
@@ -141,6 +142,7 @@ router.post('/projects/:projectId', async (req: AuthRequest, res: Response) => {
       res.status(400).json({ error: err.message }); return;
     }
     logger.error('quotes route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/quotes.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -156,6 +158,7 @@ router.get('/projects/:projectId', async (req: AuthRequest, res: Response) => {
     res.json(quotes.map(serializeQuoteSummary));
   } catch (err) {
     logger.error('quotes route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/quotes.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -171,6 +174,7 @@ router.get('/:quoteId', async (req: AuthRequest, res: Response) => {
     res.json(serializeQuote(quote));
   } catch (err) {
     logger.error('quotes route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/quotes.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -189,6 +193,7 @@ router.put('/:quoteId', async (req: AuthRequest, res: Response) => {
       res.status(400).json({ error: err.message }); return;
     }
     logger.error('quotes route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/quotes.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -212,6 +217,7 @@ router.post('/:quoteId/line-items', async (req: AuthRequest, res: Response) => {
       res.status(400).json({ error: err.message }); return;
     }
     logger.error('quotes route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/quotes.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -235,6 +241,7 @@ router.put('/:quoteId/line-items/:lineItemId', async (req: AuthRequest, res: Res
       res.status(400).json({ error: err.message }); return;
     }
     logger.error('quotes route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/quotes.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -250,6 +257,7 @@ router.delete('/:quoteId/line-items/:lineItemId', async (req: AuthRequest, res: 
       res.status(400).json({ error: err.message }); return;
     }
     logger.error('quotes route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/quotes.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -265,6 +273,7 @@ router.post('/:quoteId/send', async (req: AuthRequest, res: Response) => {
       res.status(400).json({ error: err.message }); return;
     }
     logger.error('quotes route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/quotes.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -280,6 +289,7 @@ router.post('/:quoteId/convert', async (req: AuthRequest, res: Response) => {
       res.status(400).json({ error: err.message }); return;
     }
     logger.error('quotes route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/quotes.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -315,6 +325,7 @@ router.get('/:quoteId/comments', async (req: AuthRequest, res: Response) => {
     res.json({ comments, hasMore: result.hasMore });
   } catch (err) {
     logger.error('quotes route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/quotes.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -380,6 +391,7 @@ router.post('/:quoteId/comments', async (req: AuthRequest, res: Response) => {
     });
   } catch (err) {
     logger.error('quotes route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/quotes.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -406,6 +418,7 @@ router.put('/:quoteId/comments/read', async (req: AuthRequest, res: Response) =>
     res.json({ markedRead: count });
   } catch (err) {
     logger.error('quotes route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/quotes.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });

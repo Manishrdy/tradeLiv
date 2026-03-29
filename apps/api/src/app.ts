@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import logger from './config/logger';
+import { logRouteError } from './services/errorLogger';
 import authRouter from './routes/auth';
 import clientsRouter from './routes/clients';
 import portalRouter from './routes/portal';
@@ -211,8 +212,9 @@ export function createApp() {
     });
   });
 
-  app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
     logger.error(err.message, { stack: err.stack });
+    logRouteError('global-error-handler', err, req as any);
     res.status(500).json({ error: 'Internal server error' });
   });
 

@@ -8,6 +8,7 @@ import { createMessage, getMessages, markMessagesRead, getUnreadCount, getProjec
 import { approveQuote, requestRevision, getQuoteDetail } from '../services/quoteService';
 import { notifyProjectDesigner } from '../services/notificationService';
 import logger from '../config/logger';
+import { logRouteError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
@@ -171,6 +172,7 @@ router.get('/:portalToken', async (req: Request, res: Response) => {
     res.json(serializePortalProject(project));
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/portal.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -268,6 +270,7 @@ router.put('/:portalToken/shortlist/:itemId', portalWriteLimiter, async (req: Re
     res.json(updated);
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/portal.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -297,6 +300,7 @@ router.get('/:portalToken/messages', async (req: Request, res: Response) => {
     res.json(result);
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/portal.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -351,6 +355,7 @@ router.post('/:portalToken/messages', portalMessageLimiter, async (req: Request,
     res.status(201).json(message);
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/portal.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -369,6 +374,7 @@ router.put('/:portalToken/messages/read', async (req: Request, res: Response) =>
     res.json({ markedRead: count });
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/portal.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -384,6 +390,7 @@ router.get('/:portalToken/messages/unread', async (req: Request, res: Response) 
     res.json({ unread: count });
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/portal.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -399,6 +406,7 @@ router.get('/:portalToken/presence', async (req: Request, res: Response) => {
     res.json(presence);
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/portal.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -441,6 +449,7 @@ router.get('/:portalToken/quotes', async (req: Request, res: Response) => {
     })));
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/portal.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -498,6 +507,7 @@ router.get('/:portalToken/quotes/:quoteId', async (req: Request, res: Response) 
     });
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/portal.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -545,6 +555,7 @@ router.put('/:portalToken/quotes/:quoteId', portalWriteLimiter, async (req: Requ
       res.status(400).json({ error: err.message }); return;
     }
     logger.error('portal route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/portal.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -582,6 +593,7 @@ router.get('/:portalToken/quotes/:quoteId/comments', async (req: Request, res: R
     res.json({ comments, hasMore: result.hasMore });
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/portal.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -658,6 +670,7 @@ router.post('/:portalToken/quotes/:quoteId/comments', portalMessageLimiter, asyn
     });
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/portal.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -684,6 +697,7 @@ router.put('/:portalToken/quotes/:quoteId/comments/read', async (req: Request, r
     res.json({ markedRead: count });
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/portal.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });

@@ -493,6 +493,25 @@ model AuditLog {
   createdAt  DateTime  @default(now())
 }
 
+model ErrorLog {
+  id            String   @id @default(uuid())
+  fileName      String
+  routePath     String?
+  httpMethod    String?
+  errorMessage  String
+  errorStack    String?  @db.Text
+  errorPayload  Json?
+  inputPayload  Json?
+  designerId    String?
+  severity      String   @default("error")
+  createdAt     DateTime @default(now())
+
+  @@index([fileName, createdAt])
+  @@index([severity, createdAt])
+  @@index([designerId, createdAt])
+  @@index([createdAt])
+}
+
 model FurnitureCategory {
   id        String  @id @default(uuid())
   name      String  @unique

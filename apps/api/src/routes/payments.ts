@@ -5,6 +5,7 @@ import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { config } from '../config';
 import logger from '../config/logger';
+import { logRouteError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
@@ -161,6 +162,7 @@ router.post('/create-checkout-session', async (req: AuthRequest, res: Response) 
     res.json({ sessionUrl: session.url });
   } catch (err) {
     logger.error('payments route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/payments.ts', err, req);
     res.status(500).json({ error: 'Failed to create checkout session. Please try again.' });
   }
 });
@@ -180,6 +182,7 @@ router.get('/order/:orderId', async (req: AuthRequest, res: Response) => {
     })));
   } catch (err) {
     logger.error('payments route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/payments.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });

@@ -120,8 +120,9 @@ function ChatWidget({ portalToken, clientName, designerName, onRegisterSSE }: {
   const loadMessages = useCallback(async () => {
     const r = await api.getPortalMessages(portalToken);
     if (r.data) {
-      setMessages(r.data);
-      const unreadCount = r.data.filter((m) => m.senderType === 'designer' && !m.readAt).length;
+      const msgs = Array.isArray(r.data) ? r.data : r.data.messages ?? [];
+      setMessages(msgs);
+      const unreadCount = msgs.filter((m: ChatMessage) => m.senderType === 'designer' && !m.readAt).length;
       setUnread(unreadCount);
     }
   }, [portalToken]);

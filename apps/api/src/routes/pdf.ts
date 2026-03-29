@@ -3,6 +3,7 @@ import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { generateProjectPdf, generateRoomPdf } from '../services/pdfGenerator';
 import logger from '../config/logger';
+import { logRouteError } from '../services/errorLogger';
 import { writeAuditLog } from '../services/auditLog';
 
 const router = Router();
@@ -137,6 +138,7 @@ router.get('/:id/pdf', async (req: AuthRequest, res: Response) => {
     });
   } catch (err) {
     logger.error('PDF generation error', { err, path: req.path });
+    logRouteError('routes/pdf.ts', err, req);
     res.status(500).json({ error: 'Failed to generate PDF.' });
   }
 });
@@ -223,6 +225,7 @@ router.get('/:id/rooms/:roomId/pdf', async (req: AuthRequest, res: Response) => 
     });
   } catch (err) {
     logger.error('Room PDF generation error', { err, path: req.path });
+    logRouteError('routes/pdf.ts', err, req);
     res.status(500).json({ error: 'Failed to generate PDF.' });
   }
 });

@@ -6,6 +6,7 @@ import { writeAuditLog } from '../services/auditLog';
 import { emitProjectEvent } from '../services/projectEvents';
 import { splitOrderByBrand } from '../services/orderSplitter';
 import logger from '../config/logger';
+import { logRouteError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
@@ -130,6 +131,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     })));
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/orders.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -190,6 +192,7 @@ router.put('/:orderId/brand-pos/:poId/status', async (req: AuthRequest, res: Res
     res.json({ ...updated, subtotal: toNum(updated.subtotal) });
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/orders.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -300,6 +303,7 @@ router.post('/projects/:projectId/shortlist', async (req: AuthRequest, res: Resp
     }
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/orders.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -361,6 +365,7 @@ router.get('/projects/:projectId/shortlist', async (req: AuthRequest, res: Respo
     res.json(items.map(serializeShortlistItem));
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/orders.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -480,6 +485,7 @@ router.put('/projects/:projectId/shortlist/:itemId', async (req: AuthRequest, re
     res.json(serializeShortlistItem(item));
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/orders.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -531,6 +537,7 @@ router.delete('/projects/:projectId/shortlist/:itemId', async (req: AuthRequest,
     res.json({ message: 'Item removed from shortlist.' });
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/orders.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -576,6 +583,7 @@ router.get('/projects/:projectId/cart', async (req: AuthRequest, res: Response) 
     });
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/orders.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -666,6 +674,7 @@ router.post('/projects/:projectId/cart', async (req: AuthRequest, res: Response)
     res.status(201).json(serializeCartItem(cartItem));
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/orders.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -715,6 +724,7 @@ router.put('/projects/:projectId/cart/:itemId', async (req: AuthRequest, res: Re
     res.json(serializeCartItem(item));
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/orders.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -752,6 +762,7 @@ router.delete('/projects/:projectId/cart/:itemId', async (req: AuthRequest, res:
     res.json({ message: 'Item removed from cart.' });
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/orders.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -894,6 +905,7 @@ router.post('/projects/:projectId/orders', async (req: AuthRequest, res: Respons
     res.status(201).json(serializeOrder(order));
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/orders.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -920,6 +932,7 @@ router.get('/projects/:projectId/orders', async (req: AuthRequest, res: Response
     })));
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/orders.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -958,6 +971,7 @@ router.get('/projects/:projectId/orders/:orderId', async (req: AuthRequest, res:
     res.json(serializeOrder(order));
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/orders.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });

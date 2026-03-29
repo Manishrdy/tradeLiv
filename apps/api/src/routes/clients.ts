@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import logger from '../config/logger';
+import { logRouteError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
@@ -37,6 +38,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     res.json(clients);
   } catch (err) {
     logger.error('clients route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/clients.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -65,6 +67,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     res.status(201).json(client);
   } catch (err) {
     logger.error('clients route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/clients.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -89,6 +92,7 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
     res.json(client);
   } catch (err) {
     logger.error('clients route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/clients.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -125,6 +129,7 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
     res.json(client);
   } catch (err) {
     logger.error('clients route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/clients.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -151,6 +156,7 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
     res.json({ message: 'Client deleted.' });
   } catch (err) {
     logger.error('clients route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/clients.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });

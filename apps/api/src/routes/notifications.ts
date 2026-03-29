@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { getNotifications, markRead, markAllRead, getUnreadCount } from '../services/notificationService';
 import { registerUuidValidation } from '../middleware/validateParams';
+import { logRouteError } from '../services/errorLogger';
 
 const router = Router();
 router.use(requireAuth, requireRole('designer'));
@@ -18,6 +19,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     });
     res.json(notifications);
   } catch (err: any) {
+    logRouteError('routes/notifications.ts', err, req);
     res.status(500).json({ error: 'Failed to fetch notifications' });
   }
 });
@@ -28,6 +30,7 @@ router.get('/unread', async (req: AuthRequest, res: Response) => {
     const count = await getUnreadCount(req.user!.id);
     res.json({ count });
   } catch (err: any) {
+    logRouteError('routes/notifications.ts', err, req);
     res.status(500).json({ error: 'Failed to fetch unread count' });
   }
 });
@@ -38,6 +41,7 @@ router.put('/read-all', async (req: AuthRequest, res: Response) => {
     const count = await markAllRead(req.user!.id);
     res.json({ marked: count });
   } catch (err: any) {
+    logRouteError('routes/notifications.ts', err, req);
     res.status(500).json({ error: 'Failed to mark notifications read' });
   }
 });
@@ -52,6 +56,7 @@ router.put('/:id/read', async (req: AuthRequest, res: Response) => {
     }
     res.json({ success: true });
   } catch (err: any) {
+    logRouteError('routes/notifications.ts', err, req);
     res.status(500).json({ error: 'Failed to mark notification read' });
   }
 });

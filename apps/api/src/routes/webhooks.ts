@@ -4,6 +4,7 @@ import { prisma } from '@furnlo/db';
 import { config } from '../config';
 import { writeAuditLog } from '../services/auditLog';
 import logger from '../config/logger';
+import { logRouteError } from '../services/errorLogger';
 
 let _stripe: Stripe | null = null;
 function getStripe(): Stripe {
@@ -23,6 +24,7 @@ export async function stripeWebhookHandler(req: Request, res: Response) {
     event = getStripe().webhooks.constructEvent(req.body, sig, config.stripeWebhookSecret);
   } catch (err: any) {
     logger.warn('Stripe webhook signature verification failed', { error: err.message });
+    logRouteError('routes/webhooks.ts', err, req);
     res.status(400).json({ error: `Webhook signature verification failed.` });
     return;
   }
@@ -95,6 +97,7 @@ export async function stripeWebhookHandler(req: Request, res: Response) {
     res.json({ received: true });
   } catch (err) {
     logger.error('Stripe webhook processing error', { err, eventType: event.type });
+    logRouteError('routes/webhooks.ts', err, req);
     res.status(500).json({ error: 'Webhook processing failed.' });
   }
 }

@@ -10,6 +10,7 @@ import {
   batchLimiter,
 } from '../services/catalogExtractor';
 import logger from '../config/logger';
+import { logRouteError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
@@ -349,6 +350,7 @@ router.get('/products', async (req: AuthRequest, res: Response) => {
     });
   } catch (err) {
     logger.error('catalog route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/catalog.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -367,6 +369,7 @@ router.get('/products/categories', async (req: AuthRequest, res: Response) => {
     res.json(categories.map((c) => c.category).filter(Boolean));
   } catch (err) {
     logger.error('catalog route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/catalog.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -390,6 +393,7 @@ router.get('/products/:id', async (req: AuthRequest, res: Response) => {
     res.json(serializeProduct(product));
   } catch (err) {
     logger.error('catalog route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/catalog.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -464,6 +468,7 @@ router.post('/products', async (req: AuthRequest, res: Response) => {
     res.status(201).json(serializeProduct(product));
   } catch (err) {
     logger.error('catalog route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/catalog.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -512,6 +517,7 @@ router.put('/products/:id', async (req: AuthRequest, res: Response) => {
     res.json(serializeProduct(product));
   } catch (err) {
     logger.error('catalog route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/catalog.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -545,6 +551,7 @@ router.put('/products/:id/deactivate', async (req: AuthRequest, res: Response) =
     res.json(serializeProduct(product));
   } catch (err) {
     logger.error('catalog route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/catalog.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -588,6 +595,7 @@ router.delete('/products/:id', async (req: AuthRequest, res: Response) => {
     res.json({ message: 'Product deleted.' });
   } catch (err) {
     logger.error('catalog route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/catalog.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -612,6 +620,7 @@ router.put('/products/:id/reactivate', async (req: AuthRequest, res: Response) =
     res.json(serializeProduct(product));
   } catch (err) {
     logger.error('catalog route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/catalog.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
 });
@@ -656,6 +665,7 @@ router.post('/extract', async (req: AuthRequest, res: Response) => {
       }
     } catch (err) {
       logger.error('catalog extract duplicate check error', { err });
+      logRouteError('routes/catalog.ts', err, req);
     }
   }
 
@@ -667,6 +677,7 @@ router.post('/extract', async (req: AuthRequest, res: Response) => {
     res.json(result);
   } catch (err: any) {
     logger.error('catalog extract error', { err, sourceUrl: parsed.data.sourceUrl });
+    logRouteError('routes/catalog.ts', err, req);
     const errRes = extractionErrorResponse(err, parsed.data.sourceUrl);
     res.status(errRes.status).json(errRes.body);
   }
