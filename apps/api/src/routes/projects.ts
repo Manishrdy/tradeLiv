@@ -8,9 +8,11 @@ import { writeAuditLog } from '../services/auditLog';
 import { emitProjectEvent } from '../services/projectEvents';
 import { createMessage, getMessages, markMessagesRead, getUnreadCount, getProjectPresence } from '../services/messageService';
 import logger from '../config/logger';
+import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
 router.use(requireAuth, requireRole('designer'));
+registerUuidValidation(router);
 
 /* ─── Validation schemas ────────────────────────────── */
 
@@ -99,8 +101,14 @@ function serializeProject(p: any) {
   };
 }
 
-async function getOwnedProject(projectId: string, designerId: string) {
-  return prisma.project.findFirst({ where: { id: projectId, designerId } });
+async function getOwnedProject(projectId: string, designerId: string, includeArchived = false) {
+  return prisma.project.findFirst({
+    where: {
+      id: projectId,
+      designerId,
+      ...(!includeArchived ? { archivedAt: null } : {}),
+    },
+  });
 }
 
 /* ─── GET /api/projects/stats ───────────────────────── */
@@ -124,9 +132,12 @@ router.get('/stats', async (req: AuthRequest, res: Response) => {
 /* ─── GET /api/projects ─────────────────────────────── */
 
 router.get('/', async (req: AuthRequest, res: Response) => {
-  const { status } = req.query;
+  const { status, includeArchived } = req.query;
   try {
     const where: Record<string, unknown> = { designerId: req.user!.id };
+    if (includeArchived !== 'true') {
+      where.archivedAt = null;
+    }
     if (status && typeof status === 'string') where.status = status;
 
     const projects = await prisma.project.findMany({
@@ -140,7 +151,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
         budgetMin: true,
         budgetMax: true,
         imageUrl: true,
-        imageData: true,
+        // imageData excluded — use GET /api/projects/:id/image/thumbnail instead
         imageMimeType: true,
         createdAt: true,
         updatedAt: true,
@@ -149,7 +160,11 @@ router.get('/', async (req: AuthRequest, res: Response) => {
       },
     });
 
-    res.json(projects.map(serializeProject));
+    res.json(projects.map((p) => ({
+      ...serializeProject(p),
+      // Signal to frontend whether a binary image exists (use thumbnail endpoint to load it)
+      hasImage: !!p.imageMimeType,
+    })));
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
     res.status(500).json({ error: 'An error occurred. Please try again.' });
@@ -245,6 +260,14 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
 
 /* ─── PUT /api/projects/:id ─────────────────────────── */
 
+// State machine: each status maps to the list of statuses it can transition to
+const PROJECT_STATUS_TRANSITIONS: Record<string, string[]> = {
+  draft:   ['active'],
+  active:  ['ordered', 'closed'],
+  ordered: ['closed'],
+  closed:  ['active'],  // allow reopening
+};
+
 router.put('/:id', async (req: AuthRequest, res: Response) => {
   const parsed = projectUpdateSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -257,6 +280,17 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
     if (!existing) {
       res.status(404).json({ error: 'Project not found.' });
       return;
+    }
+
+    // Enforce valid status transitions
+    if (parsed.data.status && parsed.data.status !== existing.status) {
+      const allowed = PROJECT_STATUS_TRANSITIONS[existing.status] ?? [];
+      if (!allowed.includes(parsed.data.status)) {
+        res.status(400).json({
+          error: `Cannot change project status from "${existing.status}" to "${parsed.data.status}". Allowed: ${allowed.join(', ')}.`,
+        });
+        return;
+      }
     }
 
     const project = await prisma.project.update({
@@ -492,7 +526,9 @@ router.delete('/:id/rooms/:roomId', async (req: AuthRequest, res: Response) => {
 /* ─── GET /api/projects/:id/messages ───────────────── */
 
 const messageQuerySchema = z.object({
-  after: z.string().datetime().optional(),
+  after: z.string().optional(),   // cursor ID: fetch newer messages
+  before: z.string().optional(),  // cursor ID: fetch older messages (lazy load)
+  limit: z.string().optional(),
   contextType: z.string().optional(),
   contextId: z.string().optional(),
 });
@@ -503,9 +539,15 @@ router.get('/:id/messages', async (req: AuthRequest, res: Response) => {
     if (!project) { res.status(404).json({ error: 'Project not found.' }); return; }
 
     const parsed = messageQuerySchema.safeParse(req.query);
-    const { after, contextType, contextId } = parsed.success ? parsed.data : {};
-    const messages = await getMessages(project.id, { after, contextType, contextId });
-    res.json(messages);
+    const { after, before, limit, contextType, contextId } = parsed.success ? parsed.data : {};
+    const result = await getMessages(project.id, {
+      after,
+      before,
+      limit: limit ? parseInt(limit, 10) : undefined,
+      contextType,
+      contextId,
+    });
+    res.json(result);
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
     res.status(500).json({ error: 'An error occurred. Please try again.' });
@@ -714,6 +756,41 @@ router.put('/:id/image-url', async (req: AuthRequest, res: Response) => {
   }
 });
 
+/* ─── GET /api/projects/:id/image/thumbnail ──────── */
+// Serves the binary image directly — use as <img src="/api/projects/:id/image/thumbnail">
+// Avoids embedding base64 in JSON payloads. Supports browser caching.
+
+router.get('/:id/image/thumbnail', async (req: AuthRequest, res: Response) => {
+  try {
+    const project = await prisma.project.findFirst({
+      where: { id: req.params.id, designerId: req.user!.id },
+      select: { imageData: true, imageMimeType: true, updatedAt: true },
+    });
+
+    if (!project || !project.imageData || !project.imageMimeType) {
+      res.status(404).json({ error: 'No image found.' });
+      return;
+    }
+
+    // Cache for 1 hour, revalidate after — project images don't change often
+    res.setHeader('Content-Type', project.imageMimeType);
+    res.setHeader('Cache-Control', 'private, max-age=3600, must-revalidate');
+    res.setHeader('ETag', `"${project.updatedAt.getTime()}"`);
+
+    // Support conditional requests (304 Not Modified)
+    const ifNoneMatch = req.headers['if-none-match'];
+    if (ifNoneMatch === `"${project.updatedAt.getTime()}"`) {
+      res.status(304).end();
+      return;
+    }
+
+    res.send(Buffer.from(project.imageData));
+  } catch (err) {
+    logger.error('projects route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
 /* ─── DELETE /api/projects/:id/image ─────────────── */
 
 router.delete('/:id/image', async (req: AuthRequest, res: Response) => {
@@ -738,6 +815,97 @@ router.delete('/:id/image', async (req: AuthRequest, res: Response) => {
     });
 
     res.json(serializeProject(project));
+  } catch (err) {
+    logger.error('projects route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── DELETE /api/projects/:id (soft delete) ──────── */
+
+router.delete('/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const existing = await getOwnedProject(req.params.id, req.user!.id);
+    if (!existing) {
+      res.status(404).json({ error: 'Project not found.' });
+      return;
+    }
+
+    if (existing.archivedAt) {
+      res.status(400).json({ error: 'Project is already archived.' });
+      return;
+    }
+
+    // Block archiving projects with active orders
+    const activeOrderCount = await prisma.order.count({
+      where: {
+        projectId: req.params.id,
+        status: { in: ['draft', 'submitted', 'paid', 'split_to_brands'] },
+      },
+    });
+    if (activeOrderCount > 0) {
+      res.status(400).json({
+        error: `Cannot archive a project with ${activeOrderCount} active order(s). Close or cancel all orders first.`,
+      });
+      return;
+    }
+
+    await prisma.project.update({
+      where: { id: req.params.id },
+      data: { archivedAt: new Date() },
+    });
+
+    writeAuditLog({
+      actorType: 'designer',
+      actorId: req.user!.id,
+      action: 'project_archived',
+      entityType: 'project',
+      entityId: req.params.id,
+      payload: { projectName: existing.name },
+    });
+
+    res.json({ message: 'Project archived.' });
+  } catch (err) {
+    logger.error('projects route error', { err, path: req.path, method: req.method });
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── PUT /api/projects/:id/restore ───────────────── */
+
+router.put('/:id/restore', async (req: AuthRequest, res: Response) => {
+  try {
+    const project = await prisma.project.findFirst({
+      where: { id: req.params.id, designerId: req.user!.id },
+    });
+    if (!project) {
+      res.status(404).json({ error: 'Project not found.' });
+      return;
+    }
+    if (!project.archivedAt) {
+      res.status(400).json({ error: 'Project is not archived.' });
+      return;
+    }
+
+    const restored = await prisma.project.update({
+      where: { id: req.params.id },
+      data: { archivedAt: null },
+      include: {
+        client: { select: { id: true, name: true, email: true } },
+        _count: { select: { rooms: true, shortlistItems: true, orders: true } },
+      },
+    });
+
+    writeAuditLog({
+      actorType: 'designer',
+      actorId: req.user!.id,
+      action: 'project_restored',
+      entityType: 'project',
+      entityId: req.params.id,
+      payload: { projectName: project.name },
+    });
+
+    res.json(serializeProject(restored));
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
     res.status(500).json({ error: 'An error occurred. Please try again.' });

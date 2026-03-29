@@ -5,6 +5,18 @@ import { writeAuditLog } from './auditLog';
 import { notifyProjectDesigner } from './notificationService';
 import logger from '../config/logger';
 
+/* ─── Errors ───────────────────────────────────────────── */
+
+export class QuoteDraftExistsError extends Error {
+  existingQuoteId: string;
+  existingTitle: string | null;
+  constructor(quoteId: string, title: string | null) {
+    super('A draft quote already exists for this project. Edit the existing quote or provide specific item IDs to create a separate quote.');
+    this.existingQuoteId = quoteId;
+    this.existingTitle = title;
+  }
+}
+
 /* ─── Types ────────────────────────────────────────────── */
 
 export interface FeeConfig {
@@ -61,6 +73,18 @@ function calcLineTotal(unitPrice: number, quantity: number, adjustmentValue?: nu
 
 export async function createQuoteFromShortlist(payload: CreateQuotePayload) {
   const { projectId, designerId, title, notes, itemIds, feeConfig } = payload;
+
+  // Guard: warn if a draft or revision-pending quote already exists for this project
+  const existingDraft = await prisma.quote.findFirst({
+    where: { projectId, designerId, status: { in: ['draft', 'revision_requested'] } },
+    select: { id: true, status: true, title: true, createdAt: true },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (existingDraft && !payload.itemIds?.length) {
+    // When no specific itemIds are given (i.e. "quote all approved items"),
+    // it's almost certainly a duplicate — block and point to the existing one
+    throw new QuoteDraftExistsError(existingDraft.id, existingDraft.title);
+  }
 
   // Fetch designer fee defaults
   const designer = await prisma.designer.findUnique({

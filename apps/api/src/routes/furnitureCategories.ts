@@ -3,8 +3,10 @@ import { z } from 'zod';
 import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import logger from '../config/logger';
+import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
+registerUuidValidation(router);
 
 /* ─── GET /api/furniture-categories ─────────────────── */
 /* Returns active categories for designers (authenticated) */
@@ -26,6 +28,7 @@ router.get('/', requireAuth, requireRole('designer'), async (_req: AuthRequest, 
 
 const adminRouter = Router();
 adminRouter.use(requireAuth, requireRole('admin'));
+registerUuidValidation(adminRouter);
 
 const categorySchema = z.object({
   name: z.string().min(1, 'Name is required').max(80),

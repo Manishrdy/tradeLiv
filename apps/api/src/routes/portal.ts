@@ -8,8 +8,10 @@ import { createMessage, getMessages, markMessagesRead, getUnreadCount, getProjec
 import { approveQuote, requestRevision, getQuoteDetail } from '../services/quoteService';
 import { notifyProjectDesigner } from '../services/notificationService';
 import logger from '../config/logger';
+import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
+registerUuidValidation(router);
 
 const portalWriteLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -287,10 +289,12 @@ router.get('/:portalToken/messages', async (req: Request, res: Response) => {
     if (!project) { res.status(404).json({ error: 'Not found' }); return; }
 
     const after = typeof req.query.after === 'string' ? req.query.after : undefined;
+    const before = typeof req.query.before === 'string' ? req.query.before : undefined;
+    const limit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : undefined;
     const contextType = typeof req.query.contextType === 'string' ? req.query.contextType : undefined;
     const contextId = typeof req.query.contextId === 'string' ? req.query.contextId : undefined;
-    const messages = await getMessages(project.id, { after, contextType, contextId });
-    res.json(messages);
+    const result = await getMessages(project.id, { after, before, limit, contextType, contextId });
+    res.json(result);
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
     res.status(500).json({ error: 'An error occurred. Please try again.' });
@@ -557,12 +561,14 @@ router.get('/:portalToken/quotes/:quoteId/comments', async (req: Request, res: R
     if (!quote || quote.status === 'draft') { res.status(404).json({ error: 'Quote not found.' }); return; }
 
     const after = typeof req.query.after === 'string' ? req.query.after : undefined;
-    const messages = await getMessages(project.id, {
+    const before = typeof req.query.before === 'string' ? req.query.before : undefined;
+    const result = await getMessages(project.id, {
       after,
+      before,
       contextType: 'quote',
       contextId: req.params.quoteId,
     });
-    const comments = messages.map((m) => ({
+    const comments = result.messages.map((m) => ({
       id: m.id,
       quoteId: req.params.quoteId,
       senderType: m.senderType,
@@ -573,7 +579,7 @@ router.get('/:portalToken/quotes/:quoteId/comments', async (req: Request, res: R
       readAt: m.readAt,
       createdAt: m.createdAt,
     }));
-    res.json(comments);
+    res.json({ comments, hasMore: result.hasMore });
   } catch (err) {
     logger.error('portal route error', { err, path: req.path, method: req.method });
     res.status(500).json({ error: 'An error occurred. Please try again.' });

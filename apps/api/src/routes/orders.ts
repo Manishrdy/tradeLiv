@@ -6,9 +6,11 @@ import { writeAuditLog } from '../services/auditLog';
 import { emitProjectEvent } from '../services/projectEvents';
 import { splitOrderByBrand } from '../services/orderSplitter';
 import logger from '../config/logger';
+import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
 router.use(requireAuth, requireRole('designer'));
+registerUuidValidation(router);
 
 /* ─── Validation schemas ────────────────────────────── */
 
@@ -138,6 +140,16 @@ const brandPoStatusSchema = z.object({
   status: z.enum(['sent', 'acknowledged', 'in_production', 'dispatched', 'delivered', 'cancelled']),
 });
 
+// State machine: each status maps to the list of statuses it can transition to
+const BRAND_PO_TRANSITIONS: Record<string, string[]> = {
+  sent:           ['acknowledged', 'cancelled'],
+  acknowledged:   ['in_production', 'cancelled'],
+  in_production:  ['dispatched', 'cancelled'],
+  dispatched:     ['delivered'],
+  delivered:      [],  // terminal
+  cancelled:      [],  // terminal
+};
+
 router.put('/:orderId/brand-pos/:poId/status', async (req: AuthRequest, res: Response) => {
   const parsed = brandPoStatusSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.errors[0].message }); return; }
@@ -152,6 +164,15 @@ router.put('/:orderId/brand-pos/:poId/status', async (req: AuthRequest, res: Res
       where: { id: req.params.poId, orderId: req.params.orderId },
     });
     if (!po) { res.status(404).json({ error: 'Brand PO not found.' }); return; }
+
+    // Enforce valid status transitions
+    const allowed = BRAND_PO_TRANSITIONS[po.status] ?? [];
+    if (!allowed.includes(parsed.data.status)) {
+      res.status(400).json({
+        error: `Cannot transition from "${po.status}" to "${parsed.data.status}". Allowed: ${allowed.length ? allowed.join(', ') : 'none (terminal status)'}.`,
+      });
+      return;
+    }
 
     const updated = await prisma.brandPurchaseOrder.update({
       where: { id: req.params.poId },
@@ -287,6 +308,7 @@ router.post('/projects/:projectId/shortlist', async (req: AuthRequest, res: Resp
 
 router.get('/projects/:projectId/shortlist', async (req: AuthRequest, res: Response) => {
   const roomId = req.query.roomId as string | undefined;
+  const status = req.query.status as string | undefined;
 
   try {
     const project = await getOwnedProject(req.params.projectId, req.user!.id);
@@ -298,6 +320,15 @@ router.get('/projects/:projectId/shortlist', async (req: AuthRequest, res: Respo
     const where: any = { projectId: req.params.projectId };
     if (roomId) {
       where.roomId = roomId;
+    }
+    if (status) {
+      // Support comma-separated statuses: ?status=suggested,approved
+      const statuses = status.split(',').map((s) => s.trim()).filter(Boolean);
+      const validStatuses = ['suggested', 'approved', 'rejected', 'added_to_cart', 'ordered'];
+      const filtered = statuses.filter((s) => validStatuses.includes(s));
+      if (filtered.length > 0) {
+        where.status = filtered.length === 1 ? filtered[0] : { in: filtered };
+      }
     }
 
     const items = await prisma.shortlistItem.findMany({
@@ -654,14 +685,26 @@ router.put('/projects/:projectId/cart/:itemId', async (req: AuthRequest, res: Re
     });
     if (!existing) { res.status(404).json({ error: 'Cart item not found.' }); return; }
 
-    const item = await prisma.cartItem.update({
-      where: { id: req.params.itemId },
-      data: { quantity: parsed.data.quantity },
-      include: {
-        product: { select: productSelect },
-        room: { select: { id: true, name: true } },
-      },
-    });
+    const [item] = await prisma.$transaction([
+      prisma.cartItem.update({
+        where: { id: req.params.itemId },
+        data: { quantity: parsed.data.quantity },
+        include: {
+          product: { select: productSelect },
+          room: { select: { id: true, name: true } },
+        },
+      }),
+      // Keep shortlist quantity in sync so PDFs and audit trails stay consistent
+      prisma.shortlistItem.updateMany({
+        where: {
+          projectId: req.params.projectId,
+          productId: existing.productId,
+          roomId: existing.roomId,
+          status: 'added_to_cart',
+        },
+        data: { quantity: parsed.data.quantity },
+      }),
+    ]);
 
     writeAuditLog({
       actorType: 'designer', actorId: req.user!.id,

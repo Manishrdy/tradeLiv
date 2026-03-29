@@ -10,9 +10,11 @@ import {
   batchLimiter,
 } from '../services/catalogExtractor';
 import logger from '../config/logger';
+import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
 router.use(requireAuth, requireRole('designer'));
+registerUuidValidation(router);
 
 /* ─── Validation schemas ────────────────────────────── */
 
@@ -108,6 +110,24 @@ const extractRateLimit = new Map<string, number>();
 const batchExtractRateLimit = new Map<string, number>();
 const RATE_LIMIT_MS = 30_000;
 
+// Periodic cleanup: evict expired entries every 2 minutes
+const RATE_LIMIT_CLEANUP_INTERVAL_MS = 2 * 60 * 1000;
+
+function evictExpiredRateLimits(map: Map<string, number>) {
+  const cutoff = Date.now() - RATE_LIMIT_MS;
+  for (const [key, timestamp] of map) {
+    if (timestamp < cutoff) {
+      map.delete(key);
+    }
+  }
+}
+
+const rateLimitCleanupTimer = setInterval(() => {
+  evictExpiredRateLimits(extractRateLimit);
+  evictExpiredRateLimits(batchExtractRateLimit);
+}, RATE_LIMIT_CLEANUP_INTERVAL_MS);
+rateLimitCleanupTimer.unref(); // don't prevent process exit
+
 function checkRateLimit(map: Map<string, number>, designerId: string): { allowed: boolean; retryAfter?: number } {
   const last = map.get(designerId);
   if (last != null) {
@@ -115,7 +135,6 @@ function checkRateLimit(map: Map<string, number>, designerId: string): { allowed
     if (elapsed < RATE_LIMIT_MS) {
       return { allowed: false, retryAfter: Math.ceil((RATE_LIMIT_MS - elapsed) / 1000) };
     }
-    // Stale entry — evict to prevent unbounded Map growth
     map.delete(designerId);
   }
   return { allowed: true };

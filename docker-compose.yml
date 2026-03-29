@@ -21,7 +21,9 @@ services:
       - "4000:4000"
     environment:
       - NODE_ENV=development
-      - DATABASE_URL=${DATABASE_URL}
+      - USE_DB=${USE_DB:-dev}
+      - DEV_DATABASE_URL=${DEV_DATABASE_URL}
+      - PROD_DATABASE_URL=${PROD_DATABASE_URL}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_ACCESS_EXPIRES_IN=${JWT_ACCESS_EXPIRES_IN:-15m}
       - AUTH_COOKIE_SAME_SITE=${AUTH_COOKIE_SAME_SITE:-}

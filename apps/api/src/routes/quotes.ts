@@ -4,6 +4,7 @@ import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import {
   createQuoteFromShortlist,
+  QuoteDraftExistsError,
   updateQuote,
   sendQuote,
   convertQuoteToOrder,
@@ -16,9 +17,11 @@ import {
 import { createMessage, getMessages, markMessagesRead } from '../services/messageService';
 import { emitProjectEvent } from '../services/projectEvents';
 import logger from '../config/logger';
+import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
 router.use(requireAuth, requireRole('designer'));
+registerUuidValidation(router);
 
 /* ─── Helpers ───────────────────────────────────────── */
 
@@ -126,6 +129,14 @@ router.post('/projects/:projectId', async (req: AuthRequest, res: Response) => {
 
     res.status(201).json(serializeQuote(quote));
   } catch (err: any) {
+    if (err instanceof QuoteDraftExistsError) {
+      res.status(409).json({
+        error: err.message,
+        existingQuoteId: err.existingQuoteId,
+        existingTitle: err.existingTitle,
+      });
+      return;
+    }
     if (err.message?.includes('No eligible')) {
       res.status(400).json({ error: err.message }); return;
     }
@@ -282,13 +293,15 @@ router.get('/:quoteId/comments', async (req: AuthRequest, res: Response) => {
     if (!quote) { res.status(404).json({ error: 'Quote not found.' }); return; }
 
     const after = typeof req.query.after === 'string' ? req.query.after : undefined;
-    const messages = await getMessages(quote.projectId, {
+    const before = typeof req.query.before === 'string' ? req.query.before : undefined;
+    const result = await getMessages(quote.projectId, {
       after,
+      before,
       contextType: 'quote',
       contextId: req.params.quoteId,
     });
     // Map to legacy QuoteComment shape for backward compat
-    const comments = messages.map((m) => ({
+    const comments = result.messages.map((m) => ({
       id: m.id,
       quoteId: req.params.quoteId,
       senderType: m.senderType,
@@ -299,7 +312,7 @@ router.get('/:quoteId/comments', async (req: AuthRequest, res: Response) => {
       readAt: m.readAt,
       createdAt: m.createdAt,
     }));
-    res.json(comments);
+    res.json({ comments, hasMore: result.hasMore });
   } catch (err) {
     logger.error('quotes route error', { err, path: req.path, method: req.method });
     res.status(500).json({ error: 'An error occurred. Please try again.' });

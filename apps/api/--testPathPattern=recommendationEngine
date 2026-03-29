@@ -1,0 +1,427 @@
+FAIL src/__tests__/services/recommendationEngine.test.ts
+  generateRecommendation — success
+    ✕ returns parsed recommendation from Claude response (42 ms)
+    ✕ handles response wrapped in markdown code fences (6 ms)
+    ✕ handles missing optional fields gracefully (5 ms)
+  generateRecommendation — input building
+    ✕ sends room context, client requirements, and products to Claude (6 ms)
+    ✕ handles null room gracefully (4 ms)
+    ✕ truncates features to max 5 items (5 ms)
+    ✕ uses system prompt with correct role instructions (5 ms)
+  generateRecommendation — errors
+    ✕ throws when Claude returns invalid JSON (4 ms)
+    ✕ throws when Claude API call fails (5 ms)
+    ✕ throws with API error details (12 ms)
+
+  ● generateRecommendation — success › returns parsed recommendation from Claude response
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "Haven Sofa"
+    Received: null
+
+      90 |
+      91 |     const result = await gen(BASIC_INPUT);
+    > 92 |     expect(result.recommendedProduct).toBe('Haven Sofa');
+         |                                       ^
+      93 |     expect(result.recommendation).toContain('Haven Sofa');
+      94 |     expect(result.tradeOffs).toHaveLength(2);
+      95 |     expect(result.internalNotes).toHaveLength(1);
+
+      at Object.<anonymous> (src/__tests__/services/recommendationEngine.test.ts:92:39)
+
+  ● generateRecommendation — success › handles response wrapped in markdown code fences
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "Harmony Sofa"
+    Received: null
+
+      109 |
+      110 |     const result = await gen(BASIC_INPUT);
+    > 111 |     expect(result.recommendedProduct).toBe('Harmony Sofa');
+          |                                       ^
+      112 |   });
+      113 |
+      114 |   it('handles missing optional fields gracefully', async () => {
+
+      at Object.<anonymous> (src/__tests__/services/recommendationEngine.test.ts:111:39)
+
+  ● generateRecommendation — success › handles missing optional fields gracefully
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "Both products are suitable."
+    Received: ""
+
+      124 |     const result = await gen(BASIC_INPUT);
+      125 |     expect(result.recommendedProduct).toBeNull();
+    > 126 |     expect(result.recommendation).toBe('Both products are suitable.');
+          |                                   ^
+      127 |     expect(result.internalNotes).toEqual([]);
+      128 |   });
+      129 | });
+
+      at Object.<anonymous> (src/__tests__/services/recommendationEngine.test.ts:126:35)
+
+  ● generateRecommendation — input building › sends room context, client requirements, and products to Claude
+
+    expect(jest.fn()).toHaveBeenCalledTimes(expected)
+
+    Expected number of calls: 1
+    Received number of calls: 0
+
+      146 |     await gen(BASIC_INPUT);
+      147 |
+    > 148 |     expect(mockCreate).toHaveBeenCalledTimes(1);
+          |                        ^
+      149 |     const callArgs = mockCreate.mock.calls[0][0];
+      150 |
+      151 |     // Check the user message contains our data
+
+      at Object.<anonymous> (src/__tests__/services/recommendationEngine.test.ts:148:24)
+
+  ● generateRecommendation — input building › handles null room gracefully
+
+    TypeError: Cannot read properties of undefined (reading '0')
+
+      182 |     await gen(input);
+      183 |
+    > 184 |     const userMessage = JSON.parse(mockCreate.mock.calls[0][0].messages[0].content);
+          |                                                            ^
+      185 |     expect(userMessage.room).toBeUndefined();
+      186 |     expect(userMessage.client_requirements).toBeUndefined();
+      187 |     expect(userMessage.compared_products).toHaveLength(1);
+
+      at Object.<anonymous> (src/__tests__/services/recommendationEngine.test.ts:184:60)
+
+  ● generateRecommendation — input building › truncates features to max 5 items
+
+    TypeError: Cannot read properties of undefined (reading '0')
+
+      223 |     await gen(input);
+      224 |
+    > 225 |     const userMessage = JSON.parse(mockCreate.mock.calls[0][0].messages[0].content);
+          |                                                            ^
+      226 |     expect(userMessage.compared_products[0].features).toHaveLength(5);
+      227 |     expect(userMessage.compared_products[0].features).toEqual(['F1', 'F2', 'F3', 'F4', 'F5']);
+      228 |   });
+
+      at Object.<anonymous> (src/__tests__/services/recommendationEngine.test.ts:225:60)
+
+  ● generateRecommendation — input building › uses system prompt with correct role instructions
+
+    TypeError: Cannot read properties of undefined (reading '0')
+
+      240 |     await gen(BASIC_INPUT);
+      241 |
+    > 242 |     const callArgs = mockCreate.mock.calls[0][0];
+          |                                              ^
+      243 |     expect(callArgs.system).toContain('interior designer');
+      244 |     expect(callArgs.system).toContain('JSON');
+      245 |     expect(callArgs.max_tokens).toBe(1024);
+
+      at Object.<anonymous> (src/__tests__/services/recommendationEngine.test.ts:242:46)
+
+  ● generateRecommendation — errors › throws when Claude returns invalid JSON
+
+    expect(received).rejects.toThrow()
+
+    Received promise resolved instead of rejected
+    Resolved to value: {"internalNotes": [], "recommendation": "", "recommendedProduct": null, "tradeOffs": []}
+
+      258 |     const { generateRecommendation: gen } = require('../../services/recommendationEngine');
+      259 |
+    > 260 |     await expect(gen(BASIC_INPUT)).rejects.toThrow();
+          |           ^
+      261 |   });
+      262 |
+      263 |   it('throws when Claude API call fails', async () => {
+
+      at expect (../../node_modules/expect/build/index.js:113:15)
+      at Object.<anonymous> (src/__tests__/services/recommendationEngine.test.ts:260:11)
+
+  ● generateRecommendation — errors › throws when Claude API call fails
+
+    expect(received).rejects.toThrow()
+
+    Received promise resolved instead of rejected
+    Resolved to value: {"internalNotes": [], "recommendation": "", "recommendedProduct": null, "tradeOffs": []}
+
+      271 |     const { generateRecommendation: gen } = require('../../services/recommendationEngine');
+      272 |
+    > 273 |     await expect(gen(BASIC_INPUT)).rejects.toThrow('Rate limited');
+          |           ^
+      274 |   });
+      275 |
+      276 |   it('throws with API error details', async () => {
+
+      at expect (../../node_modules/expect/build/index.js:113:15)
+      at Object.<anonymous> (src/__tests__/services/recommendationEngine.test.ts:273:11)
+
+  ● generateRecommendation — errors › throws with API error details
+
+    expect(received).rejects.toThrow()
+
+    Received promise resolved instead of rejected
+    Resolved to value: {"internalNotes": [], "recommendation": "", "recommendedProduct": null, "tradeOffs": []}
+
+      288 |     const { generateRecommendation: gen } = require('../../services/recommendationEngine');
+      289 |
+    > 290 |     await expect(gen(BASIC_INPUT)).rejects.toThrow('overloaded_error');
+          |           ^
+      291 |   });
+      292 | });
+      293 |
+
+      at expect (../../node_modules/expect/build/index.js:113:15)
+      at Object.<anonymous> (src/__tests__/services/recommendationEngine.test.ts:290:11)
+
+21:01:33 [[32minfo[39m] Purged 1 messages older than 30 days
+21:01:35 [[32minfo[39m] Purged 1 messages older than 30 days
+PASS src/__tests__/services/messageService.test.ts (12.505 s)
+  presence tracking
+    ✓ defaults to offline for unknown project (812 ms)
+    ✓ setOnline marks actor as online (101 ms)
+    ✓ setOffline marks actor as offline (98 ms)
+    ✓ touchPresence updates lastSeen and stays online (160 ms)
+    ✓ getProjectPresence returns both designer and client status (99 ms)
+    ✓ designer and client presence are independent (98 ms)
+  message CRUD
+    ✓ createMessage stores a message in the database (836 ms)
+    ✓ createMessage stores contextType and contextId (499 ms)
+    ✓ getMessages returns messages in chronological order (810 ms)
+    ✓ getMessages respects limit (1349 ms)
+    ✓ getMessages clamps limit to 100 (498 ms)
+    ✓ getMessages filters by contextType (743 ms)
+  read tracking
+    ✓ getUnreadCount counts unread messages from the other party (1065 ms)
+    ✓ markMessagesRead marks messages from the other party as read (978 ms)
+    ✓ markMessagesRead with context filter only marks matching messages (1009 ms)
+  purgeExpiredMessages
+    ✓ deletes messages older than TTL days (1033 ms)
+    ✓ does not delete messages within TTL (664 ms)
+    ✓ only deletes expired messages, keeps recent ones (911 ms)
+    ✓ returns 0 when no messages exist (508 ms)
+
+21:01:37 [[32minfo[39m] http {"method":"GET","path":"/me","status":200,"ip":"::ffff:127.0.0.1"}
+21:01:38 [[32minfo[39m] http {"method":"GET","path":"/me","status":200,"ip":"::ffff:127.0.0.1"}
+21:01:38 [[32minfo[39m] http {"method":"GET","path":"/me","status":401,"ip":"::ffff:127.0.0.1"}
+21:01:38 [[32minfo[39m] http {"method":"GET","path":"/me","status":401,"ip":"::ffff:127.0.0.1"}
+21:01:38 [[32minfo[39m] http {"method":"GET","path":"/me","status":401,"ip":"::ffff:127.0.0.1"}
+21:01:38 [[32minfo[39m] http {"method":"GET","path":"/me","status":401,"ip":"::ffff:127.0.0.1"}
+21:01:38 [[32minfo[39m] http {"method":"GET","path":"/me","status":401,"ip":"::ffff:127.0.0.1"}
+21:01:39 [[32minfo[39m] http {"method":"GET","path":"/me","status":401,"ip":"::ffff:127.0.0.1"}
+21:01:39 [[32minfo[39m] http {"method":"GET","path":"/me","status":401,"ip":"::ffff:127.0.0.1"}
+21:01:39 [[32minfo[39m] http {"method":"GET","path":"/me","status":401,"ip":"::ffff:127.0.0.1"}
+21:01:39 [[32minfo[39m] http {"method":"GET","path":"/me","status":401,"ip":"::ffff:127.0.0.1"}
+21:01:39 [[32minfo[39m] http {"method":"GET","path":"/me","status":401,"ip":"::ffff:127.0.0.1"}
+21:01:40 [[32minfo[39m] http {"method":"GET","path":"/","status":200,"ip":"::ffff:127.0.0.1"}
+21:01:40 [[32minfo[39m] http {"method":"GET","path":"/me","status":403,"ip":"::ffff:127.0.0.1"}
+21:01:40 [[32minfo[39m] http {"method":"GET","path":"/me","status":200,"ip":"::ffff:127.0.0.1"}
+21:01:41 [[32minfo[39m] http {"method":"GET","path":"/me","status":403,"ip":"::ffff:127.0.0.1"}
+21:01:41 [[32minfo[39m] http {"method":"GET","path":"/me","status":403,"ip":"::ffff:127.0.0.1"}
+21:01:42 [[32minfo[39m] http {"method":"GET","path":"/","status":403,"ip":"::ffff:127.0.0.1"}
+21:01:42 [[32minfo[39m] http {"method":"GET","path":"/me","status":403,"ip":"::ffff:127.0.0.1"}
+21:01:43 [[32minfo[39m] http {"method":"POST","path":"/admins","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:43 [[32minfo[39m] http {"method":"POST","path":"/admins","status":403,"ip":"::ffff:127.0.0.1"}
+21:01:43 [[32minfo[39m] http {"method":"POST","path":"/admins","status":403,"ip":"::ffff:127.0.0.1"}
+21:01:44 [[32minfo[39m] http {"method":"POST","path":"/admins","status":403,"ip":"::ffff:127.0.0.1"}
+21:01:45 [[32minfo[39m] http {"method":"GET","path":"/health","status":200,"ip":"::ffff:127.0.0.1"}
+21:01:45 [[32minfo[39m] http {"method":"POST","path":"/","status":201,"ip":"::ffff:127.0.0.1"}
+PASS src/__tests__/middleware/auth.test.ts (9.457 s)
+  requireAuth
+    token from cookie
+      ✓ accepts a valid session cookie (1219 ms)
+    token from Authorization header
+      ✓ accepts a valid Bearer token (361 ms)
+      ✓ rejects malformed Authorization header (no Bearer prefix) (273 ms)
+      ✓ rejects "Bearer " with empty token (101 ms)
+      ✓ rejects "Bearer  " with only spaces (105 ms)
+    missing token
+      ✓ returns 401 when no cookie and no header (104 ms)
+    expired token
+      ✓ returns 401 for an expired JWT (261 ms)
+    invalid token
+      ✓ returns 401 for a completely bogus string (101 ms)
+      ✓ returns 401 for a JWT signed with a different secret (263 ms)
+    payload validation
+      ✓ rejects a token with missing id field (104 ms)
+      ✓ rejects a token with non-UUID id (102 ms)
+      ✓ rejects a token with invalid role (104 ms)
+  requireRole
+    designer role
+      ✓ allows a designer to access designer-only routes (422 ms)
+      ✓ forbids a designer from accessing admin routes (266 ms)
+    admin role
+      ✓ allows an admin to access admin routes (577 ms)
+      ✓ verifies admin status in DB — revoked admin gets 403 (504 ms)
+      ✓ returns 403 if admin user is deleted from DB (508 ms)
+    role mismatch
+      ✓ forbids a client-role token from accessing designer routes (260 ms)
+      ✓ forbids an admin-role token (forged) when user is not admin in DB (339 ms)
+  requireSuperAdmin
+    ✓ allows a super admin to access super-admin-only endpoints (543 ms)
+    ✓ forbids a regular admin from super-admin endpoints (418 ms)
+    ✓ forbids a designer from super-admin endpoints (288 ms)
+    ✓ returns 403 if super-admin flag is revoked in DB (616 ms)
+  CSRF middleware
+    ✓ rejects POST without X-Requested-With header (259 ms)
+    ✓ rejects PUT without X-Requested-With header (262 ms)
+    ✓ rejects DELETE without X-Requested-With header (258 ms)
+    ✓ allows GET requests without X-Requested-With (102 ms)
+    ✓ allows POST with X-Requested-With header (422 ms)
+
+21:01:46 [[32minfo[39m] http {"method":"GET","path":"/products/550e8400-e29b-41d4-a716-446655440000","status":404,"ip":"::ffff:127.0.0.1"}
+21:01:47 [[32minfo[39m] http {"method":"GET","path":"/550e8400-e29b-41d4-a716-446655440000","status":404,"ip":"::ffff:127.0.0.1"}
+21:01:47 [[32minfo[39m] http {"method":"GET","path":"/","status":200,"ip":"::ffff:127.0.0.1"}
+21:01:48 [[32minfo[39m] http {"method":"GET","path":"/products/abc","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:48 [[32minfo[39m] http {"method":"GET","path":"/products/1';%20DROP%20TABLE%20products;--","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:48 [[32minfo[39m] http {"method":"GET","path":"/products/12345","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:48 [[32minfo[39m] http {"method":"GET","path":"/products/550e8400-e29b-41d4-a716-44665544000","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:49 [[32minfo[39m] http {"method":"GET","path":"/products/550e8400-e29b-41d4-a716-44665544ZZZZ","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:49 [[32minfo[39m] http {"method":"GET","path":"/%20","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:49 [[32minfo[39m] http {"method":"GET","path":"/projects/not-a-uuid/shortlist","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:49 [[32minfo[39m] http {"method":"PUT","path":"/550e8400-e29b-41d4-a716-446655440000/rooms/bad-room-id","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:50 [[32minfo[39m] http {"method":"GET","path":"/projects/550e8400-e29b-41d4-a716-446655440000/orders/not-uuid","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:50 [[32minfo[39m] http {"method":"GET","path":"/bad-quote-id","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:50 [[32minfo[39m] http {"method":"DELETE","path":"/projects/550e8400-e29b-41d4-a716-446655440000/shortlist/bad-item-id","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:50 [[32minfo[39m] http {"method":"PUT","path":"/550e8400-e29b-41d4-a716-446655440000/line-items/bad-line-item","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:51 [[32minfo[39m] http {"method":"PUT","path":"/550e8400-e29b-41d4-a716-446655440000/brand-pos/bad-po-id/status","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:51 [[32minfo[39m] http {"method":"GET","path":"/some-arbitrary-token","status":404,"ip":"::ffff:127.0.0.1"}
+21:01:51 [[32minfo[39m] http {"method":"GET","path":"/products/550E8400-E29B-41D4-A716-446655440000","status":404,"ip":"::ffff:127.0.0.1"}
+21:01:52 [[32minfo[39m] http {"method":"GET","path":"/products/550e8400-e29b-41d4-a716","status":400,"ip":"::ffff:127.0.0.1"}
+21:01:52 [[32minfo[39m] http {"method":"GET","path":"/products/550e8400--e29b-41d4-a716-446655440000","status":400,"ip":"::ffff:127.0.0.1"}
+PASS src/__tests__/middleware/validateParams.test.ts (6.833 s)
+  valid UUIDs pass validation
+    ✓ :id param — valid UUID passes (e.g. GET /api/catalog/products/:id) (1138 ms)
+    ✓ :projectId param — valid UUID passes (422 ms)
+    ✓ :orderId param — valid UUID passes (420 ms)
+  malformed UUIDs return 400
+    ✓ :id — short string (278 ms)
+    ✓ :id — SQL injection attempt (259 ms)
+    ✓ :id — numeric string (268 ms)
+    ✓ :id — UUID with wrong length (262 ms)
+    ✓ :id — UUID with invalid hex characters (260 ms)
+    ✓ :id — whitespace-only value (257 ms)
+    ✓ :projectId — malformed (260 ms)
+    ✓ :roomId — malformed (261 ms)
+    ✓ :orderId — malformed (258 ms)
+    ✓ :quoteId — malformed (259 ms)
+    ✓ :itemId — malformed (262 ms)
+    ✓ :lineItemId — malformed (264 ms)
+    ✓ :poId — malformed (256 ms)
+  non-UUID params are skipped
+    ✓ :portalToken — non-UUID value is allowed (validated by portal routes) (407 ms)
+  edge cases
+    ✓ accepts uppercase hex in UUID (342 ms)
+    ✓ rejects UUID missing one section (truncated) (257 ms)
+    ✓ rejects UUID with double dashes (265 ms)
+
+21:01:54 [[32minfo[39m] http {"method":"GET","path":"/health","status":200,"ip":"::ffff:127.0.0.1"}
+21:01:54 [[32minfo[39m] http {"method":"GET","path":"/me","status":200,"ip":"::ffff:127.0.0.1"}
+21:01:55 [[32minfo[39m] http {"method":"GET","path":"/me","status":200,"ip":"::ffff:127.0.0.1"}
+21:01:55 [[32minfo[39m] http {"method":"GET","path":"/me","status":401,"ip":"::ffff:127.0.0.1"}
+PASS src/__tests__/infrastructure.test.ts
+  Test infrastructure
+    ✓ connects to the dev database (953 ms)
+    ✓ cleanDatabase() truncates all tables (680 ms)
+  Express app
+    ✓ GET /health returns ok (105 ms)
+    ✓ rejects state-changing requests without X-Requested-With (105 ms)
+  Auth helpers
+    ✓ createTestDesigner() creates a designer with valid token (412 ms)
+    ✓ createTestAdmin() creates an admin that passes requireRole("admin") (578 ms)
+    ✓ expired tokens return 401 (261 ms)
+  Factory helpers
+    ✓ creates a full project hierarchy (designer → client → project → room → product) (881 ms)
+
+PASS src/__tests__/services/quoteService.test.ts
+  calculateTotals
+    tax calculation
+      ✓ calculates tax as percentage of subtotal
+      ✓ zero tax when taxRate is 0
+      ✓ no tax when taxRate is undefined
+      ✓ handles high tax rate
+      ✓ handles fractional tax rate (e.g. 6.875%)
+    commission — percentage
+      ✓ calculates percentage commission on subtotal
+      ✓ handles small percentage commission
+      ✓ zero commission when commissionValue is 0
+      ✓ zero commission when commissionType is percentage but no value
+    commission — fixed
+      ✓ uses fixed dollar amount regardless of subtotal (1 ms)
+      ✓ zero when commissionType is fixed but value is 0
+    platform fee — percentage
+      ✓ calculates percentage platform fee on subtotal
+      ✓ zero when platformFeeValue is 0
+    platform fee — fixed
+      ✓ uses fixed dollar amount
+    grand total with combined fees
+      ✓ adds subtotal + tax + commission + platform fee
+      ✓ all percentage fees together
+      ✓ all fixed fees together
+    rounding
+      ✓ rounds all amounts to 2 decimal places
+      ✓ rounds commission correctly (1 ms)
+      ✓ handles penny rounding on complex calculation
+    edge cases
+      ✓ zero subtotal returns all zeros
+      ✓ empty fee config returns subtotal as grand total
+      ✓ large subtotal with all fees
+      ✓ no commissionType means zero commission even with value
+      ✓ no platformFeeType means zero platform fee even with value (1 ms)
+
+PASS src/config/__tests__/db.test.ts
+  resolveDbUrl
+    ✓ returns DEV_DATABASE_URL when USE_DB is "dev"
+    ✓ returns PROD_DATABASE_URL when USE_DB is "prod"
+    ✓ defaults to dev when USE_DB is not set
+    ✓ defaults to dev when USE_DB is empty string
+    ✓ handles USE_DB case-insensitively ("PROD" → prod)
+    ✓ handles USE_DB mixed case ("Prod" → prod)
+    ✓ handles USE_DB "DEV" (uppercase) → dev
+    ✓ returns undefined url when USE_DB is "dev" but DEV_DATABASE_URL is missing
+    ✓ returns undefined url when USE_DB is "prod" but PROD_DATABASE_URL is missing
+    ✓ falls back to dev for unrecognized USE_DB values (1 ms)
+    ✓ returns undefined url when no database URLs are provided
+    ✓ does not mutate the input env object
+  runMigrations
+    ✓ calls execSync with prisma migrate deploy and the correct schema path
+    ✓ passes DATABASE_URL in the env to execSync
+    ✓ does not throw when migration succeeds (1 ms)
+    ✓ throws when execSync fails (migration error) (3 ms)
+    ✓ throws when database URL is unreachable (1 ms)
+    ✓ throws on invalid connection string
+    ✓ throws on permission denied
+    ✓ uses stdio: inherit for visible output
+
+PASS src/__tests__/services/orderSplitter.test.ts
+  splitOrderByBrand
+    basic grouping
+      ✓ groups items by brand name (1 ms)
+      ✓ single brand produces one PO
+      ✓ each unique brand gets its own PO
+    subtotal calculation
+      ✓ sums lineTotals per brand correctly (1 ms)
+      ✓ handles zero-value line items
+    line item references
+      ✓ preserves all line item properties in the grouped output
+      ✓ maintains original order within each brand group
+    edge cases
+      ✓ empty array returns empty result
+      ✓ single item returns single PO with one item
+      ✓ handles "Unknown" brand name (fallback from quote conversion)
+      ✓ brand names are case-sensitive
+      ✓ preserves insertion order of brand groups
+      ✓ handles large number of items
+
+PASS src/routes/__tests__/integration.test.ts
+  Integration Tests for Bug Fixes
+    ✓ should test something
+
+Test Suites: 1 failed, 8 passed, 9 total
+Tests:       10 failed, 134 passed, 144 total
+Snapshots:   0 total
+Time:        33.363 s, estimated 34 s
+Ran all test suites.

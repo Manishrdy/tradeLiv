@@ -2,10 +2,12 @@ import { Router, Response } from 'express';
 import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import logger from '../config/logger';
+import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
 router.use(requireAuth);
 router.use(requireRole('designer'));
+registerUuidValidation(router);
 
 function paramId(req: { params: { id?: string | string[] } }): string | undefined {
   const v = req.params.id;

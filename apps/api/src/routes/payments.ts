@@ -5,9 +5,11 @@ import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { config } from '../config';
 import logger from '../config/logger';
+import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
 router.use(requireAuth, requireRole('designer'));
+registerUuidValidation(router);
 
 let _stripe: Stripe | null = null;
 function getStripe(): Stripe {
@@ -53,8 +55,13 @@ router.post('/create-checkout-session', async (req: AuthRequest, res: Response) 
       res.status(400).json({ error: `Cannot pay for an order with status "${order.status}".` }); return;
     }
 
-    // Build Stripe line items
-    const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = order.lineItems.map((li) => {
+    const totalAmount = Number(order.totalAmount ?? 0);
+    if (totalAmount <= 0) {
+      res.status(400).json({ error: 'Order total must be greater than $0.' }); return;
+    }
+
+    // Build Stripe line items from order products
+    const stripeLineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = order.lineItems.map((li) => {
       const unitAmount = Math.round(Number(li.unitPrice ?? 0) * 100); // cents
       return {
         price_data: {
@@ -70,7 +77,41 @@ router.post('/create-checkout-session', async (req: AuthRequest, res: Response) 
       };
     });
 
-    const totalAmount = Number(order.totalAmount ?? 0);
+    // Add tax and fees as separate line items if present
+    // (Orders from quotes include tax, design commission, and platform fees in totalAmount)
+    const productSubtotal = order.lineItems.reduce(
+      (sum, li) => sum + Math.round(Number(li.unitPrice ?? 0) * 100) * li.quantity,
+      0,
+    );
+    const totalAmountCents = Math.round(totalAmount * 100);
+    const feeDifference = totalAmountCents - productSubtotal;
+
+    if (feeDifference > 0) {
+      const taxAmount = Math.round(Number(order.taxAmount ?? 0) * 100);
+      const remainingFees = feeDifference - taxAmount;
+
+      if (taxAmount > 0) {
+        stripeLineItems.push({
+          price_data: {
+            currency: 'usd',
+            product_data: { name: 'Tax' },
+            unit_amount: taxAmount,
+          },
+          quantity: 1,
+        });
+      }
+
+      if (remainingFees > 0) {
+        stripeLineItems.push({
+          price_data: {
+            currency: 'usd',
+            product_data: { name: 'Design & Service Fees' },
+            unit_amount: remainingFees,
+          },
+          quantity: 1,
+        });
+      }
+    }
 
     // Check for an existing pending payment
     const existingPayment = await prisma.payment.findFirst({
@@ -87,7 +128,7 @@ router.post('/create-checkout-session', async (req: AuthRequest, res: Response) 
     // Create Stripe Checkout Session
     const session = await getStripe().checkout.sessions.create({
       mode: 'payment',
-      line_items: lineItems,
+      line_items: stripeLineItems,
       metadata: {
         orderId: order.id,
         projectId: order.projectId,

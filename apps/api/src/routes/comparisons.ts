@@ -6,9 +6,11 @@ import { writeAuditLog } from '../services/auditLog';
 import { logComparisonEvent } from '../services/comparisonEvents';
 import { generateRecommendation, type RecommendationInput } from '../services/recommendationEngine';
 import logger from '../config/logger';
+import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
 router.use(requireAuth, requireRole('designer'));
+registerUuidValidation(router);
 
 /* ─── Validation schemas ────────────────────────────── */
 

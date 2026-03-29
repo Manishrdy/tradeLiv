@@ -1,9 +1,11 @@
 import { Router, Response } from 'express';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { getNotifications, markRead, markAllRead, getUnreadCount } from '../services/notificationService';
+import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
 router.use(requireAuth, requireRole('designer'));
+registerUuidValidation(router);
 
 /* ─── GET /api/notifications ─────────────────────────── */
 router.get('/', async (req: AuthRequest, res: Response) => {

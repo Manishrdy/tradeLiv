@@ -1,4 +1,4 @@
-import { prisma } from '@furnlo/db';
+import { prisma, Prisma } from '@furnlo/db';
 import logger from '../config/logger';
 
 /**
@@ -14,7 +14,12 @@ export async function writeAuditLog(params: {
   payload?: Record<string, unknown>;
 }): Promise<void> {
   try {
-    await prisma.auditLog.create({ data: params });
+    await prisma.auditLog.create({
+      data: {
+        ...params,
+        payload: params.payload as Prisma.InputJsonValue | undefined,
+      },
+    });
   } catch (err) {
     logger.warn('audit log write failed', { err, action: params.action });
   }
