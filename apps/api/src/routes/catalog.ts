@@ -29,6 +29,16 @@ const dimensionsSchema = z.object({
   raw: z.string().max(500).optional(),
 }).optional();
 
+const variantSchema = z.object({
+  variantId: z.string().max(200),
+  sku: z.string().max(200).nullable(),
+  options: z.record(z.string().max(200)),
+  price: z.number().positive(),
+  compareAtPrice: z.number().positive().nullable().optional(),
+  availability: z.string().max(200).nullable().optional(),
+  leadTime: z.string().max(200).nullable().optional(),
+});
+
 const productCreateSchema = z.object({
   productName: z.string().min(1, 'Product name is required').max(200),
   sourceUrl: z.string().url('Invalid URL').max(2000),
@@ -36,25 +46,27 @@ const productCreateSchema = z.object({
   category: z.string().max(200).optional(),
   currency: z.string().length(3).optional(),
 
-  // New variant-aware fields
-  variantId: z.string().max(200).optional(),
+  // New: single source of truth for variant/pricing/option data
+  variants: z.array(variantSchema).optional(),
   sku: z.string().max(200).optional(),
-  activeVariant: z.record(z.union([z.string(), z.number()])).optional(),
   images: z.object({
     primary: z.string().url().optional().or(z.literal('')),
     gallery: z.array(z.string().url()).optional(),
-    note: z.string().max(500).optional(),
   }).optional(),
-  pricing: z.array(z.record(z.union([z.string(), z.number()]))).optional(),
-  availableOptions: z.array(z.object({
-    type: z.string().max(100),
-    values: z.array(z.string().max(200)).max(100),
-  })).optional(),
   features: z.array(z.string().max(500)).max(50).optional().default([]),
   materials: z.record(z.union([z.string(), z.array(z.string())])).optional(),
   promotions: z.array(z.string().max(500)).max(20).optional().default([]),
   shipping: z.string().max(200).optional(),
   availability: z.string().max(200).optional(),
+
+  // Deprecated fields (kept temporarily for backward compat)
+  variantId: z.string().max(200).optional(),
+  activeVariant: z.record(z.union([z.string(), z.number()])).optional(),
+  pricing: z.array(z.record(z.union([z.string(), z.number()]))).optional(),
+  availableOptions: z.array(z.object({
+    type: z.string().max(100),
+    values: z.array(z.string().max(200)).max(100),
+  })).optional(),
 
   // Legacy fields (kept for backward compat)
   price: z.number().positive().optional(),
@@ -74,25 +86,27 @@ const productUpdateSchema = z.object({
   category: z.string().max(200).nullable().optional(),
   currency: z.string().length(3).nullable().optional(),
 
-  // New variant-aware fields
-  variantId: z.string().max(200).nullable().optional(),
+  // New: single source of truth
+  variants: z.array(variantSchema).nullable().optional(),
   sku: z.string().max(200).nullable().optional(),
-  activeVariant: z.record(z.union([z.string(), z.number()])).nullable().optional(),
   images: z.object({
     primary: z.string().url().optional().or(z.literal('')),
     gallery: z.array(z.string().url()).optional(),
-    note: z.string().max(500).optional(),
   }).nullable().optional(),
-  pricing: z.array(z.record(z.union([z.string(), z.number()]))).nullable().optional(),
-  availableOptions: z.array(z.object({
-    type: z.string().max(100),
-    values: z.array(z.string().max(200)).max(100),
-  })).nullable().optional(),
   features: z.array(z.string().max(500)).max(50).optional(),
   materials: z.record(z.union([z.string(), z.array(z.string())])).nullable().optional(),
   promotions: z.array(z.string().max(500)).max(20).optional(),
   shipping: z.string().max(200).nullable().optional(),
   availability: z.string().max(200).nullable().optional(),
+
+  // Deprecated fields (kept temporarily for backward compat)
+  variantId: z.string().max(200).nullable().optional(),
+  activeVariant: z.record(z.union([z.string(), z.number()])).nullable().optional(),
+  pricing: z.array(z.record(z.union([z.string(), z.number()]))).nullable().optional(),
+  availableOptions: z.array(z.object({
+    type: z.string().max(100),
+    values: z.array(z.string().max(200)).max(100),
+  })).nullable().optional(),
 
   // Legacy fields (kept for backward compat)
   price: z.number().positive().nullable().optional(),
@@ -419,18 +433,21 @@ router.post('/products', async (req: AuthRequest, res: Response) => {
         category: data.category || null,
         currency: data.currency || 'USD',
 
-        // New variant-aware fields
-        variantId: data.variantId || null,
+        // New: variants as single source of truth
+        variants: data.variants ?? undefined,
         sku: data.sku || null,
-        activeVariant: data.activeVariant ?? undefined,
         images: data.images ?? undefined,
-        pricing: data.pricing ?? undefined,
-        availableOptions: data.availableOptions ?? undefined,
         features: data.features ?? [],
         materials: data.materials ?? undefined,
         promotions: data.promotions ?? [],
         shipping: data.shipping || null,
         availability: data.availability || null,
+
+        // Deprecated fields (populated for backward compat)
+        variantId: data.variantId || null,
+        activeVariant: data.activeVariant ?? undefined,
+        pricing: data.pricing ?? undefined,
+        availableOptions: data.availableOptions ?? undefined,
 
         // Legacy fields
         price: data.price ?? null,

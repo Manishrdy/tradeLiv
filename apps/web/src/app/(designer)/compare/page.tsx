@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, Product, ProjectSummary, Room, RecommendationResult } from '@/lib/api';
+import { api, Product, ProjectSummary, Room, RecommendationResult, deriveAvailableOptions, ProductVariant } from '@/lib/api';
 import {
   getAttributesForCategory,
   resolveAttributeValue,
@@ -36,22 +36,28 @@ function getImageUrl(p: Product): string | undefined {
 }
 
 function getDisplayPrice(p: Product, selectedVariant?: Record<string, string>): number | null {
-  if (selectedVariant && p.pricing && p.pricing.length > 0) {
-    const match = p.pricing.find((row) => {
-      return Object.entries(selectedVariant).every(
-        ([k, v]) => String(row[k]).toLowerCase() === v.toLowerCase(),
-      );
-    });
-    if (match?.price != null) return Number(match.price);
+  // Look up price from variants[] by matching options
+  if (selectedVariant && p.variants && p.variants.length > 0) {
+    const match = p.variants.find((v) =>
+      Object.entries(selectedVariant).every(
+        ([k, val]) => {
+          const vVal = v.options[k] ?? v.options[k.charAt(0).toUpperCase() + k.slice(1)];
+          return !vVal || vVal.toLowerCase() === val.toLowerCase();
+        },
+      ),
+    );
+    if (match) return match.price;
   }
+  // Fallback to first variant
+  if (p.variants && p.variants.length > 0) return p.variants[0].price;
+  // Legacy fallback
   if (p.activeVariant?.price != null) return Number(p.activeVariant.price);
-  if (p.pricing && p.pricing.length > 0 && p.pricing[0].price != null) return Number(p.pricing[0].price);
   return p.price;
 }
 
 function formatPriceRange(p: Product): string {
-  if (p.pricing && p.pricing.length > 1) {
-    const prices = p.pricing.map((e) => Number(e.price)).filter((n) => !isNaN(n) && n > 0);
+  if (p.variants && p.variants.length > 1) {
+    const prices = p.variants.map((v) => v.price).filter((n) => n > 0);
     if (prices.length > 1) {
       const min = Math.min(...prices);
       const max = Math.max(...prices);
@@ -129,8 +135,8 @@ function VariantSelector({ product, selected, onChange }: {
   selected: Record<string, string>;
   onChange: (sel: Record<string, string>) => void;
 }) {
-  const options = product.availableOptions;
-  if (!options || options.length === 0) return null;
+  const options = deriveAvailableOptions(product.variants);
+  if (options.length === 0) return null;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {options.map((opt) => (
@@ -1039,7 +1045,7 @@ export default function ComparePage() {
             )}
 
             {/* ── Variant selector row ─────────────────── */}
-            {products.some((p) => p.availableOptions && p.availableOptions.length > 0) && (
+            {products.some((p) => p.variants && p.variants.length > 1) && (
               <tr>
                 <td style={rowLabelStyle}><span style={labelTextStyle}>Variants</span></td>
                 {products.map((p) => (
@@ -1049,7 +1055,7 @@ export default function ComparePage() {
                       selected={variantSelections[p.id] || {}}
                       onChange={(sel) => setVariantSelections((prev) => ({ ...prev, [p.id]: sel }))}
                     />
-                    {(!p.availableOptions || p.availableOptions.length === 0) && (
+                    {(!p.variants || p.variants.length <= 1) && (
                       <span style={{ fontSize: 11, color: 'var(--text-placeholder)', fontStyle: 'italic' }}>Single variant</span>
                     )}
                   </td>
@@ -1073,12 +1079,12 @@ export default function ComparePage() {
                       </span>
                       {!isPinned && <PriceDelta currentPrice={price} pinnedPrice={pinnedPrice} />}
                     </div>
-                    {hasSelection && price == null && p.pricing && p.pricing.length > 0 && (
+                    {hasSelection && price == null && p.variants && p.variants.length > 0 && (
                       <div style={{ fontSize: 10, color: '#92700C', marginTop: 4, lineHeight: 1.3 }}>
                         Price shown for base configuration. Variant pricing may differ — verify on brand site.
                       </div>
                     )}
-                    {!p.pricing?.length && p.price != null && (
+                    {(!p.variants || p.variants.length === 0) && p.price != null && (
                       <div style={{ fontSize: 10, color: 'var(--text-placeholder)', marginTop: 2 }}>Base price only</div>
                     )}
                   </td>

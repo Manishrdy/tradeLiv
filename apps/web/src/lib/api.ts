@@ -320,35 +320,68 @@ export interface ProductDimensions {
 }
 
 export interface ProductMetadata {
-  description?: string;
+  description?: string | null;
+  style?: string | null;
+  collection?: string | null;
+  imageAltText?: string | null;
+  assembly?: string | null;
+  careInstructions?: string | null;
+  warranty?: string | null;
+  weightCapacity?: string | null;
+  // Legacy keys kept for backward compat reads
   keyFeatures?: string[];
-  assembly?: string;
-  careInstructions?: string;
-  warranty?: string;
-  weightCapacity?: string;
-  style?: string;
-  collection?: string;
   sku?: string;
-  availableColors?: string[];
-  availableSizes?: string[];
-  seatHeight?: string;
-  armHeight?: string;
-  seatDepth?: string;
-  legMaterial?: string;
-  cushionType?: string;
-  fabricType?: string;
   [key: string]: unknown;
 }
 
 export interface ProductImages {
   primary?: string;
   gallery?: string[];
-  note?: string;
 }
 
 export interface ProductOption {
   type: string;
   values: string[];
+}
+
+export interface ProductVariant {
+  variantId: string;
+  sku: string | null;
+  options: Record<string, string>;
+  price: number;
+  compareAtPrice: number | null;
+  availability: string | null;
+  leadTime: string | null;
+}
+
+// Derive availableOptions from variants[] at read time
+export function deriveAvailableOptions(variants: ProductVariant[] | null | undefined): ProductOption[] {
+  if (!variants || variants.length === 0) return [];
+  const optionMap: Record<string, Set<string>> = {};
+  for (const v of variants) {
+    for (const [key, val] of Object.entries(v.options)) {
+      if (!optionMap[key]) optionMap[key] = new Set();
+      optionMap[key].add(val);
+    }
+  }
+  return Object.entries(optionMap).map(([type, values]) => ({
+    type,
+    values: Array.from(values),
+  }));
+}
+
+// Find variant price matching a selection
+export function findVariantPrice(
+  variants: ProductVariant[] | null | undefined,
+  selection: Record<string, string>,
+): ProductVariant | undefined {
+  if (!variants || variants.length === 0) return undefined;
+  return variants.find(v =>
+    Object.entries(selection).every(([k, val]) => {
+      const vVal = v.options[k] ?? v.options[k.charAt(0).toUpperCase() + k.slice(1)];
+      return !vVal || vVal.toUpperCase() === val.toUpperCase();
+    }),
+  );
 }
 
 export interface Product {
@@ -360,18 +393,21 @@ export interface Product {
   category: string | null;
   currency: string | null;
 
-  // New variant-aware fields
-  variantId: string | null;
+  // New: single source of truth
+  variants: ProductVariant[] | null;
   sku: string | null;
-  activeVariant: Record<string, string | number> | null;
   images: ProductImages | null;
-  pricing: Array<Record<string, string | number>> | null;
-  availableOptions: ProductOption[] | null;
   features: string[];
   materials: Record<string, string | string[]> | null;
   promotions: string[];
   shipping: string | null;
   availability: string | null;
+
+  // Deprecated — kept for backward compat reads
+  variantId: string | null;
+  activeVariant: Record<string, string | number> | null;
+  pricing: Array<Record<string, string | number>> | null;
+  availableOptions: ProductOption[] | null;
 
   // Legacy fields
   price: number | null;
@@ -394,15 +430,17 @@ export interface ProductListItem {
   brandName: string | null;
   category: string | null;
   currency: string | null;
-  activeVariant: Record<string, string | number> | null;
+  variants: ProductVariant[] | null;
   images: ProductImages | null;
-  pricing: Array<Record<string, string | number>> | null;
-  availableOptions: ProductOption[] | null;
   features: string[];
   materials: Record<string, string | string[]> | null;
   promotions: string[];
   shipping: string | null;
   availability: string | null;
+  // Deprecated
+  activeVariant: Record<string, string | number> | null;
+  pricing: Array<Record<string, string | number>> | null;
+  availableOptions: ProductOption[] | null;
   // Legacy
   price: number | null;
   imageUrl: string | null;
@@ -434,18 +472,21 @@ export interface ProductPayload {
   category?: string;
   currency?: string;
 
-  // New variant-aware fields
-  variantId?: string;
+  // New: single source of truth
+  variants?: ProductVariant[];
   sku?: string;
-  activeVariant?: Record<string, string | number>;
   images?: ProductImages;
-  pricing?: Array<Record<string, string | number>>;
-  availableOptions?: ProductOption[];
   features?: string[];
   materials?: Record<string, string | string[]>;
   promotions?: string[];
   shipping?: string;
   availability?: string;
+
+  // Deprecated (populated for backward compat)
+  variantId?: string;
+  activeVariant?: Record<string, string | number>;
+  pricing?: Array<Record<string, string | number>>;
+  availableOptions?: ProductOption[];
 
   // Legacy fields
   price?: number;
@@ -464,21 +505,24 @@ export interface ExtractedProduct {
   category?: string;
   currency?: string;
 
-  // New variant-aware fields
-  variantId?: string;
+  // New: single source of truth
+  variants?: ProductVariant[];
   sku?: string;
-  activeVariant?: Record<string, string | number>;
   images?: ProductImages;
-  pricing?: Array<Record<string, string | number>>;
-  availableOptions?: ProductOption[];
   features?: string[];
   materials?: Record<string, string | string[]>;
   dimensions?: ProductDimensions;
   promotions?: string[];
   shipping?: string;
   availability?: string;
-  leadTime?: string;
   productUrl?: string;
+
+  // Deprecated (populated for backward compat)
+  variantId?: string;
+  activeVariant?: Record<string, string | number>;
+  pricing?: Array<Record<string, string | number>>;
+  availableOptions?: ProductOption[];
+  leadTime?: string;
 
   // Legacy fields
   price?: number;
@@ -525,18 +569,21 @@ export interface ProductUpdatePayload {
   category?: string | null;
   currency?: string | null;
 
-  // New variant-aware fields
-  variantId?: string | null;
+  // New: single source of truth
+  variants?: ProductVariant[] | null;
   sku?: string | null;
-  activeVariant?: Record<string, string | number> | null;
   images?: ProductImages | null;
-  pricing?: Array<Record<string, string | number>> | null;
-  availableOptions?: ProductOption[] | null;
   features?: string[];
   materials?: Record<string, string | string[]> | null;
   promotions?: string[];
   shipping?: string | null;
   availability?: string | null;
+
+  // Deprecated (kept for backward compat)
+  variantId?: string | null;
+  activeVariant?: Record<string, string | number> | null;
+  pricing?: Array<Record<string, string | number>> | null;
+  availableOptions?: ProductOption[] | null;
 
   // Legacy fields
   price?: number | null;
@@ -557,15 +604,17 @@ export interface ShortlistProduct {
   brandName: string | null;
   category: string | null;
   currency: string | null;
-  // New fields
-  activeVariant: Record<string, string | number> | null;
+  // New
+  variants: ProductVariant[] | null;
   images: ProductImages | null;
-  pricing: Array<Record<string, string | number>> | null;
-  availableOptions: ProductOption[] | null;
   features: string[];
   materials: Record<string, string | string[]> | null;
   shipping: string | null;
   availability: string | null;
+  // Deprecated
+  activeVariant: Record<string, string | number> | null;
+  pricing: Array<Record<string, string | number>> | null;
+  availableOptions: ProductOption[] | null;
   // Legacy fields
   price: number | null;
   imageUrl: string | null;

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api, Product, ProductUpdatePayload, ProductDimensions, ProductMetadata, ExtractedProduct } from '@/lib/api';
+import { api, Product, ProductUpdatePayload, ProductDimensions, ProductMetadata, ExtractedProduct, deriveAvailableOptions } from '@/lib/api';
 
 const EXTRACT_STEPS = [
   'Visiting page…',
@@ -830,8 +830,8 @@ export default function ProductDetailPage() {
                 {[
                   { label: 'Price', value: formatPrice(product.price) },
                   { label: 'Category', value: product.category || '—' },
-                  // Show Material as text only when availableOptions doesn't cover it
-                  ...(!product.availableOptions?.some(o => o.type.toLowerCase() === 'material')
+                  // Show Material as text only when variants options don't cover it
+                  ...(!deriveAvailableOptions(product.variants).some(o => o.type.toLowerCase() === 'material')
                     ? [{ label: 'Material', value: product.material || '—' }]
                     : []),
                   { label: 'Lead time', value: product.leadTime || '—' },
@@ -847,47 +847,51 @@ export default function ProductDetailPage() {
                 ))}
               </div>
 
-              {/* Available Options — Configuration, Size, Finish, Material, etc. as button groups */}
-              {product.availableOptions && product.availableOptions.length > 0 && (
-                <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  {product.availableOptions.map((option) => {
-                    // Determine if any value is the "active" one from activeVariant
-                    const activeValue = product.activeVariant?.[option.type.toLowerCase()] as string | undefined;
-                    return (
-                      <div key={option.type}>
-                        <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>{option.type}</div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                          {option.values.map((val, i) => {
-                            const isActive = activeValue != null && val.toLowerCase() === activeValue.toLowerCase();
-                            return (
-                              <button
-                                key={`${val}-${i}`}
-                                type="button"
-                                style={{
-                                  padding: '6px 14px',
-                                  fontSize: 13,
-                                  fontWeight: 500,
-                                  borderRadius: 6,
-                                  border: isActive ? '1.5px solid var(--accent)' : '1px solid var(--border)',
-                                  background: isActive ? 'var(--accent-bg, rgba(99,102,241,0.08))' : 'var(--bg-secondary)',
-                                  color: isActive ? 'var(--accent)' : 'var(--text-primary)',
-                                  cursor: 'default',
-                                  transition: 'all 0.15s ease',
-                                }}
-                              >
-                                {val}
-                              </button>
-                            );
-                          })}
+              {/* Available Options — derived from variants[] */}
+              {(() => {
+                const derivedOptions = deriveAvailableOptions(product.variants);
+                const firstVariant = product.variants?.[0];
+                if (derivedOptions.length === 0) return null;
+                return (
+                  <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    {derivedOptions.map((option) => {
+                      const activeValue = firstVariant?.options[option.type] as string | undefined;
+                      return (
+                        <div key={option.type}>
+                          <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>{option.type}</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {option.values.map((val, i) => {
+                              const isActive = activeValue != null && val.toLowerCase() === activeValue.toLowerCase();
+                              return (
+                                <button
+                                  key={`${val}-${i}`}
+                                  type="button"
+                                  style={{
+                                    padding: '6px 14px',
+                                    fontSize: 13,
+                                    fontWeight: 500,
+                                    borderRadius: 6,
+                                    border: isActive ? '1.5px solid var(--accent)' : '1px solid var(--border)',
+                                    background: isActive ? 'var(--accent-bg, rgba(99,102,241,0.08))' : 'var(--bg-secondary)',
+                                    color: isActive ? 'var(--accent)' : 'var(--text-primary)',
+                                    cursor: 'default',
+                                    transition: 'all 0.15s ease',
+                                  }}
+                                >
+                                  {val}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
-              {/* Finishes — fallback when not already shown in availableOptions */}
-              {product.finishes.length > 0 && !product.availableOptions?.some(o => ['Finish', 'Color', 'Fabric'].includes(o.type)) && (
+              {/* Finishes — fallback when not already shown in derived options */}
+              {product.finishes.length > 0 && !deriveAvailableOptions(product.variants).some(o => ['Finish', 'Color', 'Fabric'].includes(o.type)) && (
                 <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>Finishes</div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
