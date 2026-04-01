@@ -140,7 +140,7 @@ function setCachedResult(url: string, result: ExtractionResult): void {
   logger.info('Final extraction result', {
     url,
     type: result.type,
-    json: JSON.stringify(result, null, 2),
+    json: JSON.parse(JSON.stringify(result)),
   });
 
   // Evict stale entries if cache grows beyond 200
@@ -2497,11 +2497,11 @@ export async function extractProductFromUrl(sourceUrl: string): Promise<Extracti
 async function extractWithWebSearch(sourceUrl: string): Promise<ExtractionResult> {
   // Single AI call — web_search tool handles iterations internally (Claude/Agent Router only).
   // For Gemini, falls back to plain generation without web search.
-  const wsUserContent = `Search for the product at this URL and extract its full details:\n${sourceUrl}\n\nI need: name, price, currency, main image URL, furniture category, and metadata (description, key features, materials, assembly, care instructions, warranty, style, etc.).\n\nDIMENSIONS ARE THE MOST IMPORTANT DATA — find the product's width, depth, height measurements. Almost every furniture product page has dimensions (e.g. "68.5 x 85 x 54" or "68.5"W x 85"D x 54"H"). Search thoroughly for these. Include them in the dimensions object with numeric values and unit.\n\nReturn ONLY the JSON object as specified.`;
+  const wsUserContent = `Search for the product at this URL and extract its full details:\n${sourceUrl}\n\nI need: name, price, currency, main image URL, furniture category, and metadata (description, key features, materials, assembly, care instructions, warranty, style, etc.).\n\nDIMENSIONS ARE THE MOST IMPORTANT DATA — find the product's width, depth, height measurements. Almost every furniture product page has dimensions (e.g. "68.5 x 85 x 54" or "68.5"W x 85"D x 54"H"). Search thoroughly for these. Include them in the dimensions object with numeric values and unit.\n\nDo not narrate or explain — output ONLY the raw JSON object, no preamble, no markdown fences.`;
   const wsResponseText = await generateWithTools({
     system: SYSTEM_PROMPT,
     userMessage: wsUserContent,
-    maxTokens: 3072,
+    maxTokens: 6000,
     tools: [{ type: 'web_search_20250305', name: 'web_search' }],
   });
 
