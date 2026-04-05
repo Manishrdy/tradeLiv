@@ -14,11 +14,6 @@ export default function VerifyEmailPage() {
   const [state,   setState]   = useState<State>('loading');
   const [message, setMessage] = useState('');
 
-  const [resendEmail,    setResendEmail]    = useState('');
-  const [resendLoading,  setResendLoading]  = useState(false);
-  const [resendMsg,      setResendMsg]      = useState('');
-  const [resendCooldown, setResendCooldown] = useState(false);
-
   useEffect(() => {
     if (!token) {
       setState('error');
@@ -39,17 +34,6 @@ export default function VerifyEmailPage() {
       }
     });
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function handleResend() {
-    if (!resendEmail.trim() || resendCooldown || resendLoading) return;
-    setResendLoading(true);
-    setResendMsg('');
-    await api.resendVerification(resendEmail.trim());
-    setResendLoading(false);
-    setResendMsg('If that email is registered and unverified, a new link has been sent.');
-    setResendCooldown(true);
-    setTimeout(() => setResendCooldown(false), 60_000);
-  }
 
   const pageStyle: React.CSSProperties = {
     minHeight: '100vh', background: '#FAFAF8',
@@ -130,44 +114,6 @@ export default function VerifyEmailPage() {
         <p style={{ fontSize: 14, color: '#8C8984', lineHeight: 1.6, marginBottom: 28 }}>
           {message}
         </p>
-
-        <div style={{ textAlign: 'left', marginBottom: 28 }}>
-          <p style={{ fontSize: 12.5, fontWeight: 700, color: '#B0ADA8', letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: 10 }}>
-            Request a new link
-          </p>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              type="email"
-              placeholder="your@email.com"
-              value={resendEmail}
-              onChange={(e) => setResendEmail(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleResend()}
-              style={{
-                flex: 1, background: '#fff', border: '1.5px solid #E4E1DC',
-                borderRadius: 8, padding: '10px 12px', fontSize: 13.5,
-                color: '#0F0F0F', fontFamily: 'inherit', outline: 'none',
-              }}
-              onFocus={(e) => (e.target.style.borderColor = '#0F0F0F')}
-              onBlur={(e) => (e.target.style.borderColor = '#E4E1DC')}
-            />
-            <button
-              onClick={handleResend}
-              disabled={resendLoading || resendCooldown || !resendEmail.trim()}
-              style={{
-                padding: '10px 16px', background: '#0F0F0F', color: '#fff',
-                border: 'none', borderRadius: 8, fontSize: 13.5, fontWeight: 600,
-                cursor: (resendLoading || resendCooldown || !resendEmail.trim()) ? 'not-allowed' : 'pointer',
-                fontFamily: 'inherit', opacity: (resendLoading || !resendEmail.trim()) ? 0.55 : 1,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {resendLoading ? 'Sending…' : 'Send link'}
-            </button>
-          </div>
-          {resendMsg && (
-            <p style={{ fontSize: 12.5, color: '#22c55e', marginTop: 8 }}>{resendMsg}</p>
-          )}
-        </div>
 
         <Link
           href="/login"

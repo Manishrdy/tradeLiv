@@ -94,13 +94,7 @@ export async function createQuoteFromShortlist(payload: CreateQuotePayload) {
     throw new QuoteDraftExistsError(existingDraft.id, existingDraft.title);
   }
 
-  // Fetch designer fee defaults
-  const designer = await prisma.designer.findUnique({
-    where: { id: designerId },
-    select: { feeDefaults: true },
-  });
-  const defaults = (designer?.feeDefaults as FeeConfig) ?? {};
-  const fees: FeeConfig = { ...defaults, ...feeConfig };
+  const fees: FeeConfig = { ...feeConfig };
 
   // Fetch shortlist items
   const where: any = { projectId, designerId };

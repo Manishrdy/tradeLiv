@@ -2,8 +2,11 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt, { type SignOptions } from 'jsonwebtoken';
 import crypto from 'crypto';
+import dns from 'dns';
 import { z } from 'zod';
 import { prisma } from '@furnlo/db';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const disposableDomains: string[] = require('disposable-email-domains');
 import { config, buildCookieOptions, clearCookieOptions } from '../config';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { writeAuditLog } from '../services/auditLog';
@@ -19,6 +22,31 @@ import logger from '../config/logger';
 import { logRouteError, logError } from '../services/errorLogger';
 
 const router = Router();
+
+/* ─── Email domain validation ──────────────────────── */
+
+const DISPOSABLE_DOMAINS = new Set(disposableDomains.map((d) => d.toLowerCase()));
+
+async function isEmailDomainAllowed(email: string): Promise<{ allowed: boolean; reason?: string }> {
+  const domain = email.split('@')[1]?.toLowerCase();
+  if (!domain) return { allowed: false, reason: 'Invalid email address.' };
+
+  if (DISPOSABLE_DOMAINS.has(domain)) {
+    return { allowed: false, reason: 'Please use your work email address. Temporary email addresses are not accepted.' };
+  }
+
+  // MX record check catches new or unlisted temporary domains
+  try {
+    const records = await dns.promises.resolveMx(domain);
+    if (!records || records.length === 0) {
+      return { allowed: false, reason: 'This email domain does not appear to accept mail. Please use a valid work email.' };
+    }
+  } catch {
+    return { allowed: false, reason: 'This email domain could not be verified. Please use a valid work email.' };
+  }
+
+  return { allowed: true };
+}
 
 /* ─── Constants ────────────────────────────────────── */
 
@@ -225,6 +253,12 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
   } = parsed.data;
 
   try {
+    const domainCheck = await isEmailDomainAllowed(email);
+    if (!domainCheck.allowed) {
+      res.status(400).json({ error: domainCheck.reason });
+      return;
+    }
+
     const existing = await prisma.designer.findUnique({ where: { email } });
     if (existing) {
       res.status(409).json({ error: 'An account with this email already exists.' });
@@ -278,6 +312,22 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
     logger.error('auth route error', { err, path: req.path, method: req.method });
     logRouteError('routes/auth.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+// GET /api/auth/check-email-domain?email=<address>
+router.get('/check-email-domain', async (req: Request, res: Response) => {
+  const email = typeof req.query.email === 'string' ? req.query.email.trim() : '';
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    res.status(400).json({ allowed: false, reason: 'Invalid email address.' });
+    return;
+  }
+  try {
+    const result = await isEmailDomainAllowed(email);
+    res.json(result);
+  } catch {
+    // Fail open — server-side signup validation is the hard gate
+    res.json({ allowed: true });
   }
 });
 
@@ -359,53 +409,6 @@ router.get('/verify-email', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/auth/resend-verification
-router.post('/resend-verification', async (req: Request, res: Response) => {
-  const { email } = req.body as { email?: string };
-  if (!email || typeof email !== 'string') {
-    res.status(400).json({ error: 'Email is required.' });
-    return;
-  }
-
-  try {
-    const designer = await prisma.designer.findUnique({ where: { email: email.toLowerCase().trim() } });
-
-    // Always return success to prevent email enumeration
-    if (!designer || designer.status !== 'email_pending') {
-      res.json({ message: 'If that email is registered and unverified, a new link has been sent.' });
-      return;
-    }
-
-    // Rate-limit: don't resend if the existing token was issued less than 2 minutes ago
-    if (
-      designer.emailVerificationExpiry &&
-      designer.emailVerificationExpiry.getTime() - Date.now() > 24 * 60 * 60 * 1000 - 2 * 60 * 1000
-    ) {
-      res.status(429).json({ error: 'Please wait a moment before requesting another verification email.', code: 'RESEND_TOO_SOON' });
-      return;
-    }
-
-    const rawToken = crypto.randomBytes(32).toString('hex');
-    await prisma.designer.update({
-      where: { id: designer.id },
-      data: {
-        emailVerificationToken: hashToken(rawToken),
-        emailVerificationExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000),
-      },
-    });
-
-    const verificationUrl = `${config.frontendUrl}/verify-email?token=${rawToken}`;
-    renderEmailVerificationEmail({ fullName: designer.fullName, verificationUrl })
-      .then((mail) => sendEmail({ to: designer.email, ...mail }))
-      .catch((err) => logger.error('[email] resend verification email failed', { err }));
-
-    res.json({ message: 'If that email is registered and unverified, a new link has been sent.' });
-  } catch (err) {
-    logger.error('resend-verification error', { err });
-    logRouteError('routes/auth.ts', err, req);
-    res.status(500).json({ error: 'An error occurred. Please try again.' });
-  }
-});
 
 // POST /api/auth/login
 // Failed attempts are tracked per account (not per unknown email) to limit user enumeration.
@@ -752,7 +755,6 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
         id: true, fullName: true, email: true,
         businessName: true, phone: true, status: true,
         isAdmin: true, isSuperAdmin: true, createdAt: true,
-        onboardingComplete: true,
       },
     });
     if (!designer) {
@@ -783,55 +785,6 @@ router.put('/me', requireAuth, requireRole('designer'), async (req: AuthRequest,
         id: true, fullName: true, email: true,
         businessName: true, phone: true, status: true,
         isAdmin: true, createdAt: true,
-      },
-    });
-    res.json(designer);
-  } catch (err) {
-    logger.error('auth route error', { err, path: req.path, method: req.method });
-    logRouteError('routes/auth.ts', err, req);
-    res.status(500).json({ error: 'An error occurred. Please try again.' });
-  }
-});
-
-// PUT /api/auth/me/onboarding-complete — mark onboarding wizard as done
-router.put('/me/onboarding-complete', requireAuth, requireRole('designer'), async (req: AuthRequest, res: Response) => {
-  try {
-    await prisma.designer.update({
-      where: { id: req.user!.id },
-      data: { onboardingComplete: true },
-    });
-    res.json({ onboardingComplete: true });
-  } catch (err) {
-    logger.error('auth route error', { err, path: req.path, method: req.method });
-    logRouteError('routes/auth.ts', err, req);
-    res.status(500).json({ error: 'An error occurred. Please try again.' });
-  }
-});
-
-// PUT /api/auth/me/fee-defaults — save default fee configuration for quotes
-const feeDefaultsSchema = z.object({
-  taxRate: z.number().min(0).max(100).optional(),
-  commissionType: z.enum(['percentage', 'fixed']).optional(),
-  commissionValue: z.number().min(0).optional(),
-  platformFeeType: z.enum(['percentage', 'fixed']).optional(),
-  platformFeeValue: z.number().min(0).optional(),
-});
-
-router.put('/me/fee-defaults', requireAuth, requireRole('designer'), async (req: AuthRequest, res: Response) => {
-  const parsed = feeDefaultsSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.errors[0].message });
-    return;
-  }
-
-  try {
-    const designer = await prisma.designer.update({
-      where: { id: req.user!.id },
-      data: { feeDefaults: parsed.data },
-      select: {
-        id: true, fullName: true, email: true,
-        businessName: true, phone: true, status: true,
-        isAdmin: true, createdAt: true, feeDefaults: true,
       },
     });
     res.json(designer);

@@ -12,6 +12,7 @@ import { QuoteRevisionEmail } from './templates/QuoteRevisionEmail';
 import { QuoteSentEmail } from './templates/QuoteSentEmail';
 import { RejectionEmail } from './templates/RejectionEmail';
 import { SuspensionEmail } from './templates/SuspensionEmail';
+import { AccountDeletedEmail } from './templates/AccountDeletedEmail';
 
 import type { AdminNewApplicationEmailProps } from './templates/AdminNewApplicationEmail';
 import type { EmailVerificationEmailProps } from './templates/EmailVerificationEmail';
@@ -24,6 +25,7 @@ import type { QuoteRevisionEmailProps } from './templates/QuoteRevisionEmail';
 import type { QuoteSentEmailProps } from './templates/QuoteSentEmail';
 import type { RejectionEmailProps } from './templates/RejectionEmail';
 import type { SuspensionEmailProps } from './templates/SuspensionEmail';
+import type { AccountDeletedEmailProps } from './templates/AccountDeletedEmail';
 
 export interface RenderedEmail {
   subject: string;
@@ -84,6 +86,15 @@ export async function renderSuspensionEmail(props: SuspensionEmailProps): Promis
   return {
     subject: 'Your tradeLiv account has been suspended',
     html: await render(React.createElement(SuspensionEmail, props)),
+  };
+}
+
+export async function renderAccountDeletedEmail(
+  props: AccountDeletedEmailProps,
+): Promise<RenderedEmail> {
+  return {
+    subject: 'Your tradeLiv account has been deleted',
+    html: await render(React.createElement(AccountDeletedEmail, props)),
   };
 }
 

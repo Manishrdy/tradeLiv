@@ -19,6 +19,7 @@ import {
   renderApprovalEmail,
   renderRejectionEmail,
   renderSuspensionEmail,
+  renderAccountDeletedEmail,
 } from '@furnlo/emails';
 import logger from '../config/logger';
 import { logRouteError, logError } from '../services/errorLogger';
@@ -230,7 +231,6 @@ router.put('/designers/:id/status', async (req: AuthRequest, res: Response) => {
       data: {
         status: newStatus,
         rejectionReason: newStatus === 'rejected' ? (rejectionReason ?? null) : null,
-        onboardingComplete: newStatus === 'approved' ? false : undefined,
       },
       select: {
         id: true, fullName: true, email: true, businessName: true,
@@ -454,6 +454,13 @@ router.delete('/designers/:id', async (req: AuthRequest, res: Response) => {
       entityId: id,
       payload: { designerEmail: designer.email, designerName: designer.fullName },
     }).catch((err) => logger.error('audit log write failed', { err }));
+
+    renderAccountDeletedEmail({ fullName: designer.fullName })
+      .then((mail) => sendEmail({ to: designer.email, ...mail }))
+      .catch((err) => {
+        logger.error('[email] account deleted email failed', { err });
+        logError({ fileName: 'routes/admin.ts', routePath: '/designers/:id', httpMethod: 'DELETE', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
+      });
 
     res.json({ success: true });
   } catch (err) {

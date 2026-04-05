@@ -6,7 +6,6 @@ import Link from 'next/link';
 import { useAuthStore } from '@/lib/store/auth';
 import { api } from '@/lib/api';
 import NotificationPanel from '@/components/NotificationPanel';
-import OnboardingWizard from '@/components/OnboardingWizard';
 
 /* ── Nav items ─────────────────────────────────────── */
 
@@ -235,14 +234,12 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
   const [isOffline, setIsOffline]     = useState(false);
   const [notifOpen, setNotifOpen]     = useState(false);
   const [notifUnread, setNotifUnread] = useState(0);
-  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
     setHydrated(true);
     api.getMe().then((r) => {
       if (r.data) {
-        setUser({ id: r.data.id, fullName: r.data.fullName, email: r.data.email, status: r.data.status, onboardingComplete: r.data.onboardingComplete });
-        if (r.data.onboardingComplete === false) setShowOnboarding(true);
+        setUser({ id: r.data.id, fullName: r.data.fullName, email: r.data.email, status: r.data.status });
       } else {
         clearAuth();
         router.replace('/login');
@@ -674,12 +671,6 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-base)' }}>
 
-      {showOnboarding && user && (
-        <OnboardingWizard
-          firstName={user.fullName?.split(' ')[0] ?? 'there'}
-          onComplete={() => setShowOnboarding(false)}
-        />
-      )}
 
       {/* ── Mobile hamburger ──────────────────────────── */}
       <div className="mobile-topbar" style={{

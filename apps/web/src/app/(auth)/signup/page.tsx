@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 
@@ -172,10 +172,11 @@ export default function SignupPage() {
   const [loading,       setLoading]       = useState(false);
   const [error,         setError]         = useState('');
   const [showPw,        setShowPw]        = useState(false);
-  const [resendLoading, setResendLoading] = useState(false);
-  const [resendMsg,     setResendMsg]     = useState('');
-  const [resendCooldown, setResendCooldown] = useState(false);
 
+  type DomainStatus = 'idle' | 'checking' | 'valid' | 'blocked';
+  const [emailDomainStatus, setEmailDomainStatus] = useState<DomainStatus>('idle');
+  const [emailDomainError,  setEmailDomainError]  = useState('');
+  const emailCheckRef = useRef<string>('');
   // Phase 1
   const [fullName,  setFullName]  = useState('');
   const [email,     setEmail]     = useState('');
@@ -219,10 +220,29 @@ export default function SignupPage() {
   const strengthLabel = ['', 'Weak', 'Fair', 'Good', 'Strong'][pwStrength] ?? '';
   const strengthColor = ['transparent', '#ef4444', '#f97316', '#eab308', '#22c55e'][pwStrength] ?? 'transparent';
 
+  async function handleEmailBlur() {
+    setTouched1((t) => ({ ...t, email: true }));
+    const trimmed = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return; // format error shown by emailErr
+    emailCheckRef.current = trimmed;
+    setEmailDomainStatus('checking');
+    setEmailDomainError('');
+    const result = await api.checkEmailDomain(trimmed);
+    if (emailCheckRef.current !== trimmed) return; // stale — email changed mid-flight
+    if (result.data?.allowed) {
+      setEmailDomainStatus('valid');
+    } else {
+      setEmailDomainStatus('blocked');
+      setEmailDomainError(result.data?.reason ?? result.error ?? 'Please use a valid work email.');
+    }
+  }
+
   function validateP1(): string | null {
     if (!fullName.trim())                              return 'Full name is required.';
     if (fullName.trim().split(/\s+/).length < 2)       return 'Please enter your first and last name.';
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))   return 'Valid email required.';
+    if (emailDomainStatus === 'checking')              return 'Verifying your email, please wait…';
+    if (emailDomainStatus === 'blocked')               return emailDomainError;
     if (password.length < 8)                            return 'Password must be at least 8 characters.';
     if (password !== confirmPw)                         return 'Passwords do not match.';
     return null;
@@ -236,17 +256,6 @@ export default function SignupPage() {
     if (!state)                 return 'State is required.';
     if (!yearsOfExperience)     return 'Years of experience is required.';
     return null;
-  }
-
-  async function handleResend() {
-    if (resendCooldown || resendLoading) return;
-    setResendLoading(true);
-    setResendMsg('');
-    await api.resendVerification(email);
-    setResendLoading(false);
-    setResendMsg('Verification email sent!');
-    setResendCooldown(true);
-    setTimeout(() => setResendCooldown(false), 60_000);
   }
 
   function handleP1(e: React.FormEvent) {
@@ -336,28 +345,6 @@ export default function SignupPage() {
             </ul>
           </div>
 
-          <button
-            onClick={handleResend}
-            disabled={resendLoading || resendCooldown}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              fontSize: 13, color: resendCooldown ? '#B0ADA8' : '#0F0F0F',
-              background: 'none', border: 'none', cursor: resendCooldown ? 'default' : 'pointer',
-              fontFamily: 'inherit', padding: 0, marginBottom: 20,
-              textDecoration: resendCooldown ? 'none' : 'underline',
-            }}
-          >
-            {resendLoading
-              ? 'Sending…'
-              : resendCooldown
-                ? 'Email sent — check your inbox'
-                : 'Resend verification email'
-            }
-          </button>
-          {resendMsg && !resendCooldown && (
-            <p style={{ fontSize: 12, color: '#22c55e', marginBottom: 16 }}>{resendMsg}</p>
-          )}
-
           <div>
             <Link
               href="/login"
@@ -416,19 +403,64 @@ export default function SignupPage() {
 
             <div style={{ marginBottom: 16 }}>
               <label htmlFor="signup-email" style={LABEL}>Email Address</label>
-              <input
-                id="signup-email"
-                type="email" placeholder="alex@yourstudio.com" value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onBlur={() => setTouched1((t) => ({ ...t, email: true }))}
-                autoComplete="email"
-                aria-required="true"
-                aria-invalid={!!emailErr}
-                aria-describedby={emailErr ? 'signup-email-error' : undefined}
-                style={{ ...INPUT, borderColor: emailErr ? '#ef4444' : undefined }}
-                onFocus={(e) => (e.target.style.borderColor = emailErr ? '#ef4444' : '#0F0F0F')}
-              />
-              {emailErr && <p id="signup-email-error" role="alert" style={FIELD_ERROR}>{emailErr}</p>}
+              <div style={{ position: 'relative' }}>
+                <input
+                  id="signup-email"
+                  type="email" placeholder="alex@yourstudio.com" value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setEmailDomainStatus('idle');
+                    setEmailDomainError('');
+                  }}
+                  onBlur={handleEmailBlur}
+                  autoComplete="email"
+                  aria-required="true"
+                  aria-invalid={!!emailErr || emailDomainStatus === 'blocked'}
+                  aria-describedby="signup-email-feedback"
+                  style={{
+                    ...INPUT,
+                    paddingRight: emailDomainStatus === 'checking' ? 38 : 14,
+                    borderColor: emailErr || emailDomainStatus === 'blocked'
+                      ? '#ef4444'
+                      : emailDomainStatus === 'valid'
+                        ? '#22c55e'
+                        : undefined,
+                  }}
+                  onFocus={(e) => {
+                    if (emailErr || emailDomainStatus === 'blocked') e.target.style.borderColor = '#ef4444';
+                    else if (emailDomainStatus === 'valid') e.target.style.borderColor = '#22c55e';
+                    else e.target.style.borderColor = '#0F0F0F';
+                  }}
+                />
+                {/* Inline spinner while checking */}
+                {emailDomainStatus === 'checking' && (
+                  <svg className="anim-rotate" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                    stroke="#B0ADA8" strokeWidth="2.5"
+                    style={{ position: 'absolute', right: 13, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+                    <path d="M21 12a9 9 0 11-6.219-8.56" />
+                  </svg>
+                )}
+                {/* Green tick when valid */}
+                {emailDomainStatus === 'valid' && !emailErr && (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                    stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                    style={{ position: 'absolute', right: 13, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+                    <path d="M20 6L9 17l-5-5" />
+                  </svg>
+                )}
+              </div>
+              <div id="signup-email-feedback">
+                {emailErr
+                  ? <p role="alert" style={FIELD_ERROR}>{emailErr}</p>
+                  : emailDomainStatus === 'blocked'
+                    ? <p role="alert" style={FIELD_ERROR}>{emailDomainError}</p>
+                    : emailDomainStatus === 'checking'
+                      ? <p style={{ fontSize: 12, color: '#B0ADA8', marginTop: 5, letterSpacing: '-0.01em' }}>Verifying email domain…</p>
+                      : emailDomainStatus === 'valid'
+                        ? <p style={{ fontSize: 12, color: '#22c55e', marginTop: 5, letterSpacing: '-0.01em' }}>Work email verified</p>
+                        : null
+                }
+              </div>
             </div>
 
             <div style={{ marginBottom: 16 }}>
@@ -509,18 +541,20 @@ export default function SignupPage() {
 
             <button
               type="submit"
+              disabled={loading || emailDomainStatus === 'checking'}
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                 width: '100%', padding: '13px 0',
                 background: '#0F0F0F', color: '#fff', border: 'none', borderRadius: 10,
                 fontSize: 14, fontWeight: 600, letterSpacing: '-0.01em',
-                cursor: 'pointer', fontFamily: 'inherit',
+                cursor: loading || emailDomainStatus === 'checking' ? 'not-allowed' : 'pointer',
+                fontFamily: 'inherit', opacity: emailDomainStatus === 'checking' ? 0.6 : 1,
                 transition: 'background 0.14s, transform 0.12s',
               }}
-              onMouseEnter={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.background = '#1A1A1A'; b.style.transform = 'translateY(-1px)'; }}
+              onMouseEnter={(e) => { if (!loading && emailDomainStatus !== 'checking') { const b = e.currentTarget as HTMLButtonElement; b.style.background = '#1A1A1A'; b.style.transform = 'translateY(-1px)'; } }}
               onMouseLeave={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.background = '#0F0F0F'; b.style.transform = 'translateY(0)'; }}
             >
-              Continue
+              {emailDomainStatus === 'checking' ? 'Verifying email…' : 'Continue'}
             </button>
           </form>
 

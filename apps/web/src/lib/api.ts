@@ -1316,14 +1316,6 @@ export interface QuoteUpdatePayload {
   platformFeeValue?: number | null;
 }
 
-export interface FeeDefaults {
-  taxRate?: number;
-  commissionType?: 'percentage' | 'fixed';
-  commissionValue?: number;
-  platformFeeType?: 'percentage' | 'fixed';
-  platformFeeValue?: number;
-}
-
 /* ─── API methods ───────────────────────────────────── */
 
 export const api = {
@@ -1331,11 +1323,11 @@ export const api = {
   signupDesigner: (payload: SignupDesignerPayload) =>
     request<SignupResponse>('/api/auth/signup/designer', { method: 'POST', body: JSON.stringify(payload) }),
 
+  checkEmailDomain: (email: string) =>
+    request<{ allowed: boolean; reason?: string }>(`/api/auth/check-email-domain?email=${encodeURIComponent(email)}`),
+
   verifyEmail: (token: string) =>
     request<{ verified: boolean }>(`/api/auth/verify-email?token=${encodeURIComponent(token)}`),
-
-  resendVerification: (email: string) =>
-    request<{ message: string }>('/api/auth/resend-verification', { method: 'POST', body: JSON.stringify({ email }) }),
 
   login: (payload: LoginPayload) =>
     request<AuthResponse>('/api/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
@@ -1667,13 +1659,6 @@ export const api = {
 
   markPortalQuoteCommentsRead: (portalToken: string, quoteId: string) =>
     request<{ markedRead: number }>(`/api/portal/${portalToken}/quotes/${quoteId}/comments/read`, { method: 'PUT' }),
-
-  // Fee defaults
-  updateFeeDefaults: (payload: FeeDefaults) =>
-    request<DesignerProfile>('/api/auth/me/fee-defaults', { method: 'PUT', body: JSON.stringify(payload) }),
-
-  completeOnboarding: () =>
-    request<{ onboardingComplete: boolean }>('/api/auth/me/onboarding-complete', { method: 'PUT' }),
 
   // Admin
   getAdminMe: () =>

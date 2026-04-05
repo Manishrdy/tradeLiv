@@ -120,9 +120,6 @@ model Designer {
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
 
-  onboardingComplete  Boolean        @default(true)
-  feeDefaults         Json?          // { taxRate, commissionType, commissionValue, platformFeeType, platformFeeValue }
-
   clients             Client[]
   projects            Project[]
   products            Product[]
