@@ -1220,6 +1220,92 @@ router.get('/health', async (_req: AuthRequest, res: Response) => {
   }
 });
 
+/* ─── Error Incidents (GitHub-linked) ─────────────── */
+
+const VALID_ISSUE_STATES = new Set(['open', 'closed']);
+const VALID_ISSUE_SEVERITIES = new Set(['warn', 'error', 'critical']);
+
+router.get('/issues', async (req: AuthRequest, res: Response) => {
+  const { page = '1', limit = '25', state, severity, search } = req.query;
+  const take = Math.min(Number(limit) || 25, 100);
+  const currentPage = Math.max(Number(page) || 1, 1);
+  const skip = (currentPage - 1) * take;
+
+  try {
+    const where: Record<string, unknown> = {};
+
+    if (state && typeof state === 'string') {
+      if (!VALID_ISSUE_STATES.has(state)) {
+        res.status(400).json({ error: `Invalid state. Must be one of: ${[...VALID_ISSUE_STATES].join(', ')}` });
+        return;
+      }
+      where.githubIssueState = state;
+    }
+
+    if (severity && typeof severity === 'string') {
+      if (!VALID_ISSUE_SEVERITIES.has(severity)) {
+        res.status(400).json({ error: `Invalid severity. Must be one of: ${[...VALID_ISSUE_SEVERITIES].join(', ')}` });
+        return;
+      }
+      where.severity = severity;
+    }
+
+    if (search && typeof search === 'string') {
+      const term = search.trim().slice(0, 100);
+      if (term.length < 2) {
+        res.status(400).json({ error: 'Search term must be at least 2 characters.' });
+        return;
+      }
+      where.OR = [
+        { fileName: { contains: term, mode: 'insensitive' } },
+        { routePath: { contains: term, mode: 'insensitive' } },
+        { normalizedErrorMessage: { contains: term, mode: 'insensitive' } },
+        { useDbEnv: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+
+    const [issues, total] = await Promise.all([
+      prisma.errorIncident.findMany({
+        where,
+        orderBy: [{ lastSeenAt: 'desc' }, { createdAt: 'desc' }],
+        take,
+        skip,
+        select: {
+          id: true,
+          fingerprint: true,
+          fileName: true,
+          routePath: true,
+          httpMethod: true,
+          normalizedErrorMessage: true,
+          severity: true,
+          useDbEnv: true,
+          githubIssueNumber: true,
+          githubIssueUrl: true,
+          githubIssueState: true,
+          issueClosedAt: true,
+          firstSeenAt: true,
+          lastSeenAt: true,
+          occurrenceCount: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      prisma.errorIncident.count({ where }),
+    ]);
+
+    res.json({
+      issues,
+      total,
+      page: currentPage,
+      totalPages: Math.ceil(total / take),
+    });
+  } catch (err) {
+    logger.error('admin issues error', { err, path: req.path, method: req.method });
+    logRouteError('routes/admin.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
 /* ─── Platform Config ─────────────────────────────── */
 
 router.get('/config', async (_req: AuthRequest, res: Response) => {
@@ -1302,6 +1388,24 @@ router.post('/config', requireSuperAdmin, async (req: AuthRequest, res: Response
     }).catch((err) => logger.error('audit log write failed', { err }));
 
     res.status(201).json(config);
+  } catch (err) {
+    logger.error('admin config error', { err });
+    logRouteError('routes/admin.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+router.delete('/config/:key', requireSuperAdmin, async (req: AuthRequest, res: Response) => {
+  const key = String(req.params.key);
+  try {
+    await prisma.platformConfig.delete({ where: { key } });
+
+    writeAuditLog({
+      actorType: 'admin', actorId: req.user!.id,
+      action: 'config_deleted', entityType: 'platform_config', entityId: key,
+    }).catch((err) => logger.error('audit log write failed', { err }));
+
+    res.json({ success: true });
   } catch (err) {
     logger.error('admin config error', { err });
     logRouteError('routes/admin.ts', err, req);

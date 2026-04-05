@@ -120,6 +120,26 @@ export const config = {
   get messageTtlDays() {
     return Number(process.env.MESSAGE_TTL_DAYS) || 30;
   },
+  github: {
+    get issuesEnabled() {
+      return process.env.GITHUB_ISSUES_ENABLED === 'true';
+    },
+    get owner() {
+      return process.env.GITHUB_OWNER || '';
+    },
+    get repo() {
+      return process.env.GITHUB_REPO || '';
+    },
+    get token() {
+      return process.env.GITHUB_TOKEN || '';
+    },
+    get issueLabel() {
+      return process.env.GITHUB_ISSUE_LABEL || 'auto-error';
+    },
+    get webhookSecret() {
+      return process.env.GITHUB_WEBHOOK_SECRET || '';
+    },
+  },
   email: {
     get smtpHost() {
       return process.env.SMTP_HOST || 'smtp.zoho.com';

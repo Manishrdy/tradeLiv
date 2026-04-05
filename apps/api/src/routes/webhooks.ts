@@ -5,6 +5,7 @@ import { config } from '../config';
 import { writeAuditLog } from '../services/auditLog';
 import logger from '../config/logger';
 import { logRouteError } from '../services/errorLogger';
+import { verifyGithubWebhookSignature } from '../services/githubIssueService';
 
 let _stripe: Stripe | null = null;
 function getStripe(): Stripe {
@@ -99,5 +100,61 @@ export async function stripeWebhookHandler(req: Request, res: Response) {
     logger.error('Stripe webhook processing error', { err, eventType: event.type });
     logRouteError('routes/webhooks.ts', err, req);
     res.status(500).json({ error: 'Webhook processing failed.' });
+  }
+}
+
+type GithubIssuesWebhookPayload = {
+  action?: string;
+  issue?: {
+    number?: number;
+    state?: 'open' | 'closed';
+  };
+};
+
+export async function githubWebhookHandler(req: Request, res: Response) {
+  const signature = req.headers['x-hub-signature-256'];
+  const event = req.headers['x-github-event'];
+  const delivery = req.headers['x-github-delivery'];
+  const rawBody = req.body as Buffer;
+
+  if (!verifyGithubWebhookSignature(rawBody, typeof signature === 'string' ? signature : undefined)) {
+    res.status(401).json({ error: 'Invalid GitHub webhook signature.' });
+    return;
+  }
+
+  try {
+    if (event !== 'issues') {
+      res.json({ received: true, ignored: true });
+      return;
+    }
+
+    const payload = JSON.parse(rawBody.toString('utf8')) as GithubIssuesWebhookPayload;
+    const issueNumber = payload.issue?.number;
+    if (!issueNumber) {
+      res.status(400).json({ error: 'Missing issue number.' });
+      return;
+    }
+
+    if (payload.action === 'closed' || payload.action === 'reopened' || payload.action === 'opened') {
+      const state = payload.issue?.state === 'closed' ? 'closed' : 'open';
+      await prisma.errorIncident.updateMany({
+        where: { githubIssueNumber: issueNumber },
+        data: {
+          githubIssueState: state,
+          issueClosedAt: state === 'closed' ? new Date() : null,
+        },
+      });
+      logger.info('github webhook incident state synced', {
+        action: payload.action,
+        issueNumber,
+        delivery,
+      });
+    }
+
+    res.json({ received: true });
+  } catch (err) {
+    logger.error('GitHub webhook processing error', { err, delivery });
+    logRouteError('routes/webhooks.ts', err, req);
+    res.status(500).json({ error: 'GitHub webhook processing failed.' });
   }
 }

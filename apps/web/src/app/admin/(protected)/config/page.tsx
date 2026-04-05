@@ -110,7 +110,7 @@ export default function AdminConfigPage() {
               <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Key</label>
               <input
                 value={newConfig.key} onChange={(e) => setNewConfig({ ...newConfig, key: e.target.value })}
-                placeholder="tax_rate" style={inputStyle}
+                placeholder="config_key" style={inputStyle}
               />
             </div>
             <div>

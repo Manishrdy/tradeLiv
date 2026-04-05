@@ -512,12 +512,39 @@ model ErrorLog {
   inputPayload  Json?
   designerId    String?
   severity      String   @default("error")
+  useDbEnv      String?
+  errorFingerprint String?
   createdAt     DateTime @default(now())
 
   @@index([fileName, createdAt])
   @@index([severity, createdAt])
   @@index([designerId, createdAt])
+  @@index([errorFingerprint, createdAt])
   @@index([createdAt])
+}
+
+model ErrorIncident {
+  id                      String   @id @default(uuid())
+  fingerprint             String   @unique
+  fileName                String
+  routePath               String?
+  httpMethod              String?
+  normalizedErrorMessage  String
+  severity                String   @default("error")
+  useDbEnv                String?
+  githubIssueNumber       Int?
+  githubIssueUrl          String?
+  githubIssueState        String   @default("open")
+  issueClosedAt           DateTime?
+  issueCreationInProgress Boolean  @default(false)
+  firstSeenAt             DateTime @default(now())
+  lastSeenAt              DateTime @default(now())
+  occurrenceCount         Int      @default(1)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([githubIssueNumber])
+  @@index([githubIssueState, lastSeenAt])
 }
 
 model FurnitureCategory {

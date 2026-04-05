@@ -81,6 +81,17 @@ const NAV = [
     ),
   },
   {
+    href: '/admin/issues',
+    label: 'Issues',
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <circle cx="12" cy="16" r="1" />
+      </svg>
+    ),
+  },
+  {
     href: '/admin/team',
     label: 'Team',
     superAdminOnly: true,

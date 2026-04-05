@@ -1087,6 +1087,26 @@ export interface AdminNotification {
   designer: { id: string; fullName: string; email: string; businessName: string | null; status: string } | null;
 }
 
+export interface AdminErrorIssue {
+  id: string;
+  fingerprint: string;
+  fileName: string;
+  routePath: string | null;
+  httpMethod: string | null;
+  normalizedErrorMessage: string;
+  severity: 'warn' | 'error' | 'critical' | string;
+  useDbEnv: string | null;
+  githubIssueNumber: number | null;
+  githubIssueUrl: string | null;
+  githubIssueState: 'open' | 'closed' | string;
+  issueClosedAt: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  occurrenceCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /* ─── Platform Health types ────────────────────────── */
 
 export interface PlatformHealth {
@@ -1713,6 +1733,17 @@ export const api = {
 
   markAllAdminNotificationsRead: () =>
     request<{ success: boolean }>('/api/admin/notifications/read-all', { method: 'PUT' }),
+
+  getAdminErrorIssues: (params?: { state?: 'open' | 'closed'; severity?: 'warn' | 'error' | 'critical'; search?: string; page?: number; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.state) qs.set('state', params.state);
+    if (params?.severity) qs.set('severity', params.severity);
+    if (params?.search) qs.set('search', params.search);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return request<{ issues: AdminErrorIssue[]; total: number; page: number; totalPages: number }>(`/api/admin/issues${q ? `?${q}` : ''}`);
+  },
 
   getAdminActivity: () =>
     request<AuditLogEntry[]>('/api/admin/activity'),

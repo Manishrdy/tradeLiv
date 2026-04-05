@@ -19,7 +19,7 @@ import comparisonsRouter from './routes/comparisons';
 import quotesRouter from './routes/quotes';
 import pdfRouter from './routes/pdf';
 import notificationsRouter from './routes/notifications';
-import { stripeWebhookHandler } from './routes/webhooks';
+import { stripeWebhookHandler, githubWebhookHandler } from './routes/webhooks';
 import { addProjectListener, emitProjectEvent } from './services/projectEvents';
 import { addDesignerListener } from './services/designerEvents';
 import { addAdminListener } from './services/adminEvents';
@@ -42,6 +42,8 @@ export function createApp() {
 
   // Stripe webhook needs raw body — must be BEFORE express.json()
   app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhookHandler);
+  // GitHub webhook signature is calculated against the raw body.
+  app.post('/api/webhooks/github', express.raw({ type: 'application/json' }), githubWebhookHandler);
 
   app.use(express.json({ limit: '1mb' }));
 
