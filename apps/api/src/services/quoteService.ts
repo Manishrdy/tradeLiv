@@ -3,6 +3,14 @@ import { splitOrderByBrand } from './orderSplitter';
 import { emitProjectEvent } from './projectEvents';
 import { writeAuditLog } from './auditLog';
 import { notifyProjectDesigner } from './notificationService';
+import { sendEmail } from './emailService';
+import {
+  renderQuoteSentEmail,
+  renderQuoteApprovedEmail,
+  renderQuoteRevisionEmail,
+} from '@furnlo/emails';
+import { config } from '../config';
+import { logError } from './errorLogger';
 import logger from '../config/logger';
 
 /* ─── Errors ───────────────────────────────────────────── */
@@ -371,6 +379,30 @@ export async function sendQuote(quoteId: string, designerId: string) {
 
   emitProjectEvent(quote.projectId, 'quote_sent', { quoteId });
 
+  // Email client with portal link (fire-and-forget)
+  void (async () => {
+    try {
+      const project = await prisma.project.findUnique({
+        where: { id: quote.projectId },
+        include: {
+          client: { select: { name: true, email: true } },
+          designer: { select: { fullName: true } },
+        },
+      });
+      if (!project?.client?.email || !project.portalToken) return;
+      const rendered = await renderQuoteSentEmail({
+        clientName: project.client.name,
+        designerName: project.designer?.fullName ?? 'Your designer',
+        projectName: project.name,
+        portalUrl: `${config.frontendUrl}/portal/${project.portalToken}`,
+      });
+      await sendEmail({ to: project.client.email, ...rendered });
+    } catch (err) {
+      logger.error('[email] quote sent email failed', { err });
+      logError({ fileName: 'services/quoteService.ts', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
+    }
+  })();
+
   return updated;
 }
 
@@ -401,6 +433,31 @@ export async function approveQuote(quoteId: string, projectId: string) {
     undefined, 'quote', quoteId,
   ).catch(() => {});
 
+  // Email designer
+  void (async () => {
+    try {
+      const project = await prisma.project.findUnique({
+        where: { id: projectId },
+        include: {
+          designer: { select: { fullName: true, email: true } },
+          client: { select: { name: true } },
+        },
+      });
+      if (!project?.designer?.email) return;
+      const rendered = await renderQuoteApprovedEmail({
+        designerName: project.designer.fullName,
+        clientName: project.client?.name ?? 'Your client',
+        projectName: project.name,
+        quoteTitle: updated.title,
+        dashboardUrl: `${config.frontendUrl}/projects/${projectId}`,
+      });
+      await sendEmail({ to: project.designer.email, ...rendered });
+    } catch (err) {
+      logger.error('[email] quote approved email failed', { err });
+      logError({ fileName: 'services/quoteService.ts', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
+    }
+  })();
+
   return updated;
 }
 
@@ -428,6 +485,31 @@ export async function requestRevision(quoteId: string, projectId: string) {
     'Client requested a revision on your quote',
     undefined, 'quote', quoteId,
   ).catch(() => {});
+
+  // Email designer
+  void (async () => {
+    try {
+      const project = await prisma.project.findUnique({
+        where: { id: projectId },
+        include: {
+          designer: { select: { fullName: true, email: true } },
+          client: { select: { name: true } },
+        },
+      });
+      if (!project?.designer?.email) return;
+      const rendered = await renderQuoteRevisionEmail({
+        designerName: project.designer.fullName,
+        clientName: project.client?.name ?? 'Your client',
+        projectName: project.name,
+        quoteTitle: updated.title,
+        dashboardUrl: `${config.frontendUrl}/projects/${projectId}`,
+      });
+      await sendEmail({ to: project.designer.email, ...rendered });
+    } catch (err) {
+      logger.error('[email] quote revision email failed', { err });
+      logError({ fileName: 'services/quoteService.ts', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
+    }
+  })();
 
   return updated;
 }

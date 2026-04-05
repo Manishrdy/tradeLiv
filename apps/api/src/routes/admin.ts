@@ -12,8 +12,15 @@ import {
   getAdminUnreadCount,
 } from '../services/adminNotificationService';
 import { addAdminListener } from '../services/adminEvents';
+import { config } from '../config';
+import { sendEmail } from '../services/emailService';
+import {
+  renderApprovalEmail,
+  renderRejectionEmail,
+  renderSuspensionEmail,
+} from '@furnlo/emails';
 import logger from '../config/logger';
-import { logRouteError } from '../services/errorLogger';
+import { logRouteError, logError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
@@ -230,7 +237,7 @@ router.put('/designers/:id/status', async (req: AuthRequest, res: Response) => {
       payload: { from: existing.status, to: newStatus, rejectionReason: rejectionReason ?? null },
     }).catch((err) => logger.error('audit log write failed', { err }));
 
-    // Notify the designer about approval / rejection
+    // Notify the designer about approval / rejection / suspension
     if (newStatus === 'approved') {
       createNotification({
         designerId: id,
@@ -238,6 +245,13 @@ router.put('/designers/:id/status', async (req: AuthRequest, res: Response) => {
         title: 'Your application has been approved!',
         body: 'Welcome to tradeLiv. You can now sign in and start using the platform.',
       }).catch((err) => logger.error('Failed to notify designer on approval', { err }));
+
+      renderApprovalEmail({ fullName: designer.fullName, loginUrl: `${config.frontendUrl}/login` })
+        .then((email) => sendEmail({ to: designer.email, ...email }))
+        .catch((err) => {
+          logger.error('[email] approval email failed', { err });
+          logError({ fileName: 'routes/admin.ts', routePath: '/designers/:id/status', httpMethod: 'PUT', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
+        });
     } else if (newStatus === 'rejected') {
       createNotification({
         designerId: id,
@@ -245,6 +259,20 @@ router.put('/designers/:id/status', async (req: AuthRequest, res: Response) => {
         title: 'Application update',
         body: rejectionReason || 'Your application was not approved at this time. Please contact support for details.',
       }).catch((err) => logger.error('Failed to notify designer on rejection', { err }));
+
+      renderRejectionEmail({ fullName: designer.fullName, reason: rejectionReason })
+        .then((email) => sendEmail({ to: designer.email, ...email }))
+        .catch((err) => {
+          logger.error('[email] rejection email failed', { err });
+          logError({ fileName: 'routes/admin.ts', routePath: '/designers/:id/status', httpMethod: 'PUT', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
+        });
+    } else if (newStatus === 'suspended') {
+      renderSuspensionEmail({ fullName: designer.fullName })
+        .then((email) => sendEmail({ to: designer.email, ...email }))
+        .catch((err) => {
+          logger.error('[email] suspension email failed', { err });
+          logError({ fileName: 'routes/admin.ts', routePath: '/designers/:id/status', httpMethod: 'PUT', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
+        });
     }
 
     res.json(designer);

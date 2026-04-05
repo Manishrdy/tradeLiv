@@ -7,8 +7,11 @@ import { emitProjectEvent } from '../services/projectEvents';
 import { createMessage, getMessages, markMessagesRead, getUnreadCount, getProjectPresence } from '../services/messageService';
 import { approveQuote, requestRevision, getQuoteDetail } from '../services/quoteService';
 import { notifyProjectDesigner } from '../services/notificationService';
+import { sendEmail } from '../services/emailService';
+import { renderQuoteCommentEmail } from '@furnlo/emails';
+import { config } from '../config';
 import logger from '../config/logger';
-import { logRouteError } from '../services/errorLogger';
+import { logRouteError, logError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
@@ -649,13 +652,35 @@ router.post('/:portalToken/quotes/:quoteId/comments', portalMessageLimiter, asyn
       createdAt: message.createdAt.toISOString(),
     });
 
-    // Notify designer
+    // Notify designer (in-app)
     notifyProjectDesigner(
       project.id, 'quote_comment',
       `${parsed.data.senderName} commented on a quote`,
       parsed.data.text.length > 120 ? parsed.data.text.slice(0, 117) + '...' : parsed.data.text,
       'quote', req.params.quoteId,
     ).catch(() => {});
+
+    // Email designer (fire-and-forget)
+    void (async () => {
+      try {
+        const designer = await prisma.designer.findUnique({
+          where: { id: project.designerId },
+          select: { fullName: true, email: true },
+        });
+        if (!designer?.email) return;
+        const rendered = await renderQuoteCommentEmail({
+          recipientName: designer.fullName,
+          senderName: project.client?.name ?? 'Your client',
+          projectName: project.name,
+          commentText: message.text,
+          actionUrl: `${config.frontendUrl}/projects/${project.id}`,
+        });
+        await sendEmail({ to: designer.email, ...rendered });
+      } catch (err) {
+        logger.error('[email] portal quote comment email failed', { err });
+        logError({ fileName: 'routes/portal.ts', routePath: '/:portalToken/quotes/:quoteId/comments', httpMethod: 'POST', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
+      }
+    })();
 
     res.status(201).json({
       id: message.id,

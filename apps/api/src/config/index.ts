@@ -120,4 +120,45 @@ export const config = {
   get messageTtlDays() {
     return Number(process.env.MESSAGE_TTL_DAYS) || 30;
   },
+  email: {
+    get smtpHost() {
+      return process.env.SMTP_HOST || 'smtp.zoho.com';
+    },
+    get smtpPort() {
+      return Number(process.env.SMTP_PORT) || 465;
+    },
+    get smtpSecure() {
+      return process.env.SMTP_SECURE !== 'false';
+    },
+    get smtpUser() {
+      return process.env.SMTP_USER!;
+    },
+    get smtpPass() {
+      return process.env.SMTP_PASS!;
+    },
+    get fromName() {
+      return process.env.EMAIL_FROM_NAME || 'tradeLiv';
+    },
+    get fromAddress() {
+      return process.env.EMAIL_FROM_ADDRESS || process.env.SMTP_USER!;
+    },
+    get imapHost() {
+      return process.env.IMAP_HOST || 'imap.zoho.com';
+    },
+    get imapPort() {
+      return Number(process.env.IMAP_PORT) || 993;
+    },
+    get imapSecure() {
+      return process.env.IMAP_SECURE !== 'false';
+    },
+    get imapUser() {
+      return process.env.IMAP_USER!;
+    },
+    get imapPass() {
+      return process.env.IMAP_PASS!;
+    },
+    get adminEmail() {
+      return process.env.ADMIN_EMAIL || process.env.EMAIL_FROM_ADDRESS || process.env.SMTP_USER!;
+    },
+  },
 };

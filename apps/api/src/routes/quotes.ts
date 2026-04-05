@@ -16,8 +16,11 @@ import {
 } from '../services/quoteService';
 import { createMessage, getMessages, markMessagesRead } from '../services/messageService';
 import { emitProjectEvent } from '../services/projectEvents';
+import { sendEmail } from '../services/emailService';
+import { renderQuoteCommentEmail } from '@furnlo/emails';
+import { config } from '../config';
 import logger from '../config/logger';
-import { logRouteError } from '../services/errorLogger';
+import { logRouteError, logError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
 
 const router = Router();
@@ -376,6 +379,30 @@ router.post('/:quoteId/comments', async (req: AuthRequest, res: Response) => {
       lineItemId: (message.metadata as any)?.lineItemId ?? null,
       createdAt: message.createdAt.toISOString(),
     });
+
+    // Email client about the new comment (fire-and-forget)
+    void (async () => {
+      try {
+        const project = await prisma.project.findUnique({
+          where: { id: quote.projectId },
+          include: { client: { select: { name: true, email: true } } },
+        });
+        if (!project?.client?.email) return;
+        const rendered = await renderQuoteCommentEmail({
+          recipientName: project.client.name,
+          senderName: message.senderName,
+          projectName: project.name,
+          commentText: message.text,
+          actionUrl: project.portalToken
+            ? `${config.frontendUrl}/portal/${project.portalToken}`
+            : `${config.frontendUrl}/projects/${quote.projectId}`,
+        });
+        await sendEmail({ to: project.client.email, ...rendered });
+      } catch (err) {
+        logger.error('[email] quote comment email failed', { err });
+        logError({ fileName: 'routes/quotes.ts', routePath: '/:quoteId/comments', httpMethod: 'POST', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
+      }
+    })();
 
     // Return in legacy QuoteComment shape
     res.status(201).json({

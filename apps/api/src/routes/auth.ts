@@ -8,8 +8,14 @@ import { config, buildCookieOptions, clearCookieOptions } from '../config';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { writeAuditLog } from '../services/auditLog';
 import { createAdminNotification } from '../services/adminNotificationService';
+import { sendEmail } from '../services/emailService';
+import {
+  renderDesignerSignupEmail,
+  renderAdminNewApplicationEmail,
+  renderPasswordChangedEmail,
+} from '@furnlo/emails';
 import logger from '../config/logger';
-import { logRouteError } from '../services/errorLogger';
+import { logRouteError, logError } from '../services/errorLogger';
 
 const router = Router();
 
@@ -239,6 +245,28 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
       body: businessName ? `${businessName} — ${city}, ${state}` : `${city}, ${state}`,
       designerId: designer.id,
     }).catch((err) => logger.error('Failed to create admin notification', { err }));
+
+    // Send confirmation to designer + alert to admin
+    renderDesignerSignupEmail({ fullName: designer.fullName })
+      .then((email) => sendEmail({ to: designer.email, ...email }))
+      .catch((err) => {
+        logger.error('[email] designer signup email failed', { err });
+        logError({ fileName: 'routes/auth.ts', routePath: '/signup/designer', httpMethod: 'POST', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
+      });
+
+    renderAdminNewApplicationEmail({
+      fullName: designer.fullName,
+      email: designer.email,
+      businessName: designer.businessName,
+      city: designer.city ?? '',
+      state: designer.state ?? '',
+      adminUrl: `${config.frontendUrl}/admin/designers`,
+    })
+      .then((email) => sendEmail({ to: config.email.adminEmail, ...email }))
+      .catch((err) => {
+        logger.error('[email] admin new application email failed', { err });
+        logError({ fileName: 'routes/auth.ts', routePath: '/signup/designer', httpMethod: 'POST', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
+      });
 
     // No tokens issued — designer must wait for admin approval
     res.status(201).json({
@@ -627,7 +655,7 @@ router.put('/change-password', requireAuth, async (req: AuthRequest, res: Respon
   try {
     const designer = await prisma.designer.findUnique({
       where: { id: req.user!.id },
-      select: { id: true, passwordHash: true },
+      select: { id: true, passwordHash: true, fullName: true, email: true },
     });
 
     if (!designer) {
@@ -669,6 +697,13 @@ router.put('/change-password', requireAuth, async (req: AuthRequest, res: Respon
       entityType: 'designer',
       entityId: designer.id,
     });
+
+    renderPasswordChangedEmail({ fullName: designer.fullName })
+      .then((email) => sendEmail({ to: designer.email, ...email }))
+      .catch((err) => {
+        logger.error('[email] password changed email failed', { err });
+        logError({ fileName: 'routes/auth.ts', routePath: '/change-password', httpMethod: 'PUT', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
+      });
 
     res.json({ message: 'Password changed successfully.' });
   } catch (err) {

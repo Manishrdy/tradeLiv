@@ -12,6 +12,7 @@ assertAuthEnv();
 
 import logger from './config/logger';
 import { createApp } from './app';
+import { verifySmtpConnection } from './services/emailService';
 import { purgeExpiredMessages } from './services/messageService';
 import { purgeOldNotifications } from './services/notificationService';
 
@@ -26,6 +27,11 @@ async function start() {
     logger.error('Migration failed — aborting startup', { error: (err as Error).message });
     process.exit(1);
   }
+
+  // Verify SMTP connection on startup — logs warning if misconfigured but never blocks boot
+  verifySmtpConnection().catch((err) =>
+    logger.warn('[email] SMTP connection failed — emails will not send', { err }),
+  );
 
   app.listen(PORT, () => {
     logger.info(`tradeLiv API running on port ${PORT} (db: ${useDb})`);
