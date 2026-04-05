@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, AdminDesignerDetail } from '@/lib/api';
 
+
 const STATUS_STYLE: Record<string, { color: string; bg: string; label: string }> = {
   approved:       { color: '#2d7a4f', bg: '#e8f5ee', label: 'Approved' },
   pending_review: { color: '#7a5c2d', bg: '#fdf5e6', label: 'Pending Review' },
@@ -55,6 +56,18 @@ export default function AdminDesignerDetailPage() {
   // Simple confirm for approve/suspend
   const [confirmStatus, setConfirmStatus] = useState<string | null>(null);
 
+  // Impersonation
+  const [impersonating, setImpersonating] = useState(false);
+
+  // Resend confirmation email
+  const [showResendModal, setShowResendModal] = useState(false);
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [emailSuccess, setEmailSuccess] = useState('');
+
+  // Delete
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
   useEffect(() => {
     api.getAdminDesigner(id).then((r) => {
       if (r.error || !r.data) { setNotFound(true); setLoading(false); return; }
@@ -74,6 +87,33 @@ export default function AdminDesignerDetailPage() {
     setRejectionReason('');
     if (r.error) { setUpdateError(r.error); return; }
     setDesigner((prev) => prev ? { ...prev, status: newStatus, rejectionReason: reason ?? null } : prev);
+  }
+
+  async function handleImpersonate() {
+    setImpersonating(true);
+    const r = await api.impersonateDesigner(id);
+    setImpersonating(false);
+    if (r.error) { setUpdateError(r.error); return; }
+    window.open(r.data.loginUrl, '_blank');
+  }
+
+  async function handleResendConfirmation() {
+    if (!designer) return;
+    setSendingEmail(true);
+    setEmailSuccess('');
+    const r = await api.adminSendEmail(id, 'verification');
+    setSendingEmail(false);
+    if (r.error) { setUpdateError(r.error); return; }
+    setEmailSuccess(`Confirmation email sent to ${r.data.to}`);
+    setTimeout(() => { setShowResendModal(false); setEmailSuccess(''); }, 2000);
+  }
+
+  async function handleDelete() {
+    setDeleting(true);
+    const r = await api.adminDeleteDesigner(id);
+    setDeleting(false);
+    if (r.error) { setUpdateError(r.error); setShowDeleteModal(false); return; }
+    router.replace('/admin/designers');
   }
 
   if (loading) {
@@ -100,7 +140,7 @@ export default function AdminDesignerDetailPage() {
 
   const actions: { label: string; action: () => void; style: React.CSSProperties }[] = [
     designer.status !== 'approved'  && { label: 'Approve',  action: () => setConfirmStatus('approved'),  style: { background: '#2d7a4f', color: '#fff', border: 'none' } },
-    designer.status !== 'rejected'  && { label: 'Reject',   action: () => setShowRejectModal(true),      style: { background: 'transparent', color: '#8b2635', border: '1px solid rgba(139,38,53,0.3)' } },
+    designer.status !== 'rejected' && designer.status !== 'approved' && { label: 'Reject', action: () => setShowRejectModal(true), style: { background: 'transparent', color: '#8b2635', border: '1px solid rgba(139,38,53,0.3)' } },
     designer.status !== 'suspended' && { label: 'Suspend',  action: () => setConfirmStatus('suspended'), style: { background: 'transparent', color: '#555', border: '1px solid #ccc' } },
   ].filter(Boolean) as { label: string; action: () => void; style: React.CSSProperties }[];
 
@@ -142,7 +182,47 @@ export default function AdminDesignerDetailPage() {
         </div>
 
         {/* Action buttons */}
-        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {/* Impersonate */}
+          {designer.status === 'approved' && (
+            <button
+              onClick={handleImpersonate}
+              disabled={impersonating}
+              title="Open a new tab logged in as this designer (15 min session)"
+              style={{
+                borderRadius: 8, padding: '7px 14px', fontSize: 12.5, fontWeight: 700,
+                cursor: 'pointer', fontFamily: 'inherit',
+                background: '#f0f4ff', color: '#2d5f7a', border: '1px solid #c3d5e8',
+                opacity: impersonating ? 0.6 : 1,
+              }}
+            >
+              {impersonating ? 'Opening…' : 'View as Designer'}
+            </button>
+          )}
+          {/* Resend confirmation — only for users pending verification/review */}
+          {(designer.status === 'email_pending' || designer.status === 'pending_review') && (
+            <button
+              onClick={() => setShowResendModal(true)}
+              style={{
+                borderRadius: 8, padding: '7px 14px', fontSize: 12.5, fontWeight: 700,
+                cursor: 'pointer', fontFamily: 'inherit',
+                background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)',
+              }}
+            >
+              Resend Confirmation
+            </button>
+          )}
+          {/* Delete — always visible */}
+          <button
+            onClick={() => setShowDeleteModal(true)}
+            style={{
+              borderRadius: 8, padding: '7px 14px', fontSize: 12.5, fontWeight: 700,
+              cursor: 'pointer', fontFamily: 'inherit',
+              background: 'transparent', color: '#b91c1c', border: '1px solid rgba(185,28,28,0.3)',
+            }}
+          >
+            Delete
+          </button>
           {actions.map((a) => (
             <button
               key={a.label}
@@ -332,9 +412,19 @@ export default function AdminDesignerDetailPage() {
       </div>
 
       {/* Account info */}
-      <div className="card" style={{ padding: '16px 22px', marginBottom: 20, display: 'flex', gap: 32 }}>
+      <div className="card" style={{ padding: '16px 22px', marginBottom: 20, display: 'flex', gap: 32, flexWrap: 'wrap' }}>
         <InfoRow label="Member since" value={new Date(designer.createdAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
         <InfoRow label="Last updated" value={new Date(designer.updatedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
+        <InfoRow
+          label="Last login"
+          value={designer.lastLoginAt
+            ? new Date(designer.lastLoginAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+            : 'Never'}
+        />
+        <InfoRow
+          label="Email verified"
+          value={designer.status !== 'email_pending' ? 'Yes' : 'No — not verified'}
+        />
       </div>
 
       {/* Recent projects */}
@@ -393,6 +483,107 @@ export default function AdminDesignerDetailPage() {
           </table>
         )}
       </div>
+
+      {/* Resend confirmation modal */}
+      {showResendModal && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => { setShowResendModal(false); setEmailSuccess(''); }}
+        >
+          <div
+            style={{ background: '#fff', borderRadius: 14, width: 420, padding: '28px 28px 24px', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: '#0F0F0F', margin: '0 0 6px', letterSpacing: '-0.03em' }}>
+              Resend Account Confirmation
+            </h3>
+            <p style={{ fontSize: 13, color: '#8C8984', margin: '0 0 20px', lineHeight: 1.5 }}>
+              A new confirmation email will be sent to{' '}
+              <strong style={{ color: '#0F0F0F' }}>{designer.email}</strong> with a fresh verification link valid for 24 hours.
+            </p>
+
+            {emailSuccess && (
+              <div style={{ marginBottom: 16, padding: '8px 12px', background: '#e8f5ee', borderRadius: 8, fontSize: 12.5, color: '#2d7a4f', fontWeight: 600 }}>
+                {emailSuccess}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setShowResendModal(false); setEmailSuccess(''); }}
+                style={{ border: '1px solid #E4E1DC', borderRadius: 8, background: 'transparent', color: '#6B6B6B', padding: '8px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleResendConfirmation}
+                disabled={sendingEmail}
+                style={{ border: 'none', borderRadius: 8, background: '#0F0F0F', color: '#fff', padding: '8px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', opacity: sendingEmail ? 0.6 : 1 }}
+              >
+                {sendingEmail ? 'Sending…' : 'Send Email'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {showDeleteModal && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => !deleting && setShowDeleteModal(false)}
+        >
+          <div
+            style={{ background: '#fff', borderRadius: 14, width: 440, padding: '28px 28px 24px', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+              <div style={{
+                width: 38, height: 38, borderRadius: '50%', background: 'rgba(185,28,28,0.07)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#b91c1c" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                  <path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                </svg>
+              </div>
+              <div>
+                <h3 style={{ fontSize: 16, fontWeight: 700, color: '#0F0F0F', margin: 0, letterSpacing: '-0.02em' }}>
+                  Delete {designer.fullName}?
+                </h3>
+                <p style={{ fontSize: 13, color: '#8C8984', margin: '3px 0 0', lineHeight: 1.4 }}>
+                  This permanently deletes the account and all associated data.
+                </p>
+              </div>
+            </div>
+
+            <div style={{
+              background: 'rgba(185,28,28,0.04)', border: '1px solid rgba(185,28,28,0.12)',
+              borderRadius: 8, padding: '10px 14px', marginBottom: 20,
+              fontSize: 12.5, color: '#7a1a25', lineHeight: 1.5,
+            }}>
+              All projects, clients, products, orders, quotes, and account data will be permanently erased. This cannot be undone.
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                disabled={deleting}
+                style={{ border: '1px solid #E4E1DC', borderRadius: 8, background: 'transparent', color: '#6B6B6B', padding: '8px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                style={{ border: 'none', borderRadius: 8, background: '#b91c1c', color: '#fff', padding: '8px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', opacity: deleting ? 0.6 : 1 }}
+              >
+                {deleting ? 'Deleting…' : 'Delete Account'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

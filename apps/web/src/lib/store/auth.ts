@@ -6,6 +6,7 @@ export interface AuthUser {
   fullName?: string;
   email: string;
   status?: string;
+  onboardingComplete?: boolean;
 }
 
 interface AuthState {

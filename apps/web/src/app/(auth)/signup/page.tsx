@@ -16,6 +16,17 @@ const US_STATES = [
   'Virginia','Washington','West Virginia','Wisconsin','Wyoming',
 ];
 
+function formatPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 10);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+function isValidPhone(v: string): boolean {
+  return /^(\+1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$/.test(v.trim());
+}
+
 const REFERRAL_OPTIONS = [
   { value: 'referral', label: 'Referral from a colleague' },
   { value: 'google_search', label: 'Google Search' },
@@ -157,10 +168,13 @@ function ChevronDown() {
    ══════════════════════════════════════════════════════ */
 
 export default function SignupPage() {
-  const [phase,   setPhase]   = useState<Phase>(1);
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState('');
-  const [showPw,  setShowPw]  = useState(false);
+  const [phase,         setPhase]         = useState<Phase>(1);
+  const [loading,       setLoading]       = useState(false);
+  const [error,         setError]         = useState('');
+  const [showPw,        setShowPw]        = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendMsg,     setResendMsg]     = useState('');
+  const [resendCooldown, setResendCooldown] = useState(false);
 
   // Phase 1
   const [fullName,  setFullName]  = useState('');
@@ -189,7 +203,7 @@ export default function SignupPage() {
 
   /* ── Inline validations (Phase 2) ─────────────────── */
   const bizErr  = touched2.businessName && !businessName.trim() ? 'Business name is required.' : '';
-  const phoneErr = touched2.phone && !phone.trim() ? 'Phone number is required.' : '';
+  const phoneErr = touched2.phone && !isValidPhone(phone) ? (!phone.trim() ? 'Phone number is required.' : 'Enter a valid US phone number, e.g. (555) 555-5555.') : '';
   const cityErr  = touched2.city && !city.trim() ? 'City is required.' : '';
   const stateErr = touched2.state && !state ? 'State is required.' : '';
   const expErr   = touched2.yearsOfExperience && !yearsOfExperience ? 'Select your experience level.' : '';
@@ -217,10 +231,22 @@ export default function SignupPage() {
   function validateP2(): string | null {
     if (!businessName.trim())   return 'Business name is required.';
     if (!phone.trim())          return 'Phone number is required.';
+    if (!isValidPhone(phone))   return 'Enter a valid US phone number, e.g. (555) 555-5555.';
     if (!city.trim())           return 'City is required.';
     if (!state)                 return 'State is required.';
     if (!yearsOfExperience)     return 'Years of experience is required.';
     return null;
+  }
+
+  async function handleResend() {
+    if (resendCooldown || resendLoading) return;
+    setResendLoading(true);
+    setResendMsg('');
+    await api.resendVerification(email);
+    setResendLoading(false);
+    setResendMsg('Verification email sent!');
+    setResendCooldown(true);
+    setTimeout(() => setResendCooldown(false), 60_000);
   }
 
   function handleP1(e: React.FormEvent) {
@@ -264,26 +290,27 @@ export default function SignupPage() {
     padding: '48px 24px',
   };
 
-  /* ══ Success screen — Application under review ═════ */
+  /* ══ Success screen — Verify your email ═══════════ */
   if (phase === 'success') {
     return (
       <div style={pageStyle}>
         <div className="anim-scale-in" style={{ textAlign: 'center', padding: 24, maxWidth: 420 }}>
-          {/* Clock icon */}
+          {/* Envelope icon */}
           <div style={{
-            width: 56, height: 56, borderRadius: '50%', background: '#FDF5E6',
+            width: 56, height: 56, borderRadius: '50%', background: '#F0F4FF',
             margin: '0 auto 28px', display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#7a5c2d" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#3b5bdb" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+              <polyline points="22,6 12,13 2,6" />
             </svg>
           </div>
 
           <h2 style={{ fontSize: 28, fontWeight: 300, letterSpacing: '-0.04em', color: '#0F0F0F', marginBottom: 8 }}>
-            Application submitted
+            Check your inbox
           </h2>
           <p style={{ fontSize: 14, color: '#8C8984', marginBottom: 28, letterSpacing: '-0.01em', lineHeight: 1.6 }}>
-            Thanks, {fullName.split(' ')[0]}! We&apos;re reviewing your application. This usually takes 1–2 business days.
+            We sent a verification link to <strong style={{ color: '#0F0F0F' }}>{email}</strong>. Click it to submit your application for review.
           </p>
 
           <div style={{
@@ -291,35 +318,58 @@ export default function SignupPage() {
             padding: '20px 24px', textAlign: 'left', marginBottom: 28,
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7a5c2d" strokeWidth="2" strokeLinecap="round">
-                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                <polyline points="22,6 12,13 2,6" />
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3b5bdb" strokeWidth="2" strokeLinecap="round">
+                <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
               </svg>
               <span style={{ fontSize: 13, fontWeight: 600, color: '#0F0F0F' }}>What happens next?</span>
             </div>
             <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
               <li style={{ fontSize: 13, color: '#6B6B6B', lineHeight: 1.5 }}>
-                Our team will review your business details.
+                Click the link in your email to verify your address.
               </li>
               <li style={{ fontSize: 13, color: '#6B6B6B', lineHeight: 1.5 }}>
-                You&apos;ll receive an email at <strong style={{ color: '#0F0F0F' }}>{email}</strong> once your account is approved.
+                Once verified, our team will review your application (usually 1–2 business days).
               </li>
               <li style={{ fontSize: 13, color: '#6B6B6B', lineHeight: 1.5 }}>
-                After approval, sign in to start using tradeLiv.
+                After approval, you&apos;ll receive a confirmation email and can sign in.
               </li>
             </ul>
           </div>
 
-          <Link
-            href="/login"
+          <button
+            onClick={handleResend}
+            disabled={resendLoading || resendCooldown}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
-              fontSize: 13, fontWeight: 600, color: '#0F0F0F',
-              textDecoration: 'none', borderBottom: '1.5px solid #0F0F0F', paddingBottom: 1,
+              fontSize: 13, color: resendCooldown ? '#B0ADA8' : '#0F0F0F',
+              background: 'none', border: 'none', cursor: resendCooldown ? 'default' : 'pointer',
+              fontFamily: 'inherit', padding: 0, marginBottom: 20,
+              textDecoration: resendCooldown ? 'none' : 'underline',
             }}
           >
-            Back to sign in
-          </Link>
+            {resendLoading
+              ? 'Sending…'
+              : resendCooldown
+                ? 'Email sent — check your inbox'
+                : 'Resend verification email'
+            }
+          </button>
+          {resendMsg && !resendCooldown && (
+            <p style={{ fontSize: 12, color: '#22c55e', marginBottom: 16 }}>{resendMsg}</p>
+          )}
+
+          <div>
+            <Link
+              href="/login"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                fontSize: 13, fontWeight: 600, color: '#0F0F0F',
+                textDecoration: 'none', borderBottom: '1.5px solid #0F0F0F', paddingBottom: 1,
+              }}
+            >
+              Back to sign in
+            </Link>
+          </div>
         </div>
       </div>
     );
@@ -536,8 +586,8 @@ export default function SignupPage() {
             <label htmlFor="signup-phone" style={LABEL}>Phone Number <span style={{ color: '#ef4444' }}>*</span></label>
             <input
               id="signup-phone"
-              type="tel" placeholder="+1 (555) 000-0000" value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              type="tel" placeholder="(555) 000-0000" value={phone}
+              onChange={(e) => setPhone(formatPhone(e.target.value))}
               onBlur={() => setTouched2((t) => ({ ...t, phone: true }))}
               aria-required="true"
               aria-invalid={!!phoneErr}

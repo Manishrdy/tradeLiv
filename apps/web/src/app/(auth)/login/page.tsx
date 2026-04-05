@@ -54,6 +54,7 @@ export default function LoginPage() {
   const [showPw,     setShowPw]     = useState(false);
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState('');
+  const [errorCode,  setErrorCode]  = useState('');
   const [success,    setSuccess]    = useState(false);
   const [progress,   setProgress]   = useState(0);
   const [remember,   setRemember]   = useState(false);
@@ -80,10 +81,12 @@ export default function LoginPage() {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError('Enter a valid email address.'); return; }
     setLoading(true);
     setError('');
+    setErrorCode('');
     const result = await api.login({ email: email.trim(), password, remember });
     setLoading(false);
     if (result.error || !result.data) {
       setError(result.error ?? 'Login failed');
+      setErrorCode((result as { code?: string }).code ?? '');
       return;
     }
     setUser(result.data.user);
@@ -255,7 +258,22 @@ export default function LoginPage() {
             </span>
           </label>
 
-          {error && (
+          {error && errorCode === 'REJECTED' ? (
+            <div role="alert" style={{
+              background: 'rgba(185,28,28,0.04)', border: '1px solid rgba(185,28,28,0.12)',
+              borderRadius: 8, padding: '12px 14px', fontSize: 13, color: '#b91c1c',
+              marginBottom: 16, letterSpacing: '-0.01em',
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>Application not approved</div>
+              <div style={{ lineHeight: 1.5 }}>{error.replace('Your application was not approved: ', '').replace('Your application was not approved. Please contact support for details.', 'No reason was provided.')}</div>
+              <a
+                href="mailto:support@tradeliv.com"
+                style={{ display: 'inline-block', marginTop: 8, fontSize: 12, color: '#b91c1c', fontWeight: 600, textDecoration: 'underline' }}
+              >
+                Contact support
+              </a>
+            </div>
+          ) : error ? (
             <div role="alert" style={{
               background: 'rgba(185,28,28,0.04)', border: '1px solid rgba(185,28,28,0.12)',
               borderRadius: 8, padding: '10px 13px', fontSize: 13, color: '#b91c1c',
@@ -263,7 +281,7 @@ export default function LoginPage() {
             }}>
               {error}
             </div>
-          )}
+          ) : null}
 
           <button
             type="submit"

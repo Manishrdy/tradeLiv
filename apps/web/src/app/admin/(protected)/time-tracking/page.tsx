@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { api, TimeTrackingSummary, DesignerSessionDetail } from '@/lib/api';
 
 function StatCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
@@ -176,8 +176,8 @@ export default function AdminTimeTrackingPage() {
                 </thead>
                 <tbody>
                   {data.designers.map((d) => (
-                    <>
-                      <tr key={d.designerId} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                    <Fragment key={d.designerId}>
+                      <tr style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
                         onClick={() => toggleDesignerSessions(d.designerId)}
                       >
                         <td style={{ padding: '12px 14px', fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)' }}>
@@ -203,7 +203,7 @@ export default function AdminTimeTrackingPage() {
 
                       {/* Expanded session detail */}
                       {expandedDesigner === d.designerId && (
-                        <tr key={`${d.designerId}-sessions`}>
+                        <tr>
                           <td colSpan={6} style={{ padding: 0 }}>
                             <div style={{ background: 'var(--bg-input)', padding: '12px 20px 12px 40px' }}>
                               {loadingSessions ? (
@@ -261,7 +261,7 @@ export default function AdminTimeTrackingPage() {
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

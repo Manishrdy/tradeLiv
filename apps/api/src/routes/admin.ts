@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
+import jwt, { type SignOptions } from 'jsonwebtoken';
 import { prisma } from '@furnlo/db';
 import { requireAuth, requireRole, requireSuperAdmin, AuthRequest } from '../middleware/auth';
 import { writeAuditLog } from '../services/auditLog';
@@ -40,7 +41,13 @@ function cachedResponse<T>(key: string, ttlMs: number, compute: () => Promise<T>
   });
 }
 
-const VALID_DESIGNER_STATUSES = new Set(['pending_review', 'approved', 'rejected', 'suspended']);
+/* ─── Impersonation token (15-min, designer-scoped) ─── */
+function signImpersonationToken(designerId: string, adminId: string): string {
+  const opts: SignOptions = { expiresIn: '15m', algorithm: config.jwtAlgorithm };
+  return jwt.sign({ id: designerId, role: 'designer', impersonatedBy: adminId }, config.jwtSecret, opts);
+}
+
+const VALID_DESIGNER_STATUSES = new Set(['email_pending', 'pending_review', 'approved', 'rejected', 'suspended']);
 const VALID_ORDER_STATUSES = new Set(['draft', 'submitted', 'paid', 'split_to_brands', 'closed']);
 const VALID_PAYMENT_STATUSES = new Set(['pending', 'paid', 'failed']);
 const VALID_BRAND_PO_STATUSES = new Set(['sent', 'acknowledged', 'in_production', 'dispatched', 'delivered', 'cancelled']);
@@ -112,6 +119,9 @@ router.get('/designers', async (req: AuthRequest, res: Response) => {
         return;
       }
       where.status = status;
+    } else {
+      // By default, exclude unverified applicants from the admin queue
+      where.status = { not: 'email_pending' };
     }
     if (search && typeof search === 'string') {
       const term = search.slice(0, 100);
@@ -132,6 +142,7 @@ router.get('/designers', async (req: AuthRequest, res: Response) => {
         select: {
           id: true, fullName: true, email: true, businessName: true,
           phone: true, status: true, isAdmin: true, createdAt: true,
+          lastLoginAt: true,
           _count: { select: { clients: true, projects: true, orders: true } },
         },
         orderBy: { createdAt: 'desc' },
@@ -162,7 +173,7 @@ router.get('/designers/:id', async (req: AuthRequest, res: Response) => {
         phone: true, city: true, state: true, yearsOfExperience: true,
         websiteUrl: true, linkedinUrl: true, instagramUrl: true, referralSource: true,
         rejectionReason: true,
-        status: true, isAdmin: true, createdAt: true, updatedAt: true,
+        status: true, isAdmin: true, createdAt: true, updatedAt: true, lastLoginAt: true,
         _count: { select: { clients: true, projects: true, orders: true } },
         projects: {
           take: 10,
@@ -192,7 +203,7 @@ router.get('/designers/:id', async (req: AuthRequest, res: Response) => {
 /* ─── PUT /api/admin/designers/:id/status ───────────── */
 
 const statusUpdateSchema = z.object({
-  status: z.enum(['pending_review', 'approved', 'rejected', 'suspended']),
+  status: z.enum(['email_pending', 'pending_review', 'approved', 'rejected', 'suspended']),
   rejectionReason: z.string().max(1000).optional(),
 });
 
@@ -219,6 +230,7 @@ router.put('/designers/:id/status', async (req: AuthRequest, res: Response) => {
       data: {
         status: newStatus,
         rejectionReason: newStatus === 'rejected' ? (rejectionReason ?? null) : null,
+        onboardingComplete: newStatus === 'approved' ? false : undefined,
       },
       select: {
         id: true, fullName: true, email: true, businessName: true,
@@ -267,6 +279,13 @@ router.put('/designers/:id/status', async (req: AuthRequest, res: Response) => {
           logError({ fileName: 'routes/admin.ts', routePath: '/designers/:id/status', httpMethod: 'PUT', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
         });
     } else if (newStatus === 'suspended') {
+      createNotification({
+        designerId: id,
+        type: 'account_suspended',
+        title: 'Your account has been suspended',
+        body: 'Your tradeLiv account has been suspended. Please contact support for more details.',
+      }).catch((err) => logger.error('Failed to notify designer on suspension', { err }));
+
       renderSuspensionEmail({ fullName: designer.fullName })
         .then((email) => sendEmail({ to: designer.email, ...email }))
         .catch((err) => {
@@ -276,6 +295,167 @@ router.put('/designers/:id/status', async (req: AuthRequest, res: Response) => {
     }
 
     res.json(designer);
+  } catch (err) {
+    logger.error('admin route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/admin.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── POST /api/admin/designers/:id/impersonate ─────── */
+
+router.post('/designers/:id/impersonate', async (req: AuthRequest, res: Response) => {
+  const id = String(req.params.id);
+  if (!UUID_RE.test(id)) { res.status(400).json({ error: 'Invalid designer ID.' }); return; }
+
+  try {
+    const designer = await prisma.designer.findUnique({
+      where: { id },
+      select: { id: true, fullName: true, email: true, status: true },
+    });
+    if (!designer) { res.status(404).json({ error: 'Designer not found.' }); return; }
+    if (designer.status !== 'approved') {
+      res.status(400).json({ error: 'Can only impersonate approved designers.' });
+      return;
+    }
+
+    const token = signImpersonationToken(id, req.user!.id);
+
+    writeAuditLog({
+      actorType: 'admin',
+      actorId: req.user!.id,
+      action: 'designer_impersonated',
+      entityType: 'designer',
+      entityId: id,
+      payload: { designerEmail: designer.email },
+    }).catch((err) => logger.error('audit log write failed', { err }));
+
+    res.json({
+      token,
+      designerName: designer.fullName,
+      loginUrl: `${config.frontendUrl}/impersonate?token=${token}`,
+      expiresIn: '15 minutes',
+    });
+  } catch (err) {
+    logger.error('admin route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/admin.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── POST /api/admin/designers/:id/send-email ──────── */
+
+const sendEmailSchema = z.object({
+  template: z.enum(['verification', 'approval', 'rejection', 'suspension']),
+  rejectionReason: z.string().max(1000).optional(),
+});
+
+router.post('/designers/:id/send-email', async (req: AuthRequest, res: Response) => {
+  const id = String(req.params.id);
+  if (!UUID_RE.test(id)) { res.status(400).json({ error: 'Invalid designer ID.' }); return; }
+
+  const parsed = sendEmailSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0].message });
+    return;
+  }
+  const { template, rejectionReason } = parsed.data;
+
+  try {
+    const designer = await prisma.designer.findUnique({
+      where: { id },
+      select: { id: true, fullName: true, email: true, emailVerificationToken: true },
+    });
+    if (!designer) { res.status(404).json({ error: 'Designer not found.' }); return; }
+
+    let rendered: { subject: string; html: string };
+
+    if (template === 'verification') {
+      const token = require('crypto').randomBytes(32).toString('hex');
+      const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      await prisma.designer.update({
+        where: { id },
+        data: { emailVerificationToken: token, emailVerificationExpiry: expiry },
+      });
+      const verifyUrl = `${config.frontendUrl}/verify-email?token=${token}`;
+      rendered = await (await import('@furnlo/emails')).renderEmailVerificationEmail({
+        fullName: designer.fullName,
+        verificationUrl: verifyUrl,
+      });
+    } else if (template === 'approval') {
+      rendered = await renderApprovalEmail({ fullName: designer.fullName, loginUrl: `${config.frontendUrl}/login` });
+    } else if (template === 'rejection') {
+      rendered = await renderRejectionEmail({ fullName: designer.fullName, reason: rejectionReason });
+    } else {
+      rendered = await renderSuspensionEmail({ fullName: designer.fullName });
+    }
+
+    await sendEmail({ to: designer.email, ...rendered });
+
+    writeAuditLog({
+      actorType: 'admin',
+      actorId: req.user!.id,
+      action: 'manual_email_sent',
+      entityType: 'designer',
+      entityId: id,
+      payload: { template, to: designer.email },
+    }).catch((err) => logger.error('audit log write failed', { err }));
+
+    res.json({ success: true, to: designer.email, template });
+  } catch (err) {
+    logger.error('[email] manual send failed', { err, path: req.path });
+    logRouteError('routes/admin.ts', err, req);
+    res.status(500).json({ error: 'Failed to send email. Please try again.' });
+  }
+});
+
+/* ─── DELETE /api/admin/designers/:id ──────────────── */
+
+router.delete('/designers/:id', async (req: AuthRequest, res: Response) => {
+  const id = String(req.params.id);
+  if (!UUID_RE.test(id)) { res.status(400).json({ error: 'Invalid designer ID.' }); return; }
+
+  try {
+    const designer = await prisma.designer.findUnique({
+      where: { id },
+      select: { id: true, email: true, fullName: true, isSuperAdmin: true },
+    });
+    if (!designer) { res.status(404).json({ error: 'Designer not found.' }); return; }
+    if (designer.isSuperAdmin) {
+      res.status(403).json({ error: 'Cannot delete a super admin account.' });
+      return;
+    }
+
+    // Delete in dependency order — deepest children first, designer last.
+    // RefreshToken, Notification cascade automatically; AdminNotification uses SetNull.
+    await prisma.$transaction([
+      prisma.orderLineItem.deleteMany({ where: { order: { designerId: id } } }),
+      prisma.payment.deleteMany({ where: { order: { designerId: id } } }),
+      prisma.brandPurchaseOrder.deleteMany({ where: { order: { designerId: id } } }),
+      prisma.order.deleteMany({ where: { designerId: id } }),
+      prisma.cartItem.deleteMany({ where: { project: { designerId: id } } }),
+      prisma.shortlistItem.deleteMany({ where: { designerId: id } }),
+      prisma.pinnedComparison.deleteMany({ where: { designerId: id } }),
+      prisma.message.deleteMany({ where: { project: { designerId: id } } }),
+      prisma.quote.deleteMany({ where: { designerId: id } }),
+      prisma.room.deleteMany({ where: { project: { designerId: id } } }),
+      prisma.product.deleteMany({ where: { designerId: id } }),
+      prisma.designerSession.deleteMany({ where: { designerId: id } }),
+      prisma.project.deleteMany({ where: { designerId: id } }),
+      prisma.client.deleteMany({ where: { designerId: id } }),
+      prisma.designer.delete({ where: { id } }),
+    ]);
+
+    writeAuditLog({
+      actorType: 'admin',
+      actorId: req.user!.id,
+      action: 'designer_deleted',
+      entityType: 'designer',
+      entityId: id,
+      payload: { designerEmail: designer.email, designerName: designer.fullName },
+    }).catch((err) => logger.error('audit log write failed', { err }));
+
+    res.json({ success: true });
   } catch (err) {
     logger.error('admin route error', { err, path: req.path, method: req.method });
     logRouteError('routes/admin.ts', err, req);

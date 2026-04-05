@@ -4,8 +4,16 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { api, AdminDesigner } from '@/lib/api';
 
-const STATUS_OPTIONS = ['', 'pending_review', 'approved', 'rejected', 'suspended'];
+const STATUS_OPTIONS = ['', 'email_pending', 'pending_review', 'approved', 'rejected', 'suspended'];
+
+function queueAge(iso: string): string {
+  const hours = Math.floor((Date.now() - new Date(iso).getTime()) / 3_600_000);
+  if (hours < 1) return 'Just now';
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
 const STATUS_STYLE: Record<string, { color: string; bg: string; label: string }> = {
+  email_pending:  { color: '#92400e', bg: '#fef3c7', label: 'Unverified' },
   approved:       { color: '#2d7a4f', bg: '#e8f5ee', label: 'Approved' },
   pending_review: { color: '#7a5c2d', bg: '#fdf5e6', label: 'Pending' },
   rejected:       { color: '#8b2635', bg: '#fdecea', label: 'Rejected' },
@@ -128,7 +136,7 @@ export default function AdminDesignersPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 600 }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                {['Name', 'Email', 'Business', 'Projects', 'Clients', 'Status', 'Joined', ''].map((h) => (
+                {['Name', 'Email', 'Business', 'Projects', 'Clients', 'Status', 'In Queue', 'Last Login', 'Joined', ''].map((h) => (
                   <th key={h} style={{
                     padding: '10px 16px', textAlign: 'left',
                     fontSize: 11, fontWeight: 700, color: 'var(--text-muted)',
@@ -151,7 +159,16 @@ export default function AdminDesignersPage() {
                     {d.fullName}
                   </td>
                   <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text-secondary)' }}>
-                    {d.email}
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                      {d.email}
+                      {d.status === 'email_pending' ? (
+                        <span title="Email not verified" style={{ fontSize: 9, fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '1px 5px', borderRadius: 20, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+                          UNVERIFIED
+                        </span>
+                      ) : (
+                        <span title="Email verified" style={{ color: '#2d7a4f', fontSize: 12, lineHeight: 1 }}>✓</span>
+                      )}
+                    </span>
                   </td>
                   <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text-secondary)' }}>
                     {d.businessName ?? '—'}
@@ -164,6 +181,28 @@ export default function AdminDesignersPage() {
                   </td>
                   <td style={{ padding: '12px 16px' }}>
                     <StatusBadge status={d.status} />
+                  </td>
+                  <td style={{ padding: '12px 16px', whiteSpace: 'nowrap' }}>
+                    {d.status === 'pending_review' && (() => {
+                      const age = queueAge(d.createdAt);
+                      const hours = Math.floor((Date.now() - new Date(d.createdAt).getTime()) / 3_600_000);
+                      const stale = hours >= 48;
+                      return (
+                        <span style={{
+                          fontSize: 11.5, fontWeight: 700, letterSpacing: '0.03em',
+                          color: stale ? '#8b2635' : '#7a5c2d',
+                          background: stale ? '#fdecea' : '#fdf5e6',
+                          padding: '2px 8px', borderRadius: 20,
+                        }}>
+                          {age}
+                        </span>
+                      );
+                    })()}
+                  </td>
+                  <td style={{ padding: '12px 16px', fontSize: 12.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                    {d.lastLoginAt
+                      ? new Date(d.lastLoginAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                      : <span style={{ color: 'var(--border-strong)', fontStyle: 'italic' }}>Never</span>}
                   </td>
                   <td style={{ padding: '12px 16px', fontSize: 12.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                     {new Date(d.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}

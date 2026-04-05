@@ -1,6 +1,6 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
-type ApiResponse<T> = { data: T; error?: never } | { data?: never; error: string };
+type ApiResponse<T> = { data: T; error?: never; code?: never } | { data?: never; error: string; code?: string };
 
 /* ─── Token refresh logic ──────────────────────────── */
 
@@ -36,18 +36,30 @@ function refreshToken(): Promise<boolean> {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
   try {
+    // Impersonation sessions store a tab-local Bearer token in sessionStorage instead of a cookie.
+    // When present, send it as Authorization: Bearer and skip cookie credentials so the admin's
+    // own session cookie is never confused with the impersonated designer's token.
+    const impersonationToken =
+      typeof window !== 'undefined' ? sessionStorage.getItem('impersonation_token') : null;
+
+    const authHeaders: Record<string, string> = impersonationToken
+      ? { Authorization: `Bearer ${impersonationToken}` }
+      : {};
+
     let res = await fetch(`${API_URL}${path}`, {
       ...options,
-      credentials: 'include',
+      credentials: impersonationToken ? 'omit' : 'include',
       headers: {
         'Content-Type': 'application/json',
         'X-Requested-With': 'fetch',
+        ...authHeaders,
         ...options.headers,
       },
     });
 
-    // On 401 (expired access token), try to refresh and retry once
-    if (res.status === 401 && !path.includes('/api/auth/refresh') && !path.includes('/api/auth/login')) {
+    // On 401 (expired access token), try to refresh and retry once.
+    // Impersonation sessions have no refresh token — let the 401 propagate naturally.
+    if (res.status === 401 && !impersonationToken && !path.includes('/api/auth/refresh') && !path.includes('/api/auth/login')) {
       const refreshed = await refreshToken();
       if (refreshed) {
         res = await fetch(`${API_URL}${path}`, {
@@ -72,7 +84,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<ApiR
     }
 
     if (!res.ok) {
-      return { error: (body.error as string) || (body.message as string) || `Request failed (${res.status})` };
+      return {
+        error: (body.error as string) || (body.message as string) || `Request failed (${res.status})`,
+        code: (body.code as string) || undefined,
+      };
     }
 
     return { data: body as T };
@@ -1037,6 +1052,7 @@ export interface AdminDesigner {
   status: string;
   isAdmin: boolean;
   createdAt: string;
+  lastLoginAt: string | null;
   rejectionReason?: string | null;
   _count: { clients: number; projects: number; orders: number };
 }
@@ -1314,6 +1330,12 @@ export const api = {
   // Auth
   signupDesigner: (payload: SignupDesignerPayload) =>
     request<SignupResponse>('/api/auth/signup/designer', { method: 'POST', body: JSON.stringify(payload) }),
+
+  verifyEmail: (token: string) =>
+    request<{ verified: boolean }>(`/api/auth/verify-email?token=${encodeURIComponent(token)}`),
+
+  resendVerification: (email: string) =>
+    request<{ message: string }>('/api/auth/resend-verification', { method: 'POST', body: JSON.stringify({ email }) }),
 
   login: (payload: LoginPayload) =>
     request<AuthResponse>('/api/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
@@ -1650,6 +1672,9 @@ export const api = {
   updateFeeDefaults: (payload: FeeDefaults) =>
     request<DesignerProfile>('/api/auth/me/fee-defaults', { method: 'PUT', body: JSON.stringify(payload) }),
 
+  completeOnboarding: () =>
+    request<{ onboardingComplete: boolean }>('/api/auth/me/onboarding-complete', { method: 'PUT' }),
+
   // Admin
   getAdminMe: () =>
     request<{ id: string; fullName: string; email: string; isAdmin: boolean; isSuperAdmin: boolean }>('/api/admin/me'),
@@ -1675,6 +1700,21 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ status, ...(rejectionReason ? { rejectionReason } : {}) }),
     }),
+
+  impersonateDesigner: (id: string) =>
+    request<{ token: string; designerName: string; loginUrl: string; expiresIn: string }>(
+      `/api/admin/designers/${id}/impersonate`,
+      { method: 'POST' },
+    ),
+
+  adminSendEmail: (id: string, template: 'verification' | 'approval' | 'rejection' | 'suspension', rejectionReason?: string) =>
+    request<{ success: boolean; to: string; template: string }>(
+      `/api/admin/designers/${id}/send-email`,
+      { method: 'POST', body: JSON.stringify({ template, ...(rejectionReason ? { rejectionReason } : {}) }) },
+    ),
+
+  adminDeleteDesigner: (id: string) =>
+    request<{ success: boolean }>(`/api/admin/designers/${id}`, { method: 'DELETE' }),
 
   // Admin notifications
   getAdminNotifications: () =>

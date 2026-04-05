@@ -53,6 +53,18 @@ function formatCurrency(amount: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(amount);
 }
 
+/* ── Month-over-month comparison helper ────────────── */
+
+function revenueComparison(trends: { month: string; revenue: number }[]): { pct: number; dir: 'up' | 'down' | 'flat' } | null {
+  if (trends.length < 2) return null;
+  const prev = trends[trends.length - 2].revenue;
+  const curr = trends[trends.length - 1].revenue;
+  if (prev === 0 && curr === 0) return null;
+  if (prev === 0) return { pct: 100, dir: 'up' };
+  const pct = Math.round(((curr - prev) / prev) * 100);
+  return { pct: Math.abs(pct), dir: pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat' };
+}
+
 /* ── Mini revenue chart (pure CSS) (#84) ───────────── */
 
 function RevenueChart({ trends }: { trends: { month: string; revenue: number }[] }) {
@@ -243,11 +255,36 @@ export default function AdminDashboardPage() {
               </div>
               {/* Revenue bar chart (#84) */}
               <RevenueChart trends={stats.monthlyTrends} />
+              {(() => {
+                const cmp = revenueComparison(stats.monthlyTrends);
+                if (!cmp) return null;
+                const color = cmp.dir === 'up' ? '#2d7a4f' : cmp.dir === 'down' ? '#8b2635' : '#7a5c2d';
+                const bg = cmp.dir === 'up' ? '#e8f5ee' : cmp.dir === 'down' ? '#fdecea' : '#fdf5e6';
+                const arrow = cmp.dir === 'up' ? '↑' : cmp.dir === 'down' ? '↓' : '→';
+                return (
+                  <div style={{ marginTop: 10, fontSize: 11.5, color, background: bg, display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 20, fontWeight: 700 }}>
+                    {arrow} {cmp.pct}% vs last month
+                  </div>
+                );
+              })()}
             </div>
 
-            <div className="card" style={{ padding: '20px 22px' }}>
-              <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>
-                Payment Health
+            <div
+              className="card"
+              style={{
+                padding: '20px 22px',
+                ...(stats.payments.failed > 0 ? { border: '1px solid rgba(185,28,28,0.25)', background: 'rgba(185,28,28,0.02)' } : {}),
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  Payment Health
+                </div>
+                {stats.payments.failed > 0 && (
+                  <Link href="/admin/payments?status=failed" style={{ fontSize: 11, fontWeight: 700, color: '#b91c1c', textDecoration: 'none' }}>
+                    {stats.payments.failed} failed →
+                  </Link>
+                )}
               </div>
               <div style={{ display: 'flex', gap: 16 }}>
                 {[
@@ -388,9 +425,19 @@ export default function AdminDashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {pending.map((d) => (
-                  <tr key={d.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '12px 16px', fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)' }}>{d.fullName}</td>
+                {pending.map((d) => {
+                  const hoursWaiting = Math.floor((Date.now() - new Date(d.createdAt).getTime()) / 3_600_000);
+                  const overdue = hoursWaiting >= 24;
+                  return (
+                  <tr key={d.id} style={{ borderBottom: '1px solid var(--border)', background: overdue ? 'rgba(185,28,28,0.02)' : '' }}>
+                    <td style={{ padding: '12px 16px', fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {d.fullName}
+                      {overdue && (
+                        <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 700, color: '#8b2635', background: '#fdecea', padding: '1px 6px', borderRadius: 20, letterSpacing: '0.04em' }}>
+                          {hoursWaiting >= 48 ? `${Math.floor(hoursWaiting / 24)}d` : `${hoursWaiting}h`} waiting
+                        </span>
+                      )}
+                    </td>
                     <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text-secondary)' }}>{d.email}</td>
                     <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text-secondary)' }}>{d.businessName ?? '—'}</td>
                     <td style={{ padding: '12px 16px', fontSize: 12.5, color: 'var(--text-muted)' }}>
@@ -424,7 +471,8 @@ export default function AdminDashboardPage() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

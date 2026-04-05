@@ -17,6 +17,7 @@ const PUBLIC_PATHS = [
   '/login',
   '/signup',
   '/admin/login',
+  '/verify-email',
 ];
 
 const PUBLIC_PREFIXES = [

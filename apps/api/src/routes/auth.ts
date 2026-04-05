@@ -13,6 +13,7 @@ import {
   renderDesignerSignupEmail,
   renderAdminNewApplicationEmail,
   renderPasswordChangedEmail,
+  renderEmailVerificationEmail,
 } from '@furnlo/emails';
 import logger from '../config/logger';
 import { logRouteError, logError } from '../services/errorLogger';
@@ -140,11 +141,11 @@ async function recordFailedLogin(designerId: string) {
   }
 }
 
-/** Reset failed attempts on successful login. */
+/** Reset failed attempts on successful login and record last login time. */
 async function resetFailedLogin(designerId: string) {
   await prisma.designer.update({
     where: { id: designerId },
-    data: { failedLoginAttempts: 0, lockedUntil: null },
+    data: { failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() },
   });
 }
 
@@ -163,7 +164,13 @@ const designerSignupSchema = z.object({
     .regex(/[0-9]/, 'Password must contain at least one number')
     .regex(/[^A-Za-z0-9]/, 'Password must contain at least one special character'),
   businessName: z.string().min(1, 'Business name is required').max(100),
-  phone: z.string().min(1, 'Phone number is required').max(30),
+  phone: z
+    .string()
+    .min(1, 'Phone number is required')
+    .regex(
+      /^(\+1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$/,
+      'Enter a valid US phone number, e.g. (555) 555-5555',
+    ),
   city: z.string().min(1, 'City is required').max(100),
   state: z.string().min(1, 'State is required').max(100),
   yearsOfExperience: z.enum(['<2', '2-5', '5-10', '10+'], { required_error: 'Years of experience is required' }),
@@ -182,7 +189,14 @@ const loginSchema = z.object({
 const profileUpdateSchema = z.object({
   fullName: z.string().min(2, 'Full name must be at least 2 characters').optional(),
   businessName: z.string().max(100).nullable().optional(),
-  phone: z.string().max(30).nullable().optional(),
+  phone: z
+    .string()
+    .regex(
+      /^(\+1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$/,
+      'Enter a valid US phone number, e.g. (555) 555-5555',
+    )
+    .nullable()
+    .optional(),
 });
 
 const changePasswordSchema = z.object({
@@ -218,6 +232,12 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
+
+    // Generate email verification token (raw stored client-side in the link, hashed in DB)
+    const rawVerifyToken = crypto.randomBytes(32).toString('hex');
+    const verifyTokenHash = hashToken(rawVerifyToken);
+    const verifyExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
     const designer = await prisma.designer.create({
       data: {
         fullName, email, passwordHash, businessName, phone,
@@ -226,7 +246,9 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
         linkedinUrl: linkedinUrl || null,
         instagramUrl: instagramUrl || null,
         referralSource: referralSource || null,
-        status: 'pending_review',
+        status: 'email_pending',
+        emailVerificationToken: verifyTokenHash,
+        emailVerificationExpiry: verifyExpiry,
       },
     });
 
@@ -238,21 +260,85 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
       entityId: designer.id,
     });
 
-    // Notify admins about new application
+    // Send verification email — admin is notified only after email is verified
+    const verificationUrl = `${config.frontendUrl}/verify-email?token=${rawVerifyToken}`;
+    renderEmailVerificationEmail({ fullName: designer.fullName, verificationUrl })
+      .then((mail) => sendEmail({ to: designer.email, ...mail }))
+      .catch((err) => {
+        logger.error('[email] verification email failed', { err });
+        logError({ fileName: 'routes/auth.ts', routePath: '/signup/designer', httpMethod: 'POST', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
+      });
+
+    // No tokens issued — designer must verify email then wait for admin approval
+    res.status(201).json({
+      role: 'designer',
+      user: { id: designer.id, fullName: designer.fullName, email: designer.email, status: designer.status },
+    });
+  } catch (err) {
+    logger.error('auth route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/auth.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+// GET /api/auth/verify-email?token=<raw>
+router.get('/verify-email', async (req: Request, res: Response) => {
+  const rawToken = typeof req.query.token === 'string' ? req.query.token : null;
+  if (!rawToken) {
+    res.status(400).json({ error: 'Missing verification token.' });
+    return;
+  }
+
+  try {
+    const tokenHash = hashToken(rawToken);
+    const designer = await prisma.designer.findFirst({
+      where: { emailVerificationToken: tokenHash },
+    });
+
+    if (!designer) {
+      res.status(400).json({ error: 'This verification link is invalid or has already been used.' });
+      return;
+    }
+
+    if (designer.emailVerificationExpiry && designer.emailVerificationExpiry < new Date()) {
+      res.status(400).json({ error: 'This verification link has expired. Please request a new one.', code: 'TOKEN_EXPIRED' });
+      return;
+    }
+
+    if (designer.status !== 'email_pending') {
+      // Already verified — idempotent success
+      res.json({ verified: true });
+      return;
+    }
+
+    await prisma.designer.update({
+      where: { id: designer.id },
+      data: {
+        status: 'pending_review',
+        emailVerificationToken: null,
+        emailVerificationExpiry: null,
+      },
+    });
+
+    writeAuditLog({
+      actorType: 'system',
+      actorId: designer.id,
+      action: 'email_verified',
+      entityType: 'designer',
+      entityId: designer.id,
+    });
+
+    // Now that email is verified, notify admin of the new application
     createAdminNotification({
       type: 'new_application',
       title: `New application from ${designer.fullName}`,
-      body: businessName ? `${businessName} — ${city}, ${state}` : `${city}, ${state}`,
+      body: designer.businessName ? `${designer.businessName} — ${designer.city ?? ''}, ${designer.state ?? ''}` : `${designer.city ?? ''}, ${designer.state ?? ''}`,
       designerId: designer.id,
     }).catch((err) => logger.error('Failed to create admin notification', { err }));
 
-    // Send confirmation to designer + alert to admin
     renderDesignerSignupEmail({ fullName: designer.fullName })
-      .then((email) => sendEmail({ to: designer.email, ...email }))
-      .catch((err) => {
-        logger.error('[email] designer signup email failed', { err });
-        logError({ fileName: 'routes/auth.ts', routePath: '/signup/designer', httpMethod: 'POST', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
-      });
+      .then((mail) => sendEmail({ to: designer.email, ...mail }))
+      .catch((err) => logger.error('[email] designer signup email failed', { err }));
 
     renderAdminNewApplicationEmail({
       fullName: designer.fullName,
@@ -262,19 +348,60 @@ router.post('/signup/designer', async (req: Request, res: Response) => {
       state: designer.state ?? '',
       adminUrl: `${config.frontendUrl}/admin/designers`,
     })
-      .then((email) => sendEmail({ to: config.email.adminEmail, ...email }))
-      .catch((err) => {
-        logger.error('[email] admin new application email failed', { err });
-        logError({ fileName: 'routes/auth.ts', routePath: '/signup/designer', httpMethod: 'POST', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
-      });
+      .then((mail) => sendEmail({ to: config.email.adminEmail, ...mail }))
+      .catch((err) => logger.error('[email] admin new application email failed', { err }));
 
-    // No tokens issued — designer must wait for admin approval
-    res.status(201).json({
-      role: 'designer',
-      user: { id: designer.id, fullName: designer.fullName, email: designer.email, status: designer.status },
-    });
+    res.json({ verified: true });
   } catch (err) {
-    logger.error('auth route error', { err, path: req.path, method: req.method });
+    logger.error('verify-email error', { err });
+    logRouteError('routes/auth.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+// POST /api/auth/resend-verification
+router.post('/resend-verification', async (req: Request, res: Response) => {
+  const { email } = req.body as { email?: string };
+  if (!email || typeof email !== 'string') {
+    res.status(400).json({ error: 'Email is required.' });
+    return;
+  }
+
+  try {
+    const designer = await prisma.designer.findUnique({ where: { email: email.toLowerCase().trim() } });
+
+    // Always return success to prevent email enumeration
+    if (!designer || designer.status !== 'email_pending') {
+      res.json({ message: 'If that email is registered and unverified, a new link has been sent.' });
+      return;
+    }
+
+    // Rate-limit: don't resend if the existing token was issued less than 2 minutes ago
+    if (
+      designer.emailVerificationExpiry &&
+      designer.emailVerificationExpiry.getTime() - Date.now() > 24 * 60 * 60 * 1000 - 2 * 60 * 1000
+    ) {
+      res.status(429).json({ error: 'Please wait a moment before requesting another verification email.', code: 'RESEND_TOO_SOON' });
+      return;
+    }
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    await prisma.designer.update({
+      where: { id: designer.id },
+      data: {
+        emailVerificationToken: hashToken(rawToken),
+        emailVerificationExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
+    });
+
+    const verificationUrl = `${config.frontendUrl}/verify-email?token=${rawToken}`;
+    renderEmailVerificationEmail({ fullName: designer.fullName, verificationUrl })
+      .then((mail) => sendEmail({ to: designer.email, ...mail }))
+      .catch((err) => logger.error('[email] resend verification email failed', { err }));
+
+    res.json({ message: 'If that email is registered and unverified, a new link has been sent.' });
+  } catch (err) {
+    logger.error('resend-verification error', { err });
     logRouteError('routes/auth.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }
@@ -320,6 +447,14 @@ router.post('/login', async (req: Request, res: Response) => {
     }
 
     // Designer status checks
+    if (designer.status === 'email_pending') {
+      res.status(403).json({
+        error: 'Please verify your email address first. Check your inbox for a verification link.',
+        code: 'EMAIL_NOT_VERIFIED',
+      });
+      return;
+    }
+
     if (designer.status === 'pending_review') {
       res.status(403).json({
         error: 'Your application is still under review. You\'ll receive an email once approved.',
@@ -330,8 +465,11 @@ router.post('/login', async (req: Request, res: Response) => {
 
     if (designer.status === 'rejected') {
       res.status(403).json({
-        error: 'Your application was not approved. Please contact support.',
+        error: designer.rejectionReason
+          ? `Your application was not approved: ${designer.rejectionReason}`
+          : 'Your application was not approved. Please contact support for details.',
         code: 'REJECTED',
+        rejectionReason: designer.rejectionReason ?? null,
       });
       return;
     }
@@ -464,7 +602,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
         return { kind: 'no_user' as const };
       }
 
-      if (!designer.isAdmin && (designer.status === 'suspended' || designer.status === 'rejected')) {
+      if (!designer.isAdmin && (designer.status === 'suspended' || designer.status === 'rejected' || designer.status === 'email_pending')) {
         await tx.refreshToken.updateMany({
           where: { designerId: designer.id, revokedAt: null },
           data: { revokedAt: new Date() },
@@ -559,6 +697,52 @@ router.post('/logout-all', requireAuth, async (req: AuthRequest, res: Response) 
   }
 });
 
+// POST /api/auth/impersonate-session
+// Validates an admin-issued impersonation JWT and sets a short-lived session cookie
+router.post('/impersonate-session', async (req: Request, res: Response) => {
+  const { token } = req.body ?? {};
+  if (!token || typeof token !== 'string') {
+    res.status(400).json({ error: 'Token is required.' });
+    return;
+  }
+
+  try {
+    const payload = jwt.verify(token, config.jwtSecret, {
+      algorithms: [config.jwtAlgorithm],
+    }) as { id: string; role: string; impersonatedBy?: string };
+
+    if (!payload.impersonatedBy) {
+      res.status(400).json({ error: 'Not a valid impersonation token.' });
+      return;
+    }
+
+    const designer = await prisma.designer.findUnique({
+      where: { id: payload.id },
+      select: { id: true, fullName: true, email: true, status: true, isAdmin: true },
+    });
+
+    if (!designer || designer.status !== 'approved') {
+      res.status(403).json({ error: 'Designer is not accessible.' });
+      return;
+    }
+
+    // Issue a short-lived access cookie (no refresh token — session ends when tab is closed)
+    const accessToken = signAccessToken({ id: designer.id, role: 'designer' });
+    // Do NOT set a cookie — impersonation sessions must be tab-isolated.
+    // The token is returned in the body and stored in sessionStorage by the client,
+    // then passed as Authorization: Bearer on every request from that tab.
+
+    logger.info('admin impersonation session started', { adminId: payload.impersonatedBy, designerId: designer.id });
+
+    res.json({
+      accessToken,
+      user: { id: designer.id, fullName: designer.fullName, email: designer.email, status: designer.status },
+    });
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid or expired impersonation token.' });
+  }
+});
+
 // GET /api/auth/me
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
@@ -568,6 +752,7 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
         id: true, fullName: true, email: true,
         businessName: true, phone: true, status: true,
         isAdmin: true, isSuperAdmin: true, createdAt: true,
+        onboardingComplete: true,
       },
     });
     if (!designer) {
@@ -601,6 +786,21 @@ router.put('/me', requireAuth, requireRole('designer'), async (req: AuthRequest,
       },
     });
     res.json(designer);
+  } catch (err) {
+    logger.error('auth route error', { err, path: req.path, method: req.method });
+    logRouteError('routes/auth.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+// PUT /api/auth/me/onboarding-complete — mark onboarding wizard as done
+router.put('/me/onboarding-complete', requireAuth, requireRole('designer'), async (req: AuthRequest, res: Response) => {
+  try {
+    await prisma.designer.update({
+      where: { id: req.user!.id },
+      data: { onboardingComplete: true },
+    });
+    res.json({ onboardingComplete: true });
   } catch (err) {
     logger.error('auth route error', { err, path: req.path, method: req.method });
     logRouteError('routes/auth.ts', err, req);

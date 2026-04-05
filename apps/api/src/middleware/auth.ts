@@ -21,7 +21,7 @@ function parseBearerToken(header: string | undefined): string | null {
 
 export function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
   const token =
-    req.cookies?.session ?? parseBearerToken(req.headers.authorization);
+    parseBearerToken(req.headers.authorization) ?? req.cookies?.session;
   if (!token) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
