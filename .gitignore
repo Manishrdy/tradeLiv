@@ -9,6 +9,7 @@ build/
 .next/
 out/
 apps/api/db-backups/
+apps/api/apps/api/db-backups/
 
 # Environment
 .env
