@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, DesignerProfile } from '@/lib/api';
 import { useAuthStore } from '@/lib/store/auth';
@@ -128,10 +128,21 @@ export default function SettingsPage() {
   const [phone, setPhone]               = useState('');
 
   // Password change
-  const [currentPw, setCurrentPw] = useState('');
-  const [newPw, setNewPw]         = useState('');
-  const [confirmPw, setConfirmPw] = useState('');
-  const [pwSaving, setPwSaving]   = useState(false);
+  const [currentPw, setCurrentPw]         = useState('');
+  const [newPw, setNewPw]                 = useState('');
+  const [confirmPw, setConfirmPw]         = useState('');
+  const [pwSaving, setPwSaving]           = useState(false);
+  const [showCurrentPw, setShowCurrentPw] = useState(false);
+  const [showNewPw, setShowNewPw]         = useState(false);
+  const [showConfirmPw, setShowConfirmPw] = useState(false);
+  const [currentPwTouched, setCurrentPwTouched] = useState(false);
+
+  // OTP modal
+  const [showOtpModal, setShowOtpModal]   = useState(false);
+  const [otpDigits, setOtpDigits]         = useState(['', '', '', '', '', '']);
+  const [otpVerifying, setOtpVerifying]   = useState(false);
+  const [otpError, setOtpError]           = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
 
   // Specializations
   const [specs, setSpecs] = useState<string[]>([]);
@@ -167,19 +178,57 @@ export default function SettingsPage() {
     setToast({ message: 'Profile saved successfully.', type: 'success' });
   }
 
-  async function handleChangePassword(e: React.FormEvent) {
+  const pwChecks = {
+    length:    newPw.length >= 8,
+    uppercase: /[A-Z]/.test(newPw),
+    number:    /[0-9]/.test(newPw),
+    special:   /[^A-Za-z0-9]/.test(newPw),
+  };
+  const pwValid = Object.values(pwChecks).every(Boolean);
+  const confirmMatch = confirmPw.length > 0 && confirmPw === newPw;
+  const confirmMismatch = confirmPw.length > 0 && confirmPw !== newPw;
+
+  async function handleRequestOtp(e: React.FormEvent) {
     e.preventDefault();
-    if (!currentPw || !newPw) { setToast({ message: 'Fill in all password fields.', type: 'error' }); return; }
-    if (newPw.length < 8) { setToast({ message: 'New password must be at least 8 characters.', type: 'error' }); return; }
-    if (newPw !== confirmPw) { setToast({ message: 'New passwords do not match.', type: 'error' }); return; }
+    if (!currentPw || !newPw || !confirmPw) { setToast({ message: 'Fill in all password fields.', type: 'error' }); return; }
+    if (!pwValid) { setToast({ message: 'New password does not meet requirements.', type: 'error' }); return; }
+    if (newPw !== confirmPw) { setToast({ message: 'Passwords do not match.', type: 'error' }); return; }
     setPwSaving(true);
-    // API call — uses updateProfile or a dedicated endpoint
-    // For now, show success since there may not be a password change API
-    setTimeout(() => {
-      setPwSaving(false);
-      setCurrentPw(''); setNewPw(''); setConfirmPw('');
-      setToast({ message: 'Password updated successfully.', type: 'success' });
-    }, 800);
+    const r = await api.requestPasswordChangeOtp({ currentPassword: currentPw, newPassword: newPw });
+    setPwSaving(false);
+    if (r.error) { setToast({ message: r.error, type: 'error' }); return; }
+    setOtpDigits(['', '', '', '', '', '']);
+    setOtpError('');
+    setShowOtpModal(true);
+    startResendCooldown();
+  }
+
+  function startResendCooldown() {
+    setResendCooldown(60);
+  }
+
+  async function handleVerifyOtp() {
+    const otp = otpDigits.join('');
+    if (otp.length < 6) return;
+    setOtpVerifying(true);
+    setOtpError('');
+    const r = await api.confirmPasswordChange({ otp });
+    setOtpVerifying(false);
+    if (r.error) { setOtpError(r.error); return; }
+    setShowOtpModal(false);
+    setCurrentPw(''); setNewPw(''); setConfirmPw('');
+    setShowCurrentPw(false); setShowNewPw(false); setShowConfirmPw(false);
+    setCurrentPwTouched(false);
+    setToast({ message: 'Password updated successfully.', type: 'success' });
+  }
+
+  async function handleResendOtp() {
+    if (resendCooldown > 0) return;
+    const r = await api.requestPasswordChangeOtp({ currentPassword: currentPw, newPassword: newPw });
+    if (r.error) { setOtpError(r.error); return; }
+    setOtpDigits(['', '', '', '', '', '']);
+    setOtpError('');
+    startResendCooldown();
   }
 
   async function handleDeleteAccount() {
@@ -301,29 +350,116 @@ export default function SettingsPage() {
           Change Password
         </h2>
 
-        <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <form onSubmit={handleRequestOtp} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Current password */}
           <div>
             <label style={LABEL}>Current password</label>
-            <input className="input-field" type="password" value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} placeholder="Enter current password" autoComplete="current-password" />
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div>
-              <label style={LABEL}>New password</label>
-              <input className="input-field" type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Min. 8 characters" autoComplete="new-password" />
+            <div style={{ position: 'relative' }}>
+              <input
+                className="input-field"
+                type={showCurrentPw ? 'text' : 'password'}
+                value={currentPw}
+                onChange={(e) => setCurrentPw(e.target.value)}
+                onBlur={() => setCurrentPwTouched(true)}
+                placeholder="Enter current password"
+                autoComplete="current-password"
+                style={{ paddingRight: 38, borderColor: currentPwTouched && !currentPw ? 'rgba(185,28,28,0.5)' : undefined }}
+              />
+              <button type="button" onClick={() => setShowCurrentPw((v) => !v)} tabIndex={-1}
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2, display: 'flex', alignItems: 'center' }}>
+                {showCurrentPw ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
             </div>
-            <div>
-              <label style={LABEL}>Confirm new password</label>
-              <input className="input-field" type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Re-enter password" autoComplete="new-password" />
-            </div>
           </div>
+
+          {/* New password + checklist */}
+          <div>
+            <label style={LABEL}>New password</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                className="input-field"
+                type={showNewPw ? 'text' : 'password'}
+                value={newPw}
+                onChange={(e) => setNewPw(e.target.value)}
+                placeholder="Min. 8 characters"
+                autoComplete="new-password"
+                style={{ paddingRight: 38 }}
+              />
+              <button type="button" onClick={() => setShowNewPw((v) => !v)} tabIndex={-1}
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2, display: 'flex', alignItems: 'center' }}>
+                {showNewPw ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
+            </div>
+            {newPw.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', marginTop: 8 }}>
+                {([
+                  { key: 'length',    label: '8+ characters' },
+                  { key: 'uppercase', label: 'Uppercase letter' },
+                  { key: 'number',    label: 'Number' },
+                  { key: 'special',   label: 'Special character' },
+                ] as { key: keyof typeof pwChecks; label: string }[]).map(({ key, label }) => (
+                  <span key={key} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: pwChecks[key] ? '#2d7a4f' : '#8C8984' }}>
+                    <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+                      {pwChecks[key]
+                        ? <path d="M3 8.5L6.5 12L13 4" stroke="#2d7a4f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        : <circle cx="8" cy="8" r="6" stroke="#C8C3BD" strokeWidth="1.5" />
+                      }
+                    </svg>
+                    {label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Confirm password */}
+          <div>
+            <label style={LABEL}>Confirm new password</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                className="input-field"
+                type={showConfirmPw ? 'text' : 'password'}
+                value={confirmPw}
+                onChange={(e) => setConfirmPw(e.target.value)}
+                placeholder="Re-enter password"
+                autoComplete="new-password"
+                style={{
+                  paddingRight: 38,
+                  borderColor: confirmMismatch ? 'rgba(185,28,28,0.5)' : confirmMatch ? 'rgba(45,122,79,0.5)' : undefined,
+                }}
+              />
+              <button type="button" onClick={() => setShowConfirmPw((v) => !v)} tabIndex={-1}
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2, display: 'flex', alignItems: 'center' }}>
+                {showConfirmPw ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
+            </div>
+            {confirmMismatch && <p style={{ margin: '4px 0 0', fontSize: 11.5, color: '#b91c1c' }}>Passwords do not match.</p>}
+            {confirmMatch    && <p style={{ margin: '4px 0 0', fontSize: 11.5, color: '#2d7a4f' }}>Passwords match.</p>}
+          </div>
+
           <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 4 }}>
-            <button type="submit" className="btn-ghost" disabled={pwSaving} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <button type="submit" className="btn-ghost" disabled={pwSaving || !pwValid || !confirmMatch || !currentPw} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
               {pwSaving && <svg className="anim-rotate" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>}
-              {pwSaving ? 'Updating…' : 'Update password'}
+              {pwSaving ? 'Sending code…' : 'Update password'}
             </button>
           </div>
         </form>
       </div>
+
+      {/* ── OTP Verification Modal ────────────────── */}
+      {showOtpModal && (
+        <OtpModal
+          digits={otpDigits}
+          onDigitsChange={setOtpDigits}
+          onVerify={handleVerifyOtp}
+          onResend={handleResendOtp}
+          onCancel={() => setShowOtpModal(false)}
+          verifying={otpVerifying}
+          error={otpError}
+          resendCooldown={resendCooldown}
+          onCooldownTick={() => setResendCooldown((v) => Math.max(0, v - 1))}
+        />
+      )}
 
       {/* ── Account section ────────────────────────── */}
       <div className="card" style={{ padding: '28px 28px 24px', marginTop: 20 }}>
@@ -394,6 +530,174 @@ export default function SettingsPage() {
       {/* ── Toast ──────────────────────────────────── */}
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </div>
+  );
+}
+
+/* ── OTP Modal ────────────────────────────────────── */
+
+interface OtpModalProps {
+  digits: string[];
+  onDigitsChange: (d: string[]) => void;
+  onVerify: () => void;
+  onResend: () => void;
+  onCancel: () => void;
+  verifying: boolean;
+  error: string;
+  resendCooldown: number;
+  onCooldownTick: () => void;
+}
+
+function OtpModal({ digits, onDigitsChange, onVerify, onResend, onCancel, verifying, error, resendCooldown, onCooldownTick }: OtpModalProps) {
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  useEffect(() => {
+    inputRefs.current[0]?.focus();
+  }, []);
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) { if (e.key === 'Escape') onCancel(); }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [onCancel]);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(onCooldownTick, 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown, onCooldownTick]);
+
+  // Auto-submit when all 6 digits filled
+  useEffect(() => {
+    if (digits.every((d) => d !== '') && !verifying) {
+      onVerify();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [digits]);
+
+  function handleInput(index: number, value: string) {
+    const digit = value.replace(/\D/g, '').slice(-1);
+    const next = [...digits];
+    next[index] = digit;
+    onDigitsChange(next);
+    if (digit && index < 5) {
+      inputRefs.current[index + 1]?.focus();
+    }
+  }
+
+  function handleKeyDown(index: number, e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Backspace') {
+      if (digits[index]) {
+        const next = [...digits];
+        next[index] = '';
+        onDigitsChange(next);
+      } else if (index > 0) {
+        inputRefs.current[index - 1]?.focus();
+      }
+    }
+  }
+
+  function handlePaste(e: React.ClipboardEvent) {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (!text) return;
+    const next = ['', '', '', '', '', ''];
+    for (let i = 0; i < text.length; i++) next[i] = text[i];
+    onDigitsChange(next);
+    const focusIdx = Math.min(text.length, 5);
+    inputRefs.current[focusIdx]?.focus();
+  }
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onClick={onCancel}
+    >
+      <div className="anim-scale-in" onClick={(e) => e.stopPropagation()}
+        style={{ background: '#fff', borderRadius: 14, padding: '32px 28px 28px', width: 380, boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+
+        {/* Icon + title */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 20 }}>
+          <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#F8F7F4', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0F0F0F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+            </svg>
+          </div>
+          <h3 style={{ fontSize: 16, fontWeight: 700, color: '#0F0F0F', letterSpacing: '-0.02em', margin: 0 }}>Check your email</h3>
+          <p style={{ fontSize: 13, color: '#8C8984', margin: '6px 0 0', textAlign: 'center', lineHeight: 1.5 }}>
+            We sent a 6-digit code to your email. Enter it below to confirm the password change.
+          </p>
+        </div>
+
+        {/* OTP digit boxes */}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 16 }} onPaste={handlePaste}>
+          {digits.map((d, i) => (
+            <input
+              key={i}
+              ref={(el) => { inputRefs.current[i] = el; }}
+              type="text"
+              inputMode="numeric"
+              maxLength={1}
+              value={d}
+              onChange={(e) => handleInput(i, e.target.value)}
+              onKeyDown={(e) => handleKeyDown(i, e)}
+              disabled={verifying}
+              style={{
+                width: 44, height: 52, textAlign: 'center',
+                fontSize: 22, fontWeight: 700, fontFamily: 'inherit',
+                border: `1.5px solid ${error ? 'rgba(185,28,28,0.4)' : d ? '#0F0F0F' : 'var(--border)'}`,
+                borderRadius: 8, outline: 'none', background: verifying ? '#f8f8f8' : '#fff',
+                color: '#0F0F0F',
+                transition: 'border-color 0.12s',
+              }}
+            />
+          ))}
+        </div>
+
+        {/* Error */}
+        {error && (
+          <p style={{ textAlign: 'center', fontSize: 12.5, color: '#b91c1c', margin: '0 0 12px' }}>{error}</p>
+        )}
+
+        {/* Loading state */}
+        {verifying && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 12 }}>
+            <svg className="anim-rotate" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>
+            Verifying…
+          </div>
+        )}
+
+        {/* Resend + cancel */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+          <button type="button" onClick={onCancel}
+            style={{ background: 'none', border: 'none', fontSize: 13, color: 'var(--text-muted)', cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}>
+            Cancel
+          </button>
+          <button type="button" onClick={onResend} disabled={resendCooldown > 0}
+            style={{ background: 'none', border: 'none', fontSize: 13, color: resendCooldown > 0 ? 'var(--text-muted)' : '#0F0F0F', cursor: resendCooldown > 0 ? 'default' : 'pointer', padding: 0, fontFamily: 'inherit', fontWeight: 600 }}>
+            {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
   );
 }
 

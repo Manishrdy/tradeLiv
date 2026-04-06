@@ -16,12 +16,33 @@ import {
   renderDesignerSignupEmail,
   renderAdminNewApplicationEmail,
   renderPasswordChangedEmail,
+  renderPasswordChangeOtpEmail,
   renderEmailVerificationEmail,
 } from '@furnlo/emails';
 import logger from '../config/logger';
 import { logRouteError, logError } from '../services/errorLogger';
 
 const router = Router();
+
+/* ─── In-memory OTP store for password change ──────────
+   Keyed by designerId. Entries expire after 10 minutes.
+   pendingPasswordHash is the bcrypt hash of the new password,
+   computed at request time so the confirm step just applies it.
+──────────────────────────────────────────────────────── */
+interface PasswordOtpEntry {
+  otpHash: string;
+  pendingPasswordHash: string;
+  expiresAt: Date;
+  attempts: number;
+}
+const passwordOtpStore = new Map<string, PasswordOtpEntry>();
+
+function cleanExpiredOtps() {
+  const now = new Date();
+  for (const [key, entry] of passwordOtpStore) {
+    if (entry.expiresAt < now) passwordOtpStore.delete(key);
+  }
+}
 
 /* ─── Email domain validation ──────────────────────── */
 
@@ -227,14 +248,20 @@ const profileUpdateSchema = z.object({
     .optional(),
 });
 
-const changePasswordSchema = z.object({
+const newPasswordRules = z
+  .string()
+  .min(8, 'Password must be at least 8 characters')
+  .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+  .regex(/[0-9]/, 'Password must contain at least one number')
+  .regex(/[^A-Za-z0-9]/, 'Password must contain at least one special character');
+
+const requestPasswordChangeOtpSchema = z.object({
   currentPassword: z.string().min(1, 'Current password is required'),
-  newPassword: z
-    .string()
-    .min(8, 'Password must be at least 8 characters')
-    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
-    .regex(/[0-9]/, 'Password must contain at least one number')
-    .regex(/[^A-Za-z0-9]/, 'Password must contain at least one special character'),
+  newPassword: newPasswordRules,
+});
+
+const confirmPasswordChangeSchema = z.object({
+  otp: z.string().length(6, 'Verification code must be 6 digits').regex(/^\d{6}$/, 'Invalid code'),
 });
 
 /* ─── Routes ───────────────────────────────────────── */
@@ -795,9 +822,9 @@ router.put('/me', requireAuth, requireRole('designer'), async (req: AuthRequest,
   }
 });
 
-// PUT /api/auth/change-password — authenticated users only (designer or admin)
-router.put('/change-password', requireAuth, async (req: AuthRequest, res: Response) => {
-  const parsed = changePasswordSchema.safeParse(req.body);
+// POST /api/auth/password-change-otp — step 1: validate credentials, send OTP
+router.post('/password-change-otp', requireAuth, async (req: AuthRequest, res: Response) => {
+  const parsed = requestPasswordChangeOtpSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.errors[0].message });
     return;
@@ -806,6 +833,8 @@ router.put('/change-password', requireAuth, async (req: AuthRequest, res: Respon
   const { currentPassword, newPassword } = parsed.data;
 
   try {
+    cleanExpiredOtps();
+
     const designer = await prisma.designer.findUnique({
       where: { id: req.user!.id },
       select: { id: true, passwordHash: true, fullName: true, email: true },
@@ -828,10 +857,90 @@ router.put('/change-password', requireAuth, async (req: AuthRequest, res: Respon
       return;
     }
 
-    const newHash = await bcrypt.hash(newPassword, 12);
+    // Generate 6-digit OTP and pre-hash the new password
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const [otpHash, pendingPasswordHash] = await Promise.all([
+      bcrypt.hash(otp, 10),
+      bcrypt.hash(newPassword, 12),
+    ]);
+
+    passwordOtpStore.set(designer.id, {
+      otpHash,
+      pendingPasswordHash,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      attempts: 0,
+    });
+
+    renderPasswordChangeOtpEmail({ fullName: designer.fullName, otp })
+      .then((email) => sendEmail({ to: designer.email, ...email }))
+      .catch((err) => {
+        logger.error('[email] password change OTP email failed', { err });
+        logError({ fileName: 'routes/auth.ts', routePath: '/password-change-otp', httpMethod: 'POST', errorMessage: err instanceof Error ? err.message : String(err), errorStack: err instanceof Error ? err.stack : undefined, severity: 'warn' });
+      });
+
+    res.json({ message: 'Verification code sent to your email.' });
+  } catch (err) {
+    logger.error('password-change-otp error', { err });
+    logRouteError('routes/auth.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+// PUT /api/auth/change-password — step 2: verify OTP and apply new password
+router.put('/change-password', requireAuth, async (req: AuthRequest, res: Response) => {
+  const parsed = confirmPasswordChangeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0].message });
+    return;
+  }
+
+  const { otp } = parsed.data;
+
+  try {
+    cleanExpiredOtps();
+
+    const entry = passwordOtpStore.get(req.user!.id);
+    if (!entry) {
+      res.status(400).json({ error: 'No pending password change. Please start over.' });
+      return;
+    }
+
+    if (entry.expiresAt < new Date()) {
+      passwordOtpStore.delete(req.user!.id);
+      res.status(400).json({ error: 'Verification code has expired. Please start over.' });
+      return;
+    }
+
+    entry.attempts += 1;
+    if (entry.attempts > 5) {
+      passwordOtpStore.delete(req.user!.id);
+      res.status(429).json({ error: 'Too many incorrect attempts. Please start over.' });
+      return;
+    }
+
+    const otpValid = await bcrypt.compare(otp, entry.otpHash);
+    if (!otpValid) {
+      const remaining = 5 - entry.attempts;
+      res.status(401).json({ error: `Incorrect code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.` });
+      return;
+    }
+
+    // OTP verified — apply the pre-computed password hash
+    passwordOtpStore.delete(req.user!.id);
+
+    const designer = await prisma.designer.findUnique({
+      where: { id: req.user!.id },
+      select: { id: true, fullName: true, email: true },
+    });
+
+    if (!designer) {
+      res.status(404).json({ error: 'Account not found.' });
+      return;
+    }
+
     await prisma.designer.update({
       where: { id: designer.id },
-      data: { passwordHash: newHash },
+      data: { passwordHash: entry.pendingPasswordHash },
     });
 
     // Revoke all refresh tokens to force re-login on other devices

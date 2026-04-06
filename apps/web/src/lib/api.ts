@@ -1131,6 +1131,38 @@ export interface PlatformConfigEntry {
   updatedBy: string | null;
 }
 
+/* ─── Backup types ─────────────────────────────────── */
+
+export interface BackupConfig {
+  id: string;
+  enabled: boolean;
+  intervalHours: number;
+  ttlDays: number;
+  updatedAt: string;
+}
+
+export interface BackupRun {
+  id: string;
+  env: string;
+  trigger: string;
+  status: string;
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  fileSizeBytes: string | null;
+  driveFileName: string | null;
+  error: string | null;
+}
+
+export interface BackupStats {
+  totalFiles: number;
+  totalSizeBytes: number;
+  avgSizeBytes: number;
+  successRate: number;
+  lastSuccessAt: string | null;
+  overThreshold: boolean;
+}
+
 /* ─── Analytics types ──────────────────────────────── */
 
 export interface RevenueAnalytics {
@@ -1361,7 +1393,10 @@ export const api = {
   logoutAll: () =>
     request<{ message: string }>('/api/auth/logout-all', { method: 'POST' }),
 
-  changePassword: (payload: { currentPassword: string; newPassword: string }) =>
+  requestPasswordChangeOtp: (payload: { currentPassword: string; newPassword: string }) =>
+    request<{ message: string }>('/api/auth/password-change-otp', { method: 'POST', body: JSON.stringify(payload) }),
+
+  confirmPasswordChange: (payload: { otp: string }) =>
     request<{ message: string }>('/api/auth/change-password', { method: 'PUT', body: JSON.stringify(payload) }),
 
   getMe: () =>
@@ -1745,6 +1780,9 @@ export const api = {
     return request<{ issues: AdminErrorIssue[]; total: number; page: number; totalPages: number }>(`/api/admin/issues${q ? `?${q}` : ''}`);
   },
 
+  syncAdminErrorIssues: () =>
+    request<{ synced: number; unchanged: number; failed: number; total: number }>('/api/admin/issues/sync', { method: 'POST' }),
+
   getAdminActivity: () =>
     request<AuditLogEntry[]>('/api/admin/activity'),
 
@@ -1945,5 +1983,34 @@ export const api = {
 
   markAllNotificationsRead: () =>
     request<{ marked: number }>('/api/notifications/read-all', { method: 'PUT' }),
+
+  // Backup
+  getBackupConfig: () =>
+    request<BackupConfig | null>('/api/admin/backup/config'),
+
+  updateBackupConfig: (payload: Omit<BackupConfig, 'id' | 'updatedAt'>) =>
+    request<BackupConfig>('/api/admin/backup/config', { method: 'PUT', body: JSON.stringify(payload) }),
+
+  getBackupRuns: (limit?: number) => {
+    const qs = limit ? `?limit=${limit}` : '';
+    return request<BackupRun[]>(`/api/admin/backup/runs${qs}`);
+  },
+
+  triggerBackup: (trigger: 'manual' | 'pre-migration' = 'manual') =>
+    request<{ message: string }>('/api/admin/backup/trigger', { method: 'POST', body: JSON.stringify({ trigger }) }),
+
+  deleteBackupRun: (id: string) =>
+    request<{ message: string }>(`/api/admin/backup/runs/${id}`, { method: 'DELETE' }),
+
+  bulkDeleteBackupRuns: (ids: string[]) =>
+    request<{ deleted: number }>('/api/admin/backup/runs/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) }),
+
+  getBackupStats: () =>
+    request<BackupStats>('/api/admin/backup/stats'),
+
+  restoreBackup: (id: string) =>
+    request<{ message: string }>(`/api/admin/backup/restore/${id}`, { method: 'POST' }),
+
+  getBackupDownloadUrl: (id: string) => `/api/admin/backup/runs/${id}/download`,
 
 };

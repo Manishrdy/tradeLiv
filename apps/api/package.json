@@ -6,7 +6,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "jest --verbose --runInBand 2>&1 | tee test-results.log"
+    "test": "jest --verbose --runInBand 2>&1 | tee test-results.log",
+    "backup:pre-migrate": "tsx src/scripts/pre-migrate-backup.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
@@ -24,6 +25,7 @@
     "helmet": "^8.0.0",
     "imapflow": "^1.2.18",
     "jsonwebtoken": "^9.0.2",
+    "node-cron": "^4.2.1",
     "nodemailer": "^8.0.4",
     "pdfkit": "^0.18.0",
     "puppeteer-core": "^24.40.0",
@@ -40,6 +42,7 @@
     "@types/jest": "^29.5.14",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.9.0",
+    "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^8.0.0",
     "@types/pdfkit": "^0.17.5",
     "@types/supertest": "^6.0.2",

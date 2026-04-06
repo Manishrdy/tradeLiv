@@ -602,6 +602,29 @@ model DesignerSession {
   @@index([designerId, lastPing])
 }
 
+model BackupConfig {
+  id            String   @id @default(cuid())
+  enabled       Boolean  @default(true)
+  intervalHours Int      @default(6)
+  ttlDays       Int      @default(7)
+  driveFolderId String   @default("")
+  updatedAt     DateTime @updatedAt
+}
+
+model BackupRun {
+  id            String    @id @default(cuid())
+  env           String    // "dev" | "prod"
+  trigger       String    // "scheduled" | "manual" | "pre-migration"
+  status        String    // "running" | "success" | "failed"
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  durationMs    Int?
+  fileSizeBytes BigInt?
+  driveFileId   String?
+  driveFileName String?
+  error         String?
+}
+
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model leads {
   id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

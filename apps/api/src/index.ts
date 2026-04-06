@@ -15,6 +15,8 @@ import { createApp } from './app';
 import { verifySmtpConnection } from './services/emailService';
 import { purgeExpiredMessages } from './services/messageService';
 import { purgeOldNotifications } from './services/notificationService';
+import { startBackupJob } from './jobs/backupJob';
+import { runBackup } from './services/backupService';
 
 const app = createApp();
 const PORT = process.env.API_PORT ?? 4000;
@@ -43,6 +45,12 @@ async function start() {
     // Run notification TTL cleanup every 24 hours (90-day retention)
     purgeOldNotifications().catch(() => {});
     setInterval(() => purgeOldNotifications().catch(() => {}), 24 * 60 * 60 * 1000);
+
+    // Start database backup cron job
+    startBackupJob().catch((err) => logger.warn('[backup] Failed to start backup job', { err }));
+
+    // Take a backup on every server restart
+    runBackup('restart').catch((err) => logger.warn('[backup] Restart backup failed', { err }));
   });
 }
 

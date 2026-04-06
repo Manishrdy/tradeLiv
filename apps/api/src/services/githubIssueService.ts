@@ -57,6 +57,19 @@ export async function createGithubIssue(params: {
   return (await response.json()) as GithubIssue;
 }
 
+export async function getGithubIssue(issueNumber: number): Promise<GithubIssue> {
+  const response = await fetch(githubApiUrl(issueApiPath(issueNumber)), {
+    method: 'GET',
+    headers: githubHeaders(),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`GitHub issue fetch failed (${response.status}): ${text}`);
+  }
+  return (await response.json()) as GithubIssue;
+}
+
 export async function reopenGithubIssue(issueNumber: number): Promise<GithubIssue> {
   const response = await fetch(githubApiUrl(issueApiPath(issueNumber)), {
     method: 'PATCH',

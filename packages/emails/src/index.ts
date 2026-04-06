@@ -13,6 +13,7 @@ import { QuoteSentEmail } from './templates/QuoteSentEmail';
 import { RejectionEmail } from './templates/RejectionEmail';
 import { SuspensionEmail } from './templates/SuspensionEmail';
 import { AccountDeletedEmail } from './templates/AccountDeletedEmail';
+import { PasswordChangeOtpEmail } from './templates/PasswordChangeOtpEmail';
 
 import type { AdminNewApplicationEmailProps } from './templates/AdminNewApplicationEmail';
 import type { EmailVerificationEmailProps } from './templates/EmailVerificationEmail';
@@ -26,6 +27,7 @@ import type { QuoteSentEmailProps } from './templates/QuoteSentEmail';
 import type { RejectionEmailProps } from './templates/RejectionEmail';
 import type { SuspensionEmailProps } from './templates/SuspensionEmail';
 import type { AccountDeletedEmailProps } from './templates/AccountDeletedEmail';
+import type { PasswordChangeOtpEmailProps } from './templates/PasswordChangeOtpEmail';
 
 export interface RenderedEmail {
   subject: string;
@@ -56,6 +58,15 @@ export async function renderAdminNewApplicationEmail(
   return {
     subject: `New designer application — ${props.fullName}`,
     html: await render(React.createElement(AdminNewApplicationEmail, props)),
+  };
+}
+
+export async function renderPasswordChangeOtpEmail(
+  props: PasswordChangeOtpEmailProps,
+): Promise<RenderedEmail> {
+  return {
+    subject: 'Your tradeLiv password change verification code',
+    html: await render(React.createElement(PasswordChangeOtpEmail, props)),
   };
 }
 

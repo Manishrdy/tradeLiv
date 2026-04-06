@@ -1,4 +1,10 @@
+import fs from 'fs';
+import path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { Router, Response } from 'express';
+
+const execAsync = promisify(exec);
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import jwt, { type SignOptions } from 'jsonwebtoken';
@@ -24,6 +30,7 @@ import {
 import logger from '../config/logger';
 import { logRouteError, logError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
+import { isGithubIssueIntegrationEnabled, getGithubIssue } from '../services/githubIssueService';
 
 const router = Router();
 router.use(requireAuth, requireRole('admin'));
@@ -1306,6 +1313,107 @@ router.get('/issues', async (req: AuthRequest, res: Response) => {
   }
 });
 
+/* ─── POST /issues/sync ───────────────────────────── */
+
+const SYNC_BATCH_SIZE = 10;
+
+router.post('/issues/sync', async (req: AuthRequest, res: Response) => {
+  if (!isGithubIssueIntegrationEnabled()) {
+    res.status(503).json({ error: 'GitHub Issues integration is not configured.' });
+    return;
+  }
+
+  try {
+    // Fetch all incidents that have a linked GitHub issue
+    const incidents = await prisma.errorIncident.findMany({
+      where: { githubIssueNumber: { not: null } },
+      select: { githubIssueNumber: true, githubIssueState: true },
+    });
+
+    if (incidents.length === 0) {
+      res.json({ synced: 0, unchanged: 0, failed: 0, total: 0 });
+      return;
+    }
+
+    // Deduplicate issue numbers (multiple incidents can share one GitHub issue)
+    const uniqueIssueNumbers = [...new Set(incidents.map((i) => i.githubIssueNumber as number))];
+
+    // Fetch live state from GitHub in batches to avoid flooding the API
+    const githubStateMap = new Map<number, 'open' | 'closed'>();
+    const failedIssueNumbers = new Set<number>();
+
+    for (let i = 0; i < uniqueIssueNumbers.length; i += SYNC_BATCH_SIZE) {
+      const batch = uniqueIssueNumbers.slice(i, i + SYNC_BATCH_SIZE);
+      const results = await Promise.allSettled(
+        batch.map(async (num) => {
+          const issue = await getGithubIssue(num);
+          return { num, state: issue.state };
+        }),
+      );
+      results.forEach((result, idx) => {
+        if (result.status === 'fulfilled') {
+          githubStateMap.set(result.value.num, result.value.state);
+        } else {
+          failedIssueNumbers.add(batch[idx]);
+          logger.warn('github issue fetch failed during sync', { issueNumber: batch[idx], error: result.reason });
+        }
+      });
+    }
+
+    // Determine which issue numbers need a DB update
+    const dbStateByNumber = new Map<number, string>();
+    for (const incident of incidents) {
+      if (incident.githubIssueNumber !== null) {
+        dbStateByNumber.set(incident.githubIssueNumber, incident.githubIssueState);
+      }
+    }
+
+    const toUpdate: Array<{ issueNumber: number; newState: 'open' | 'closed' }> = [];
+    let unchanged = 0;
+
+    for (const [num, ghState] of githubStateMap) {
+      if (dbStateByNumber.get(num) !== ghState) {
+        toUpdate.push({ issueNumber: num, newState: ghState });
+      } else {
+        unchanged++;
+      }
+    }
+
+    // Apply updates — each updateMany covers all incidents sharing the same GitHub issue number
+    const now = new Date();
+    await Promise.all(
+      toUpdate.map(({ issueNumber, newState }) =>
+        prisma.errorIncident.updateMany({
+          where: { githubIssueNumber: issueNumber },
+          data: {
+            githubIssueState: newState,
+            issueClosedAt: newState === 'closed' ? now : null,
+          },
+        }),
+      ),
+    );
+
+    writeAuditLog({
+      actorType: 'admin',
+      actorId: req.user!.id,
+      action: 'issues_github_sync',
+      entityType: 'error_incident',
+      payload: { synced: toUpdate.length, unchanged, failed: failedIssueNumbers.size, total: uniqueIssueNumbers.length },
+    }).catch((err) => logger.error('audit log write failed', { err }));
+
+    res.json({
+      synced: toUpdate.length,
+      unchanged,
+      failed: failedIssueNumbers.size,
+      total: uniqueIssueNumbers.length,
+    });
+  } catch (err) {
+    logger.error('admin issues sync error', { err, path: req.path, method: req.method });
+    logRouteError('routes/admin.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
 /* ─── Platform Config ─────────────────────────────── */
 
 router.get('/config', async (_req: AuthRequest, res: Response) => {
@@ -1765,6 +1873,232 @@ router.get('/time-tracking/:designerId', async (req: AuthRequest, res: Response)
     res.json(sessions);
   } catch (err) {
     logger.error('admin time-tracking error', { err });
+    logRouteError('routes/admin.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+/* ─── Backup ──────────────────────────────────────── */
+
+import { runBackup, getBackupDir } from '../services/backupService';
+import { restartBackupJob } from '../jobs/backupJob';
+
+router.get('/backup/config', requireSuperAdmin, async (_req: AuthRequest, res: Response) => {
+  try {
+    const config = await prisma.backupConfig.findFirst();
+    res.json(config ?? null);
+  } catch (err) {
+    logger.error('admin backup config error', { err });
+    logRouteError('routes/admin.ts', err, _req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+const backupConfigSchema = z.object({
+  enabled: z.boolean(),
+  intervalHours: z.number().int().min(1).max(24),
+  ttlDays: z.number().int().min(1).max(90),
+});
+
+router.put('/backup/config', requireSuperAdmin, async (req: AuthRequest, res: Response) => {
+  const parsed = backupConfigSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors[0].message }); return; }
+  try {
+    const existing = await prisma.backupConfig.findFirst();
+    const config = existing
+      ? await prisma.backupConfig.update({ where: { id: existing.id }, data: { ...parsed.data, driveFolderId: existing.driveFolderId } })
+      : await prisma.backupConfig.create({ data: { ...parsed.data, driveFolderId: '' } });
+
+    writeAuditLog({
+      actorType: 'admin', actorId: req.user!.id,
+      action: 'backup_config_updated', entityType: 'backup_config', entityId: config.id,
+    }).catch((err) => logger.error('audit log write failed', { err }));
+
+    // Reload the cron schedule with new settings
+    await restartBackupJob();
+    res.json(config);
+  } catch (err) {
+    logger.error('admin backup config error', { err });
+    logRouteError('routes/admin.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+router.get('/backup/runs', requireSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+    const runs = await prisma.backupRun.findMany({
+      orderBy: { startedAt: 'desc' },
+      take: limit,
+    });
+    res.json(runs.map((r) => ({
+      ...r,
+      fileSizeBytes: r.fileSizeBytes != null ? r.fileSizeBytes.toString() : null,
+    })));
+  } catch (err) {
+    logger.error('admin backup runs error', { err });
+    logRouteError('routes/admin.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+router.post('/backup/trigger', requireSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    writeAuditLog({
+      actorType: 'admin', actorId: req.user!.id,
+      action: 'backup_triggered', entityType: 'backup_run', entityId: 'manual',
+    }).catch((err) => logger.error('audit log write failed', { err }));
+
+    const trigger = (req.body?.trigger === 'pre-migration') ? 'pre-migration' : 'manual';
+    // Fire and don't await — let it run in background, client polls /runs
+    runBackup(trigger).catch((err) => logger.error('[backup] Manual trigger failed', { err }));
+    res.json({ message: 'Backup started' });
+  } catch (err) {
+    logger.error('admin backup trigger error', { err });
+    logRouteError('routes/admin.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+router.get('/backup/stats', requireSuperAdmin, async (_req: AuthRequest, res: Response) => {
+  try {
+    const backupDir = getBackupDir();
+    let totalFiles = 0;
+    let totalSizeBytes = 0;
+
+    if (fs.existsSync(backupDir)) {
+      const files = fs.readdirSync(backupDir).filter((f) => f.startsWith('tradeliv_'));
+      totalFiles = files.length;
+      for (const file of files) {
+        totalSizeBytes += fs.statSync(path.join(backupDir, file)).size;
+      }
+    }
+
+    const recentRuns = await prisma.backupRun.findMany({
+      orderBy: { startedAt: 'desc' },
+      take: 20,
+      select: { status: true, completedAt: true },
+    });
+
+    const finished = recentRuns.filter((r) => r.status !== 'running');
+    const successCount = finished.filter((r) => r.status === 'success').length;
+    const successRate = finished.length > 0 ? Math.round((successCount / finished.length) * 100) : 0;
+    const lastSuccess = recentRuns.find((r) => r.status === 'success');
+
+    const WARN_THRESHOLD_BYTES = 500 * 1024 * 1024; // 500 MB
+
+    res.json({
+      totalFiles,
+      totalSizeBytes,
+      avgSizeBytes: totalFiles > 0 ? Math.round(totalSizeBytes / totalFiles) : 0,
+      successRate,
+      lastSuccessAt: lastSuccess?.completedAt ?? null,
+      overThreshold: totalSizeBytes > WARN_THRESHOLD_BYTES,
+    });
+  } catch (err) {
+    logger.error('admin backup stats error', { err });
+    logRouteError('routes/admin.ts', err, _req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+router.post('/backup/runs/bulk-delete', requireSuperAdmin, async (req: AuthRequest, res: Response) => {
+  const { ids } = req.body as { ids: string[] };
+  if (!Array.isArray(ids) || ids.length === 0) { res.status(400).json({ error: 'ids must be a non-empty array' }); return; }
+  try {
+    const runs = await prisma.backupRun.findMany({ where: { id: { in: ids } } });
+
+    for (const run of runs) {
+      if (run.driveFileName) {
+        const filePath = path.join(getBackupDir(), run.driveFileName);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      }
+    }
+
+    await prisma.backupRun.deleteMany({ where: { id: { in: ids } } });
+
+    writeAuditLog({
+      actorType: 'admin', actorId: req.user!.id,
+      action: 'backup_bulk_deleted', entityType: 'backup_run', entityId: ids.join(','),
+    }).catch((err) => logger.error('audit log write failed', { err }));
+
+    res.json({ deleted: runs.length });
+  } catch (err) {
+    logger.error('admin backup bulk-delete error', { err });
+    logRouteError('routes/admin.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+router.post('/backup/restore/:id', requireSuperAdmin, async (req: AuthRequest, res: Response) => {
+  if ((process.env.USE_DB ?? 'dev').toLowerCase() === 'prod') {
+    res.status(403).json({ error: 'Restore is not allowed in production' });
+    return;
+  }
+  try {
+    const run = await prisma.backupRun.findUnique({ where: { id: req.params['id'] as string } });
+    if (!run || !run.driveFileName) { res.status(404).json({ error: 'Backup not found' }); return; }
+
+    const filePath = path.join(getBackupDir(), run.driveFileName);
+    if (!fs.existsSync(filePath)) { res.status(404).json({ error: 'Backup file not found on disk' }); return; }
+
+    const dbUrl = process.env.DATABASE_URL;
+    if (!dbUrl) { res.status(500).json({ error: 'DATABASE_URL not set' }); return; }
+
+    await execAsync(`pg_restore --clean --if-exists -d "${dbUrl}" -F c "${filePath}"`);
+
+    writeAuditLog({
+      actorType: 'admin', actorId: req.user!.id,
+      action: 'backup_restored', entityType: 'backup_run', entityId: run.id,
+    }).catch((err) => logger.error('audit log write failed', { err }));
+
+    logger.info(`[backup] Restored from ${run.driveFileName}`);
+    res.json({ message: `Restored from ${run.driveFileName}` });
+  } catch (err) {
+    logger.error('admin backup restore error', { err });
+    logRouteError('routes/admin.ts', err, req);
+    res.status(500).json({ error: 'Restore failed. Check server logs.' });
+  }
+});
+
+router.get('/backup/runs/:id/download', requireSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const run = await prisma.backupRun.findUnique({ where: { id: req.params['id'] as string } });
+    if (!run || !run.driveFileName) { res.status(404).json({ error: 'Backup not found' }); return; }
+
+    const filePath = path.join(getBackupDir(), run.driveFileName);
+    if (!fs.existsSync(filePath)) { res.status(404).json({ error: 'Backup file not found on disk' }); return; }
+
+    res.setHeader('Content-Disposition', `attachment; filename="${run.driveFileName}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    fs.createReadStream(filePath).pipe(res);
+  } catch (err) {
+    logger.error('admin backup download error', { err });
+    logRouteError('routes/admin.ts', err, req);
+    res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
+});
+
+router.delete('/backup/runs/:id', requireSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const run = await prisma.backupRun.findUnique({ where: { id: req.params['id'] as string } });
+    if (!run) { res.status(404).json({ error: 'Backup not found' }); return; }
+
+    if (run.driveFileName) {
+      const filePath = path.join(getBackupDir(), run.driveFileName);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+
+    await prisma.backupRun.delete({ where: { id: run.id } });
+
+    writeAuditLog({
+      actorType: 'admin', actorId: req.user!.id,
+      action: 'backup_deleted', entityType: 'backup_run', entityId: run.id,
+    }).catch((err) => logger.error('audit log write failed', { err }));
+
+    res.json({ message: 'Backup deleted' });
+  } catch (err) {
+    logger.error('admin backup delete error', { err });
     logRouteError('routes/admin.ts', err, req);
     res.status(500).json({ error: 'An error occurred. Please try again.' });
   }

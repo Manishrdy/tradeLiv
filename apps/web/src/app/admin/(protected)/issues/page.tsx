@@ -49,6 +49,8 @@ function Badge({ value, map, fallback }: { value: string; map: Record<string, { 
   );
 }
 
+type SyncResult = { synced: number; unchanged: number; failed: number; total: number };
+
 export default function AdminIssuesPage() {
   const [issues, setIssues] = useState<AdminErrorIssue[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,6 +61,9 @@ export default function AdminIssuesPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   const load = useCallback((s: string, sev: string, q: string, p: number) => {
     setLoading(true);
@@ -88,6 +93,22 @@ export default function AdminIssuesPage() {
     setSearch(searchInput.trim());
   }
 
+  async function handleSync() {
+    setSyncing(true);
+    setSyncResult(null);
+    setSyncError(null);
+    const r = await api.syncAdminErrorIssues();
+    setSyncing(false);
+    if (r.data) {
+      setSyncResult(r.data);
+      if (r.data.synced > 0) {
+        load(state, severity, search, page);
+      }
+    } else {
+      setSyncError(r.error ?? 'Sync failed. Please try again.');
+    }
+  }
+
   function formatDate(value: string | null) {
     if (!value) return '—';
     return new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -95,14 +116,91 @@ export default function AdminIssuesPage() {
 
   return (
     <div style={{ padding: '40px 40px 80px' }}>
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.03em', margin: 0 }}>
-          Error Issues
-        </h1>
-        <p style={{ margin: '6px 0 0', fontSize: 13.5, color: 'var(--text-muted)' }}>
-          DB-backed incident list synced with GitHub issue state.
-        </p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28, gap: 16 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.03em', margin: 0 }}>
+            Error Issues
+          </h1>
+          <p style={{ margin: '6px 0 0', fontSize: 13.5, color: 'var(--text-muted)' }}>
+            DB-backed incident list synced with GitHub issue state.
+          </p>
+        </div>
+        <button
+          className="btn-ghost"
+          onClick={handleSync}
+          disabled={syncing}
+          style={{ fontSize: 13, padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 7, whiteSpace: 'nowrap', flexShrink: 0 }}
+        >
+          {syncing ? (
+            <svg className="anim-rotate" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 12a9 9 0 11-6.219-8.56" />
+            </svg>
+          ) : (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="1 4 1 10 7 10" />
+              <polyline points="23 20 23 14 17 14" />
+              <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" />
+            </svg>
+          )}
+          {syncing ? 'Syncing…' : 'Sync with GitHub'}
+        </button>
       </div>
+
+      {syncResult && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: '10px 16px',
+            borderRadius: 8,
+            background: syncResult.failed > 0 ? '#fef3c7' : '#e8f5ee',
+            border: `1px solid ${syncResult.failed > 0 ? '#fcd34d' : '#86efac'}`,
+            fontSize: 13,
+            color: syncResult.failed > 0 ? '#854d0e' : '#166534',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <span>
+            Sync complete — <strong>{syncResult.synced}</strong> updated, <strong>{syncResult.unchanged}</strong> unchanged
+            {syncResult.failed > 0 && <>, <strong>{syncResult.failed}</strong> failed to fetch from GitHub</>}
+            {' '}({syncResult.total} total tracked issues)
+          </span>
+          <button
+            onClick={() => setSyncResult(null)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1, color: 'inherit', padding: '0 2px' }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {syncError && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: '10px 16px',
+            borderRadius: 8,
+            background: '#fee2e2',
+            border: '1px solid #fca5a5',
+            fontSize: 13,
+            color: '#991b1b',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <span>{syncError}</span>
+          <button
+            onClick={() => setSyncError(null)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1, color: 'inherit', padding: '0 2px' }}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 4, marginBottom: 10, borderBottom: '1px solid var(--border)' }}>
         {STATE_TABS.map((t) => (
