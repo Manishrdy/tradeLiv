@@ -13,6 +13,28 @@ function StatusDot({ ok }: { ok: boolean }) {
   );
 }
 
+function usageColor(pct: number) {
+  if (pct >= 85) return '#b91c1c';
+  if (pct >= 65) return '#d97706';
+  return '#2d7a4f';
+}
+
+function ResourceBar({ label, pct, detail }: { label: string; pct: number; detail: string }) {
+  const color = usageColor(pct);
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</span>
+        <span style={{ fontSize: 18, fontWeight: 800, color, letterSpacing: '-0.04em' }}>{pct}%</span>
+      </div>
+      <div style={{ height: 7, borderRadius: 4, background: 'var(--border)', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${Math.min(pct, 100)}%`, background: color, borderRadius: 4, transition: 'width 0.4s ease' }} />
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 5 }}>{detail}</div>
+    </div>
+  );
+}
+
 function StatCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
   return (
     <div className="card" style={{ padding: '20px 22px' }}>
@@ -159,6 +181,74 @@ export default function AdminHealthPage() {
             <StatCard label="Errors (1h)" value={health.errors.last1h} color={health.errors.last1h > 0 ? '#b91c1c' : 'var(--text-primary)'} />
             <StatCard label="Errors (24h)" value={health.errors.last24h} color={health.errors.last24h > 0 ? '#b91c1c' : 'var(--text-primary)'} />
           </div>
+
+          {/* System Resources */}
+          {health.system && (
+            <>
+              <h2 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: '32px 0 14px' }}>
+                System Resources
+              </h2>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14, marginBottom: 20 }}>
+                {/* CPU */}
+                <div className="card" style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+                  <ResourceBar
+                    label="CPU Usage"
+                    pct={health.system.cpu.usagePct}
+                    detail={`${health.system.cpu.count} cores · ${health.system.cpu.model}`}
+                  />
+                  <div>
+                    <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                      Load Average
+                    </div>
+                    <div style={{ display: 'flex', gap: 20 }}>
+                      {(['1m', '5m', '15m'] as const).map((label, i) => (
+                        <div key={label}>
+                          <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.04em' }}>
+                            {health.system.cpu.loadAvg[i]}
+                          </div>
+                          <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>{label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* RAM */}
+                <div className="card" style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+                  <ResourceBar
+                    label="RAM Usage"
+                    pct={Math.round((health.system.ram.usedMB / health.system.ram.totalMB) * 100)}
+                    detail={`${health.system.ram.usedMB.toLocaleString()} MB used of ${health.system.ram.totalMB.toLocaleString()} MB`}
+                  />
+                  <div>
+                    <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                      Node.js Process
+                    </div>
+                    <div style={{ display: 'flex', gap: 20 }}>
+                      <div>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.04em' }}>
+                          {health.system.process.heapUsedMB}MB
+                        </div>
+                        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>Heap used</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.04em' }}>
+                          {health.system.process.heapTotalMB}MB
+                        </div>
+                        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>Heap total</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.04em' }}>
+                          {health.system.process.rssMB}MB
+                        </div>
+                        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>RSS</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Entity Counts */}
           <h2 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: '32px 0 14px' }}>

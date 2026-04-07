@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { Router, Response } from 'express';
@@ -1177,6 +1178,28 @@ router.get('/enhanced-stats', async (req: AuthRequest, res: Response) => {
 
 /* ─── Platform Health ─────────────────────────────── */
 
+function sampleCpuTimes() {
+  return os.cpus().map((c) => ({
+    idle: c.times.idle,
+    total: (Object.values(c.times) as number[]).reduce((a, b) => a + b, 0),
+  }));
+}
+
+function getCpuUsagePct(): Promise<number> {
+  return new Promise((resolve) => {
+    const start = sampleCpuTimes();
+    setTimeout(() => {
+      const end = sampleCpuTimes();
+      const perCore = end.map((e, i) => {
+        const idleDelta = e.idle - start[i].idle;
+        const totalDelta = e.total - start[i].total;
+        return totalDelta === 0 ? 0 : 100 - (100 * idleDelta) / totalDelta;
+      });
+      resolve(Math.round(perCore.reduce((a, b) => a + b, 0) / perCore.length));
+    }, 200);
+  });
+}
+
 router.get('/health', async (_req: AuthRequest, res: Response) => {
   try {
     const data = await cachedResponse('health', 15_000, async () => {
@@ -1191,7 +1214,7 @@ router.get('/health', async (_req: AuthRequest, res: Response) => {
       const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
-      const [active15, active24, errors1h, errors24h, designerCount, projectCount, orderCount, productCount] = await Promise.all([
+      const [active15, active24, errors1h, errors24h, designerCount, projectCount, orderCount, productCount, cpuUsagePct] = await Promise.all([
         prisma.designerSession.groupBy({ by: ['designerId'], where: { lastPing: { gte: fifteenMinAgo }, endedAt: null } }).then((r) => r.length),
         prisma.designerSession.groupBy({ by: ['designerId'], where: { lastPing: { gte: twentyFourHoursAgo } } }).then((r) => r.length),
         prisma.auditLog.count({ where: { action: { contains: 'error' }, createdAt: { gte: oneHourAgo } } }),
@@ -1200,9 +1223,14 @@ router.get('/health', async (_req: AuthRequest, res: Response) => {
         prisma.project.count(),
         prisma.order.count(),
         prisma.product.count(),
+        getCpuUsagePct(),
       ]);
 
       const mem = process.memoryUsage();
+      const totalRamMB = Math.round(os.totalmem() / 1024 / 1024);
+      const freeRamMB = Math.round(os.freemem() / 1024 / 1024);
+      const cpus = os.cpus();
+      const [loadAvg1, loadAvg5, loadAvg15] = os.loadavg();
 
       return {
         db: { connected: true, latencyMs: dbLatency },
@@ -1210,6 +1238,24 @@ router.get('/health', async (_req: AuthRequest, res: Response) => {
         activeUsers: { last15min: active15, last24h: active24 },
         errors: { last1h: errors1h, last24h: errors24h },
         counts: { designers: designerCount, projects: projectCount, orders: orderCount, products: productCount },
+        system: {
+          cpu: {
+            usagePct: cpuUsagePct,
+            count: cpus.length,
+            model: cpus[0]?.model.trim() ?? 'Unknown',
+            loadAvg: [Math.round(loadAvg1 * 100) / 100, Math.round(loadAvg5 * 100) / 100, Math.round(loadAvg15 * 100) / 100],
+          },
+          ram: {
+            totalMB: totalRamMB,
+            usedMB: totalRamMB - freeRamMB,
+            freeMB: freeRamMB,
+          },
+          process: {
+            heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
+            heapTotalMB: Math.round(mem.heapTotal / 1024 / 1024),
+            rssMB: Math.round(mem.rss / 1024 / 1024),
+          },
+        },
       };
     });
 
@@ -1223,6 +1269,11 @@ router.get('/health', async (_req: AuthRequest, res: Response) => {
       activeUsers: { last15min: 0, last24h: 0 },
       errors: { last1h: 0, last24h: 0 },
       counts: { designers: 0, projects: 0, orders: 0, products: 0 },
+      system: {
+        cpu: { usagePct: 0, count: os.cpus().length, model: os.cpus()[0]?.model.trim() ?? 'Unknown', loadAvg: [0, 0, 0] },
+        ram: { totalMB: Math.round(os.totalmem() / 1024 / 1024), usedMB: 0, freeMB: Math.round(os.freemem() / 1024 / 1024) },
+        process: { heapUsedMB: 0, heapTotalMB: 0, rssMB: 0 },
+      },
     });
   }
 });

@@ -1115,6 +1115,11 @@ export interface PlatformHealth {
   activeUsers: { last15min: number; last24h: number };
   errors: { last1h: number; last24h: number };
   counts: { designers: number; projects: number; orders: number; products: number };
+  system: {
+    cpu: { usagePct: number; count: number; model: string; loadAvg: [number, number, number] };
+    ram: { totalMB: number; usedMB: number; freeMB: number };
+    process: { heapUsedMB: number; heapTotalMB: number; rssMB: number };
+  };
 }
 
 /* ─── Platform Config types ────────────────────────── */
