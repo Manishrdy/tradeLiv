@@ -1,0 +1,84 @@
+# Production docker-compose — pulls pre-built images from OCI Container Registry.
+# Usage: IMAGE_TAG=<git-sha> docker compose -f docker-compose.prod.yml up -d
+#
+# Required env file: .env.prod (copy from .env.prod.example and fill in secrets)
+# Required env var:  OCIR_REGISTRY  e.g. iad.ocir.io/<tenancy-namespace>
+#                    IMAGE_TAG      git SHA set by CI/CD, defaults to "latest"
+
+services:
+  chrome:
+    # browserless v1 ARM64-specific tag — v2 (ghcr.io/browserless/chromium) has
+    # confirmed timeout bugs on ARM64 hardware (issues #3897, #3958, #4946).
+    # v1 exposes the same ws://chrome:3000 endpoint puppeteer-core connects to.
+    image: browserless/chrome:1-arm64
+    platform: linux/arm64
+    environment:
+      - MAX_CONCURRENT_SESSIONS=2
+      - CONNECTION_TIMEOUT=30000
+      - TIMEOUT=25000
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    networks:
+      - internal
+
+  api:
+    image: ${OCIR_REGISTRY}/tradeliv-api:${IMAGE_TAG:-latest}
+    env_file: .env.prod
+    environment:
+      - NODE_ENV=production
+      - USE_DB=prod
+      - BROWSER_WS_ENDPOINT=ws://chrome:3000
+    depends_on:
+      chrome:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    volumes:
+      - api-logs:/app/logs
+      - db-backups:/app/db-backups
+    networks:
+      - internal
+
+  web:
+    image: ${OCIR_REGISTRY}/tradeliv-web:${IMAGE_TAG:-latest}
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - internal
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - certbot-webroot:/var/www/certbot:ro
+    depends_on:
+      - web
+      - api
+    restart: unless-stopped
+    networks:
+      - internal
+
+volumes:
+  api-logs:
+  db-backups:
+  certbot-webroot:
+
+networks:
+  internal:
+    driver: bridge

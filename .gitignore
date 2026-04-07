@@ -11,10 +11,11 @@ out/
 apps/api/db-backups/
 apps/api/apps/api/db-backups/
 
-# Environment
+# Environment — ignore all variants, keep only example/template files
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.prod.example
 
 # Prisma
 packages/db/src/generated/

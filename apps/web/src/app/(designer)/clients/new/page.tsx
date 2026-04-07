@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, ClientPayload } from '@/lib/api';
+import { AddressAutocomplete } from '@/components/AddressAutocomplete';
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
@@ -197,10 +198,20 @@ export default function NewClientPage() {
           </SectionHeading>
 
           <Field label="Address Line 1">
-            <input className="input-field" type="text" placeholder="42 Maple Street, Apt 3B" value={billLine1} onChange={(e) => setBillLine1(e.target.value)} />
+            <AddressAutocomplete
+              value={billLine1}
+              onChange={setBillLine1}
+              placeholder="42 Maple Street"
+              onAddressSelect={(parts) => {
+                setBillLine1(parts.line1);
+                setBillCity(parts.city);
+                setBillState(parts.state);
+                setBillZip(parts.zip);
+              }}
+            />
           </Field>
           <Field label="Address Line 2">
-            <input className="input-field" type="text" placeholder="Suite 100" value={billLine2} onChange={(e) => setBillLine2(e.target.value)} />
+            <input className="input-field" type="text" placeholder="Apt 3B, Suite 100" value={billLine2} onChange={(e) => setBillLine2(e.target.value)} />
           </Field>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 110px', gap: 12 }}>
             <Field label="City">
@@ -270,10 +281,20 @@ export default function NewClientPage() {
           {!sameAddress && (
             <div style={{ animation: 'fadeSlideUp 0.25s ease both' }}>
               <Field label="Address Line 1">
-                <input className="input-field" type="text" placeholder="42 Maple Street, Apt 3B" value={shipLine1} onChange={(e) => setShipLine1(e.target.value)} />
+                <AddressAutocomplete
+                  value={shipLine1}
+                  onChange={setShipLine1}
+                  placeholder="42 Maple Street"
+                  onAddressSelect={(parts) => {
+                    setShipLine1(parts.line1);
+                    setShipCity(parts.city);
+                    setShipState(parts.state);
+                    setShipZip(parts.zip);
+                  }}
+                />
               </Field>
               <Field label="Address Line 2">
-                <input className="input-field" type="text" placeholder="Suite 100" value={shipLine2} onChange={(e) => setShipLine2(e.target.value)} />
+                <input className="input-field" type="text" placeholder="Apt 3B, Suite 100" value={shipLine2} onChange={(e) => setShipLine2(e.target.value)} />
               </Field>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 110px', gap: 12 }}>
                 <Field label="City">

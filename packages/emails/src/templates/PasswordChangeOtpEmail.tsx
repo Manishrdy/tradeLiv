@@ -9,7 +9,7 @@ export interface PasswordChangeOtpEmailProps {
 
 export function PasswordChangeOtpEmail({ fullName, otp }: PasswordChangeOtpEmailProps) {
   return (
-    <BaseLayout preview="Your verification code to confirm the password change is inside."
+    <BaseLayout preview="Your verification code to confirm the password change is inside.">
       <Text style={styles.heading}>Verify your password change</Text>
       <Text style={styles.body}>Hi {fullName},</Text>
       <Text style={styles.body}>
