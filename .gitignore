@@ -8,8 +8,9 @@ dist/
 build/
 .next/
 out/
-apps/api/db-backups/
-apps/api/apps/api/db-backups/
+**/db-backups/
+**/*.dump
+**/*.sql.gz
 
 # Environment — ignore all variants, keep only example/template files
 .env
