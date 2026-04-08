@@ -4,12 +4,14 @@
 
 set -euo pipefail
 
-# Load .env
+# Load .env (disable strict mode while sourcing — .env may have unset vars or comments)
 ENV_FILE="$(dirname "$0")/../../../.env"
 if [ -f "$ENV_FILE" ]; then
+  set +u
   set -a
   source "$ENV_FILE"
   set +a
+  set -u
 fi
 
 USE_DB="${USE_DB:-dev}"
