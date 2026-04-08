@@ -1,11 +1,9 @@
 import cron from 'node-cron';
-import { PrismaClient } from '@furnlo/db';
+import { prisma } from '@furnlo/db';
 import { runBackup } from '../services/backupService';
 import logger from '../config/logger';
 
-const prisma = new PrismaClient();
-
-let currentTask: cron.ScheduledTask | null = null;
+let currentTask: ReturnType<typeof cron.schedule> | null = null;
 
 // Converts intervalHours to a cron expression: e.g. 6 → "0 */6 * * *"
 function toCronExpression(intervalHours: number): string {

@@ -35,7 +35,7 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
       res.status(401).json({ error: 'Invalid or expired session' });
       return;
     }
-    req.user = payload.data;
+    req.user = payload.data as { id: string; role: 'designer' | 'client' | 'admin' };
     next();
   } catch {
     res.status(401).json({ error: 'Invalid or expired session' });

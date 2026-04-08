@@ -46,7 +46,7 @@ export function registerUuidValidation(router: Router): void {
  */
 export function validateUuidParams(req: Request, res: Response, next: NextFunction) {
   for (const [name, value] of Object.entries(req.params)) {
-    if (UUID_PARAM_NAMES.includes(name) && !UUID_REGEX.test(value)) {
+    if (UUID_PARAM_NAMES.includes(name) && !UUID_REGEX.test(value as string)) {
       res.status(400).json({ error: `Invalid ${name} format.` });
       return;
     }
