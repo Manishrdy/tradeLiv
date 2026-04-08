@@ -19,9 +19,8 @@ RUN npm ci
 COPY packages/ ./packages/
 COPY apps/api/ ./apps/api/
 
-# Generate Prisma client and compile TypeScript
-RUN npm run db:generate --workspace=packages/db
-RUN npm run build --workspace=apps/api
+# Build workspace packages first so the API compiles and runs against emitted artifacts
+RUN npm run build:api
 
 # ─── Stage 2: Runtime ────────────────────────────────────────────────────────
 FROM node:20-alpine
