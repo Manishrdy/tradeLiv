@@ -94,6 +94,7 @@ export default function AdminDesignerDetailPage() {
     const r = await api.impersonateDesigner(id);
     setImpersonating(false);
     if (r.error) { setUpdateError(r.error); return; }
+    if (!r.data) { setUpdateError('Failed to generate impersonation link.'); return; }
     window.open(r.data.loginUrl, '_blank');
   }
 
@@ -104,6 +105,7 @@ export default function AdminDesignerDetailPage() {
     const r = await api.adminSendEmail(id, 'verification');
     setSendingEmail(false);
     if (r.error) { setUpdateError(r.error); return; }
+    if (!r.data) { setUpdateError('Failed to send confirmation email.'); return; }
     setEmailSuccess(`Confirmation email sent to ${r.data.to}`);
     setTimeout(() => { setShowResendModal(false); setEmailSuccess(''); }, 2000);
   }

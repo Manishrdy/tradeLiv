@@ -589,3 +589,17 @@ This is a complete MVP built end-to-end — product strategy, database design, A
 ## License
 
 Proprietary — all rights reserved.
+
+---
+
+## Prod Fixes
+
+Recent production stabilization work completed:
+
+- Standardized workspace build flow so Prisma client generation always runs before API compilation.
+- Resolved cross-workspace TypeScript dependency mismatches (Express typings and React typings alignment).
+- Removed conflicting type-resolution paths that caused broad `string | string[]` request param/query errors.
+- Fixed API route/service typing issues that blocked `tsc` in production builds.
+- Fixed strict Next.js/React build-time typing issues in web pages/components surfaced during production build verification.
+- Updated auth-related pages to satisfy Next.js Suspense requirements for `useSearchParams` during prerender.
+- Verified end-to-end monorepo production build success (`db generate` + API build + web build).

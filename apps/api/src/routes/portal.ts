@@ -283,7 +283,12 @@ router.put('/:portalToken/shortlist/:itemId', portalWriteLimiter, async (req: Re
 async function getProjectByPortalToken(portalToken: string) {
   return prisma.project.findUnique({
     where: { portalToken },
-    select: { id: true, client: { select: { name: true } } },
+    select: {
+      id: true,
+      name: true,
+      designerId: true,
+      client: { select: { name: true } },
+    },
   });
 }
 

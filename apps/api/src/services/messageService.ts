@@ -1,4 +1,4 @@
-import { prisma, ActorType } from '@furnlo/db';
+import { prisma, ActorType, Prisma } from '@furnlo/db';
 import { config } from '../config';
 import logger from '../config/logger';
 
@@ -27,7 +27,7 @@ export async function createMessage(payload: MessagePayload) {
       text: payload.text,
       contextType: payload.contextType ?? null,
       contextId: payload.contextId ?? null,
-      metadata: payload.metadata ?? undefined,
+      metadata: (payload.metadata as Prisma.InputJsonValue) ?? undefined,
     },
   });
 }

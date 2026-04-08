@@ -1539,7 +1539,16 @@ router.post('/config', requireSuperAdmin, async (req: AuthRequest, res: Response
       return;
     }
 
-    const config = await prisma.platformConfig.create({ data: parsed.data });
+    const config = await prisma.platformConfig.create({
+      data: {
+        key: parsed.data.key,
+        value: parsed.data.value,
+        type: parsed.data.type,
+        label: parsed.data.label,
+        group: parsed.data.group,
+        sortOrder: parsed.data.sortOrder,
+      },
+    });
 
     writeAuditLog({
       actorType: 'admin', actorId: req.user!.id,

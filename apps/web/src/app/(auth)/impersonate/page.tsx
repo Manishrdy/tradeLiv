@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
-export default function ImpersonatePage() {
+function ImpersonateContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -92,5 +92,13 @@ export default function ImpersonatePage() {
         Starting designer session…
       </div>
     </div>
+  );
+}
+
+export default function ImpersonatePage() {
+  return (
+    <Suspense fallback={null}>
+      <ImpersonateContent />
+    </Suspense>
   );
 }

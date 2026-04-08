@@ -663,15 +663,6 @@ router.post('/projects/:projectId/cart', async (req: AuthRequest, res: Response)
       throw txErr;
     }
 
-    writeAuditLog({
-      actorType: 'designer', actorId: req.user!.id,
-      action: 'cart_item_added', entityType: 'project', entityId: req.params.projectId,
-      payload: { productId: shortlistItem.productId, productName: shortlistItem.product.productName, roomId: shortlistItem.roomId, roomName: shortlistItem.room.name },
-    });
-
-    emitProjectEvent(req.params.projectId, 'cart_updated', { action: 'added' });
-
-    res.status(201).json(serializeCartItem(cartItem));
   } catch (err) {
     logger.error('orders route error', { err, path: req.path, method: req.method });
     logRouteError('routes/orders.ts', err, req);

@@ -89,13 +89,13 @@ export function AddressAutocomplete({ value, onChange, onAddressSelect, placehol
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hasKey = !!API_KEY;
 
   useEffect(() => {
     if (!hasKey) return;
-    clearTimeout(debounceRef.current);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
 
     if (value.length < 3) {
       setSuggestions([]);
@@ -112,7 +112,9 @@ export function AddressAutocomplete({ value, onChange, onAddressSelect, placehol
       setLoading(false);
     }, 300);
 
-    return () => clearTimeout(debounceRef.current);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, [value, hasKey]);
 
   useEffect(() => {

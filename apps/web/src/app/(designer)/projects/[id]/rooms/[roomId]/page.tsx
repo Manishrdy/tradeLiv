@@ -67,10 +67,11 @@ function ComparisonModal({
     {
       label: 'Finishes',
       render: (i) => {
+        const availableColors = i.product.metadata?.availableColors as string[] | undefined;
         const fins = i.product.finishes?.length
           ? i.product.finishes
-          : (i.product.metadata?.availableColors as string[] | undefined)?.length
-            ? (i.product.metadata.availableColors as string[])
+          : availableColors?.length
+            ? availableColors
             : null;
         return fins
           ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>

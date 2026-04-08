@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import { useMemo, useState, useCallback, useRef, useEffect, type ReactElement } from 'react';
 import type { PlacedProduct, FitStatus } from '@/lib/roomFitEngine';
 import { calculateFloorCoverage } from '@/lib/roomFitEngine';
 
@@ -40,7 +40,7 @@ const FIT_ICONS: Record<FitStatus, string> = {
 /* ─── Grid ────────────────────────────────────────── */
 
 function GridLines({ roomWIn, roomHIn, scale }: { roomWIn: number; roomHIn: number; scale: number }) {
-  const lines: JSX.Element[] = [];
+  const lines: ReactElement[] = [];
   for (let x = 12; x < roomWIn; x += 12) {
     lines.push(<line key={`v${x}`} x1={x * scale} y1={0} x2={x * scale} y2={roomHIn * scale} stroke="rgba(0,0,0,0.04)" strokeWidth={0.5} />);
   }
@@ -365,9 +365,9 @@ export default function RoomCanvas({
           <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>{coverage.percentage}% floor covered</span>
           <span style={{ width: 1, height: 12, background: 'var(--border)', display: 'inline-block' }} />
           {([
-            { label: 'Fits', s: FIT_COLORS.green },
-            { label: 'Tight', s: FIT_COLORS.yellow },
-            { label: "Won't fit", s: FIT_COLORS.red },
+            { label: 'Fits', s: FIT_COLORS.green, dashed: false },
+            { label: 'Tight', s: FIT_COLORS.yellow, dashed: false },
+            { label: "Won't fit", s: FIT_COLORS.red, dashed: false },
             { label: 'Shortlisted', s: CONTEXT_COLORS, dashed: true },
           ] as const).map(({ label, s, dashed }) => (
             <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
