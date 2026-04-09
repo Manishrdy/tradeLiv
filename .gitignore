@@ -20,9 +20,6 @@ out/
 
 # Prisma
 packages/db/src/generated/
-packages/db/prisma/migrations/*
-!packages/db/prisma/migrations/20260409000000_add_missing_runtime_tables/
-!packages/db/prisma/migrations/20260409000000_add_missing_runtime_tables/migration.sql
 
 # Logs
 logs/*
