@@ -4,9 +4,10 @@ dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
 // Resolve DATABASE_URL from USE_DB toggle (dev | prod)
 import { resolveDbUrl, runMigrations } from './config/db';
-const { url: resolvedDbUrl, directUrl: resolvedDirectUrl, dbEnv: useDb } = resolveDbUrl(process.env);
+const { url: resolvedDbUrl, directUrl: resolvedDirectUrl, backupUrl: resolvedBackupUrl, dbEnv: useDb } = resolveDbUrl(process.env);
 process.env.DATABASE_URL = resolvedDbUrl;
 process.env.DIRECT_DATABASE_URL = resolvedDirectUrl ?? resolvedDbUrl;
+process.env.BACKUP_DATABASE_URL = resolvedBackupUrl ?? resolvedDirectUrl ?? resolvedDbUrl;
 
 import { assertAuthEnv } from './config';
 assertAuthEnv();

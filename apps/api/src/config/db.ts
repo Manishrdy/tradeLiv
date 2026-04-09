@@ -9,13 +9,16 @@ import logger from './logger';
 export function resolveDbUrl(env: Record<string, string | undefined>): {
   url: string | undefined;
   directUrl: string | undefined;
+  backupUrl: string | undefined;
   dbEnv: string;
 } {
   const dbEnv = (env.USE_DB || 'dev').toLowerCase();
   const url = dbEnv === 'prod' ? env.PROD_DATABASE_URL : env.DEV_DATABASE_URL;
-  // Migrations and backups need a direct (non-pooler) connection
+  // Session pooler — supports DDL/prepared statements needed for migrations
   const directUrl = dbEnv === 'prod' ? env.PROD_DIRECT_DATABASE_URL : env.DEV_DATABASE_URL;
-  return { url, directUrl, dbEnv };
+  // True direct connection (non-pooler) — required for pg_dump
+  const backupUrl = dbEnv === 'prod' ? (env.PROD_BACKUP_DATABASE_URL ?? directUrl) : env.DEV_DATABASE_URL;
+  return { url, directUrl, backupUrl, dbEnv };
 }
 
 /**

@@ -63,9 +63,14 @@ export async function runBackup(trigger: BackupTrigger): Promise<void> {
     return;
   }
 
-  // Use the direct (non-pooler) URL — pg_dump doesn't support pgbouncer query params
-  const dbUrl = process.env.DIRECT_DATABASE_URL ?? process.env.DATABASE_URL;
-  if (!dbUrl) throw new Error('DATABASE_URL is not resolved');
+  // Prefer true direct/non-pooler URL, but allow fallback to keep backups resilient
+  const dbUrls = [
+    process.env.BACKUP_DATABASE_URL,
+    process.env.DIRECT_DATABASE_URL,
+    process.env.DATABASE_URL,
+  ].filter((u): u is string => Boolean(u));
+  const uniqueDbUrls = [...new Set(dbUrls)];
+  if (uniqueDbUrls.length === 0) throw new Error('DATABASE_URL is not resolved');
 
   const backupDir = getBackupDir();
   if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
@@ -94,7 +99,21 @@ export async function runBackup(trigger: BackupTrigger): Promise<void> {
   logger.info(`[backup] Starting ${trigger} backup → ${fileName}`);
 
   try {
-    await execAsync(`pg_dump "${dbUrl}" -F c -f "${tmpPath}"`);
+    let lastErr: unknown;
+    let usedDbUrl: string | null = null;
+
+    for (const dbUrl of uniqueDbUrls) {
+      try {
+        await execAsync(`pg_dump "${dbUrl}" -F c -f "${tmpPath}"`);
+        usedDbUrl = dbUrl;
+        break;
+      } catch (err) {
+        lastErr = err;
+        logger.warn('[backup] pg_dump failed for one database URL, trying fallback if available', { err });
+      }
+    }
+
+    if (!usedDbUrl) throw lastErr instanceof Error ? lastErr : new Error('pg_dump failed for all configured database URLs');
 
     fs.renameSync(tmpPath, destPath);
 
