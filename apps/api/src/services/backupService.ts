@@ -109,6 +109,21 @@ export async function runBackup(trigger: BackupTrigger): Promise<void> {
         break;
       } catch (err) {
         lastErr = err;
+        // Version mismatch means pg_dump on this machine is too old for the server —
+        // no point trying other URLs; skip and rely on Supabase native backups.
+        if ((err as any)?.stderr?.includes('server version mismatch')) {
+          const pgdumpVer = ((err as any).stderr as string).match(/pg_dump version: ([\d.]+)/)?.[1] ?? 'unknown';
+          const serverVer = ((err as any).stderr as string).match(/server version: ([\d.]+)/)?.[1] ?? 'unknown';
+          logger.warn(
+            `[backup] Skipping — pg_dump ${pgdumpVer} is too old for server ${serverVer}. ` +
+            `Upgrade postgresql-client on this host or rely on Supabase native PITR.`,
+          );
+          await prisma.backupRun.update({
+            where: { id: run.id },
+            data: { status: 'failed', completedAt: new Date(), error: `pg_dump version mismatch: client ${pgdumpVer} vs server ${serverVer}` },
+          });
+          return;
+        }
         logger.warn('[backup] pg_dump failed for one database URL, trying fallback if available', { err });
       }
     }
