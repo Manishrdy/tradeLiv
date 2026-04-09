@@ -2134,7 +2134,7 @@ router.post('/backup/restore/:id', requireSuperAdmin, async (req: AuthRequest, r
     const filePath = path.join(getBackupDir(), run.driveFileName);
     if (!fs.existsSync(filePath)) { res.status(404).json({ error: 'Backup file not found on disk' }); return; }
 
-    const dbUrl = process.env.DATABASE_URL;
+    const dbUrl = process.env.DIRECT_DATABASE_URL ?? process.env.DATABASE_URL;
     if (!dbUrl) { res.status(500).json({ error: 'DATABASE_URL not set' }); return; }
 
     await execAsync(`pg_restore --clean --if-exists -d "${dbUrl}" -F c "${filePath}"`);

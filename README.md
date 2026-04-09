@@ -603,3 +603,27 @@ Recent production stabilization work completed:
 - Fixed strict Next.js/React build-time typing issues in web pages/components surfaced during production build verification.
 - Updated auth-related pages to satisfy Next.js Suspense requirements for `useSearchParams` during prerender.
 - Verified end-to-end monorepo production build success (`db generate` + API build + web build).
+
+---
+
+### Supabase connection fix — `P1001` on startup (2026-04-09)
+
+**Symptom:** API failed to start with `Error: P1001: Can't reach database server` during `prisma migrate deploy`.
+
+**Root cause:** `PROD_DIRECT_DATABASE_URL` was misconfigured. The direct connection URL (`db.[ref].supabase.co:5432`) had no DNS record resolvable from the local/dev machine — Supabase does not always expose direct connection hostnames publicly (they are only reliably accessible from within certain network environments, e.g. the OCI VM on the same region).
+
+**Fix:** Use the **session-mode pooler** (`aws-0-us-west-2.pooler.supabase.com:5432`) as the `PROD_DIRECT_DATABASE_URL`. Session mode maintains a persistent backend connection per client, which means it supports DDL statements and Prisma migrations — unlike transaction mode (port 6543) which does not.
+
+```
+# .env
+
+# Runtime queries — transaction pooler (port 6543), pgbouncer=true
+PROD_DATABASE_URL="postgresql://postgres.[ref]:[password]@aws-0-us-west-2.pooler.supabase.com:6543/postgres?pgbouncer=true"
+
+# Migrations + pg_dump/pg_restore — session pooler (port 5432)
+PROD_DIRECT_DATABASE_URL="postgresql://postgres.[ref]:[password]@aws-0-us-west-2.pooler.supabase.com:5432/postgres"
+```
+
+**Also fixed:** `pg_restore` in the admin backup-restore route ([`apps/api/src/routes/admin.ts`](apps/api/src/routes/admin.ts)) was using `DATABASE_URL` (transaction pooler) instead of `DIRECT_DATABASE_URL`. `pg_restore` requires a direct/session connection — fixed to use `DIRECT_DATABASE_URL ?? DATABASE_URL`.
+
+**Rule:** Any operation that uses advisory locks or DDL (migrations, `pg_dump`, `pg_restore`) must go through `DIRECT_DATABASE_URL` (session pooler or direct host), never the transaction pooler.
