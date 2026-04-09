@@ -1,6 +1,12 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import os from 'os';
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
+
+// Auto-detect OCI cloud environment: hostname contains "ubuntu" → prod, else dev
+const isOCI = os.hostname().toLowerCase().includes('ubuntu');
+process.env.NODE_ENV = isOCI ? process.env.PROD_NODE_ENV : process.env.DEV_NODE_ENV;
+process.env.FRONTEND_URL = isOCI ? process.env.PROD_FRONTEND_URL : process.env.DEV_FRONTEND_URL;
 
 // Resolve DATABASE_URL from USE_DB toggle (dev | prod)
 import { resolveDbUrl, runMigrations } from './config/db';
