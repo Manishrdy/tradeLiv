@@ -18,8 +18,8 @@ dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
 
 // Resolve DATABASE_URL from USE_DB toggle before importing backupService
 import { resolveDbUrl } from '../config/db';
-const { url: resolvedDbUrl } = resolveDbUrl(process.env);
-process.env.DATABASE_URL = resolvedDbUrl!;
+const { directUrl: resolvedDirectUrl } = resolveDbUrl(process.env);
+process.env.DATABASE_URL = resolvedDirectUrl!;
 
 import { runBackup } from '../services/backupService';
 import logger from '../config/logger';

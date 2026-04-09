@@ -57,7 +57,8 @@ async function cleanupOldBackups(backupDir: string, ttlDays: number): Promise<vo
 
 export async function runBackup(trigger: BackupTrigger): Promise<void> {
   const env = (process.env.USE_DB || 'dev').toLowerCase();
-  const dbUrl = process.env.DATABASE_URL;
+  // Use the direct (non-pooler) URL — pg_dump doesn't support pgbouncer query params
+  const dbUrl = process.env.DIRECT_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!dbUrl) throw new Error('DATABASE_URL is not resolved');
 
   const backupDir = getBackupDir();

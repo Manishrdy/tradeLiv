@@ -4,8 +4,9 @@ dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
 // Resolve DATABASE_URL from USE_DB toggle (dev | prod)
 import { resolveDbUrl, runMigrations } from './config/db';
-const { url: resolvedDbUrl, dbEnv: useDb } = resolveDbUrl(process.env);
+const { url: resolvedDbUrl, directUrl: resolvedDirectUrl, dbEnv: useDb } = resolveDbUrl(process.env);
 process.env.DATABASE_URL = resolvedDbUrl;
+process.env.DIRECT_DATABASE_URL = resolvedDirectUrl ?? resolvedDbUrl;
 
 import { assertAuthEnv } from './config';
 assertAuthEnv();
@@ -24,7 +25,7 @@ const PORT = process.env.API_PORT ?? 4000;
 /* ─── Auto-migrate & start ────────────────────────── */
 async function start() {
   try {
-    runMigrations(process.env.DATABASE_URL!);
+    runMigrations(resolvedDirectUrl ?? process.env.DATABASE_URL!);
   } catch (err) {
     logger.error('Migration failed — aborting startup', { error: (err as Error).message });
     process.exit(1);

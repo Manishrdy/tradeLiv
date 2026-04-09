@@ -8,11 +8,14 @@ import logger from './logger';
  */
 export function resolveDbUrl(env: Record<string, string | undefined>): {
   url: string | undefined;
+  directUrl: string | undefined;
   dbEnv: string;
 } {
   const dbEnv = (env.USE_DB || 'dev').toLowerCase();
   const url = dbEnv === 'prod' ? env.PROD_DATABASE_URL : env.DEV_DATABASE_URL;
-  return { url, dbEnv };
+  // Migrations and backups need a direct (non-pooler) connection
+  const directUrl = dbEnv === 'prod' ? env.PROD_DIRECT_DATABASE_URL : env.DEV_DATABASE_URL;
+  return { url, directUrl, dbEnv };
 }
 
 /**
