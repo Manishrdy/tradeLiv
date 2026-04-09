@@ -27,6 +27,8 @@
     "node": ">=20.0.0"
   },
   "overrides": {
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
     "@types/express": "4.17.25",
     "@types/express-serve-static-core": "4.19.8"
   },
