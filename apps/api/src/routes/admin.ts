@@ -1200,6 +1200,17 @@ function getCpuUsagePct(): Promise<number> {
   });
 }
 
+type PrismaLikeMissingTableError = {
+  code?: string;
+  meta?: { table?: string; modelName?: string };
+};
+
+function isPrismaMissingTableError(err: unknown): err is PrismaLikeMissingTableError {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as PrismaLikeMissingTableError;
+  return e.code === 'P2021';
+}
+
 router.get('/health', async (_req: AuthRequest, res: Response) => {
   try {
     const data = await cachedResponse('health', 15_000, async () => {
@@ -1214,15 +1225,31 @@ router.get('/health', async (_req: AuthRequest, res: Response) => {
       const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
+      const missingTables = new Set<string>();
+      const captureMissingTable = (err: unknown) => {
+        if (!isPrismaMissingTableError(err)) return;
+        const tableName = err.meta?.table || err.meta?.modelName || 'unknown';
+        missingTables.add(tableName);
+      };
+      const safeMetric = async <T>(fallback: T, fn: () => Promise<T>): Promise<T> => {
+        try {
+          return await fn();
+        } catch (err) {
+          if (!isPrismaMissingTableError(err)) throw err;
+          captureMissingTable(err);
+          return fallback;
+        }
+      };
+
       const [active15, active24, errors1h, errors24h, designerCount, projectCount, orderCount, productCount, cpuUsagePct] = await Promise.all([
-        prisma.designerSession.groupBy({ by: ['designerId'], where: { lastPing: { gte: fifteenMinAgo }, endedAt: null } }).then((r) => r.length),
-        prisma.designerSession.groupBy({ by: ['designerId'], where: { lastPing: { gte: twentyFourHoursAgo } } }).then((r) => r.length),
-        prisma.auditLog.count({ where: { action: { contains: 'error' }, createdAt: { gte: oneHourAgo } } }),
-        prisma.auditLog.count({ where: { action: { contains: 'error' }, createdAt: { gte: twentyFourHoursAgo } } }),
-        prisma.designer.count(),
-        prisma.project.count(),
-        prisma.order.count(),
-        prisma.product.count(),
+        safeMetric(0, () => prisma.designerSession.groupBy({ by: ['designerId'], where: { lastPing: { gte: fifteenMinAgo }, endedAt: null } }).then((r) => r.length)),
+        safeMetric(0, () => prisma.designerSession.groupBy({ by: ['designerId'], where: { lastPing: { gte: twentyFourHoursAgo } } }).then((r) => r.length)),
+        safeMetric(0, () => prisma.auditLog.count({ where: { action: { contains: 'error' }, createdAt: { gte: oneHourAgo } } })),
+        safeMetric(0, () => prisma.auditLog.count({ where: { action: { contains: 'error' }, createdAt: { gte: twentyFourHoursAgo } } })),
+        safeMetric(0, () => prisma.designer.count()),
+        safeMetric(0, () => prisma.project.count()),
+        safeMetric(0, () => prisma.order.count()),
+        safeMetric(0, () => prisma.product.count()),
         getCpuUsagePct(),
       ]);
 
@@ -1231,9 +1258,14 @@ router.get('/health', async (_req: AuthRequest, res: Response) => {
       const freeRamMB = Math.round(os.freemem() / 1024 / 1024);
       const cpus = os.cpus();
       const [loadAvg1, loadAvg5, loadAvg15] = os.loadavg();
+      const missingTablesList = Array.from(missingTables).sort();
 
       return {
-        db: { connected: true, latencyMs: dbLatency },
+        db: {
+          connected: true,
+          latencyMs: dbLatency,
+          schema: { healthy: missingTablesList.length === 0, missingTables: missingTablesList },
+        },
         api: { uptimeSeconds: Math.floor(process.uptime()), memoryMB: Math.round(mem.rss / 1024 / 1024) },
         activeUsers: { last15min: active15, last24h: active24 },
         errors: { last1h: errors1h, last24h: errors24h },
@@ -1264,7 +1296,7 @@ router.get('/health', async (_req: AuthRequest, res: Response) => {
     logger.error('admin health error', { err });
     logRouteError('routes/admin.ts', err, _req);
     res.status(503).json({
-      db: { connected: false, latencyMs: -1 },
+      db: { connected: false, latencyMs: -1, schema: { healthy: false, missingTables: [] } },
       api: { uptimeSeconds: Math.floor(process.uptime()), memoryMB: 0 },
       activeUsers: { last15min: 0, last24h: 0 },
       errors: { last1h: 0, last24h: 0 },

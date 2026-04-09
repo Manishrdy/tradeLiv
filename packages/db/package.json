@@ -10,6 +10,7 @@
     "migrate": "./scripts/prisma.sh migrate deploy",
     "migrate:dev": "./scripts/prisma.sh migrate dev --name",
     "migrate:deploy": "./scripts/prisma.sh migrate deploy",
+    "schema:check": "tsx scripts/check-schema.ts",
     "studio": "./scripts/prisma.sh studio",
     "seed": "dotenv -e ../../.env -- tsx src/seed.ts",
     "seed:admin": "dotenv -e ../../.env -- tsx src/seed-admin.ts"
