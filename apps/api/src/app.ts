@@ -31,10 +31,36 @@ import { requireAuth, requireRole, AuthRequest } from './middleware/auth';
 
 export function createApp() {
   const app = express();
+  const configuredOrigin = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const allowedOrigins = new Set<string>([configuredOrigin]);
+
+  // In production, allow both apex + www variants to avoid CORS failures when users
+  // hit either hostname (e.g. https://tradeliv.design and https://www.tradeliv.design).
+  try {
+    const parsed = new URL(configuredOrigin);
+    if (!parsed.hostname.startsWith('www.')) {
+      const withWww = new URL(configuredOrigin);
+      withWww.hostname = `www.${parsed.hostname}`;
+      allowedOrigins.add(withWww.toString().replace(/\/$/, ''));
+    } else {
+      const withoutWww = new URL(configuredOrigin);
+      withoutWww.hostname = parsed.hostname.replace(/^www\./, '');
+      allowedOrigins.add(withoutWww.toString().replace(/\/$/, ''));
+    }
+  } catch {
+    // Ignore malformed FRONTEND_URL and fall back to the configured value only.
+  }
 
   app.use(helmet());
   app.use(cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: (origin, callback) => {
+      // Allow non-browser clients (no Origin header), and configured browser origins.
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error('CORS origin not allowed'));
+    },
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   }));
