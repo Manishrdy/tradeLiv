@@ -31,38 +31,60 @@ import { requireAuth, requireRole, AuthRequest } from './middleware/auth';
 
 export function createApp() {
   const app = express();
-  const configuredOrigin = process.env.FRONTEND_URL || 'http://localhost:3000';
-  const allowedOrigins = new Set<string>([configuredOrigin]);
-
-  // In production, allow both apex + www variants to avoid CORS failures when users
-  // hit either hostname (e.g. https://tradeliv.design and https://www.tradeliv.design).
-  try {
-    const parsed = new URL(configuredOrigin);
-    if (!parsed.hostname.startsWith('www.')) {
-      const withWww = new URL(configuredOrigin);
-      withWww.hostname = `www.${parsed.hostname}`;
-      allowedOrigins.add(withWww.toString().replace(/\/$/, ''));
-    } else {
-      const withoutWww = new URL(configuredOrigin);
-      withoutWww.hostname = parsed.hostname.replace(/^www\./, '');
-      allowedOrigins.add(withoutWww.toString().replace(/\/$/, ''));
+  const normalizeOrigin = (value: string): string | null => {
+    try {
+      return new URL(value).origin.toLowerCase();
+    } catch {
+      return null;
     }
-  } catch {
-    // Ignore malformed FRONTEND_URL and fall back to the configured value only.
+  };
+
+  const seedOrigins = [
+    process.env.FRONTEND_URL,
+    process.env.PROD_FRONTEND_URL,
+    process.env.DEV_FRONTEND_URL,
+    'http://localhost:3000',
+  ].filter((v): v is string => Boolean(v && v.trim()));
+
+  const allowedOrigins = new Set<string>();
+  for (const raw of seedOrigins) {
+    const normalized = normalizeOrigin(raw);
+    if (!normalized) continue;
+    allowedOrigins.add(normalized);
+
+    // Add apex/www counterpart automatically.
+    try {
+      const u = new URL(normalized);
+      if (u.hostname.startsWith('www.')) {
+        u.hostname = u.hostname.replace(/^www\./, '');
+      } else {
+        u.hostname = `www.${u.hostname}`;
+      }
+      allowedOrigins.add(u.origin.toLowerCase());
+    } catch {
+      // noop
+    }
   }
 
   app.use(helmet());
   app.use(cors({
     origin: (origin, callback) => {
       // Allow non-browser clients (no Origin header), and configured browser origins.
-      if (!origin || allowedOrigins.has(origin)) {
+      if (!origin) {
         callback(null, true);
         return;
       }
-      callback(new Error('CORS origin not allowed'));
+      const normalized = normalizeOrigin(origin);
+      if (normalized && allowedOrigins.has(normalized)) {
+        callback(null, true);
+        return;
+      }
+      // Reject without throwing 500 so browser receives a clean CORS denial.
+      callback(null, false);
     },
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    optionsSuccessStatus: 204,
   }));
   app.use(cookieParser());
 
