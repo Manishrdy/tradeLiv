@@ -627,3 +627,49 @@ PROD_DIRECT_DATABASE_URL="postgresql://postgres.[ref]:[password]@aws-0-us-west-2
 **Also fixed:** `pg_restore` in the admin backup-restore route ([`apps/api/src/routes/admin.ts`](apps/api/src/routes/admin.ts)) was using `DATABASE_URL` (transaction pooler) instead of `DIRECT_DATABASE_URL`. `pg_restore` requires a direct/session connection — fixed to use `DIRECT_DATABASE_URL ?? DATABASE_URL`.
 
 **Rule:** Any operation that uses advisory locks or DDL (migrations, `pg_dump`, `pg_restore`) must go through `DIRECT_DATABASE_URL` (session pooler or direct host), never the transaction pooler.
+
+---
+
+### PM2 production incident — login failures + unstable frontend (2026-04-10)
+
+**Symptoms observed**
+- Login/signup showed `Unable to connect to the server`.
+- Browser preflight on auth endpoints intermittently failed (`500` / CORS error).
+- Occasional `502 Bad Gateway` from nginx on `/api/auth/*`.
+- Frontend intermittently rendered raw HTML with missing chunk/static asset errors.
+
+**High-level RCA**
+- Production behavior depended on hostname heuristics (`hostname.includes('ubuntu')`) for env selection, which is brittle outside a single machine pattern.
+- API had strict origin handling that could reject valid apex/www variants and surface as preflight failures.
+- PM2 API process experienced restart loops when monorepo workspace artifacts were not built in the correct order (`@furnlo/db` runtime module resolution).
+- Next.js standalone runtime needs `.next/static` and `public` assets present alongside standalone server output.
+- Cookie scope/host alignment (`tradeliv.design` vs `www.tradeliv.design`) caused successful login responses to not persist expected session behavior in the browser.
+
+**Fixes applied**
+- Switched web/API env resolution to explicit env variables (`NODE_ENV`, `FRONTEND_URL`, `NEXT_PUBLIC_API_URL`) and removed hostname-based prod detection.
+- Updated production API URL usage to domain-based HTTPS (`https://tradeliv.design`) instead of raw `http://<ip>:4000`.
+- Hardened CORS origin matching to normalize origins and allow apex/www variants safely.
+- Standardized PM2 deployment flow:
+  - build workspaces first (`packages/db`, `packages/emails`), then `apps/api`, then `apps/web`
+  - run API and Web as separate PM2 processes (not a single concurrent wrapper)
+  - run web via Next standalone server entrypoint
+- Ensured standalone runtime includes required static/public assets after build.
+- Standardized cookie config for cross-host consistency:
+  - `AUTH_COOKIE_DOMAIN=.tradeliv.design`
+  - `AUTH_COOKIE_SECURE=true`
+  - `AUTH_COOKIE_SAME_SITE=lax`
+  - `FRONTEND_URL` aligned with canonical host
+
+**Operational runbook (PM2)**
+- Build order:
+  1. `npm run build --workspace=packages/db`
+  2. `npm run build --workspace=packages/emails`
+  3. `npm run build --workspace=apps/api`
+  4. `npm run build --workspace=apps/web -- --no-lint`
+- Start commands:
+  - API: `node dist/index.js` (cwd `apps/api`)
+  - Web: `node .next/standalone/apps/web/server.js` (cwd `apps/web`)
+- Validation:
+  - `curl http://127.0.0.1:4000/health`
+  - preflight check to `/api/auth/admin/login` with `Origin: https://www.tradeliv.design`
+  - browser network confirms `Access-Control-Allow-Origin` and cookie domain/flags.
