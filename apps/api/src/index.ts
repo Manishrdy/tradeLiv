@@ -1,12 +1,18 @@
 import dotenv from 'dotenv';
 import path from 'path';
-import os from 'os';
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
-// Auto-detect OCI cloud environment: hostname contains "ubuntu" → prod, else dev
-const isOCI = os.hostname().toLowerCase().includes('ubuntu');
-process.env.NODE_ENV = isOCI ? process.env.PROD_NODE_ENV : process.env.DEV_NODE_ENV;
-process.env.FRONTEND_URL = isOCI ? process.env.PROD_FRONTEND_URL : process.env.DEV_FRONTEND_URL;
+// Prefer explicit NODE_ENV from process manager/container.
+// Fallback to development to avoid accidental production mode in local runs.
+const resolvedNodeEnv = (process.env.NODE_ENV || 'development').toLowerCase();
+process.env.NODE_ENV = resolvedNodeEnv === 'production' ? 'production' : 'development';
+
+// FRONTEND_URL drives CORS. If not explicitly set, derive from environment-specific defaults.
+if (!process.env.FRONTEND_URL) {
+  process.env.FRONTEND_URL = process.env.NODE_ENV === 'production'
+    ? (process.env.PROD_FRONTEND_URL || 'http://localhost:3000')
+    : (process.env.DEV_FRONTEND_URL || 'http://localhost:3000');
+}
 
 // Resolve DATABASE_URL from USE_DB toggle (dev | prod)
 import { resolveDbUrl, runMigrations } from './config/db';

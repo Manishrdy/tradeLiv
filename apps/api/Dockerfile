@@ -26,8 +26,8 @@ RUN npm run build:api
 FROM node:20-alpine
 WORKDIR /app
 
-# postgresql-client is required by the backup service (pg_dump)
-RUN apk add --no-cache postgresql-client
+# postgresql17-client required by backup service (pg_dump must match Supabase server v17)
+RUN apk add --no-cache postgresql17-client
 
 ENV NODE_ENV=production
 
