@@ -21,6 +21,7 @@
     "db:generate": "npm run generate --workspace=packages/db",
     "db:migrate": "npm run migrate --workspace=packages/db",
     "db:migrate:deploy": "npm run migrate:deploy --workspace=packages/db",
+    "db:drift": "npm run schema:drift --workspace=packages/db",
     "db:studio": "npm run studio --workspace=packages/db"
   },
   "engines": {

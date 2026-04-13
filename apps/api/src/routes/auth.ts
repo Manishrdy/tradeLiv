@@ -590,6 +590,19 @@ router.post('/refresh', async (req: Request, res: Response) => {
     }
 
     if (storedToken.revokedAt) {
+      // Benign concurrent-refresh race: if the token was revoked within the last
+      // 30s, another request from the same session (e.g. a second tab) just rotated
+      // it. Don't nuke the family or clear cookies — the browser already holds the
+      // winning request's fresh tokens. Tell the caller to retry with those.
+      const REUSE_GRACE_MS = 30_000;
+      const revokedAgeMs = Date.now() - storedToken.revokedAt.getTime();
+      if (revokedAgeMs < REUSE_GRACE_MS) {
+        res.status(401).json({
+          error: 'Session was just refreshed by another tab. Retrying.',
+          code: 'REFRESH_CONFLICT',
+        });
+        return;
+      }
       await prisma.refreshToken.updateMany({
         where: { family: storedToken.family, revokedAt: null },
         data: { revokedAt: new Date() },
@@ -657,9 +670,10 @@ router.post('/refresh', async (req: Request, res: Response) => {
     });
 
     if (outcome.kind === 'concurrent') {
-      clearSessionCookies(res);
+      // Another concurrent request (typically a second tab) won the rotation.
+      // Browser already has the winner's fresh cookies — don't clear them.
       res.status(401).json({
-        error: 'Session was refreshed elsewhere. Please sign in again.',
+        error: 'Session was just refreshed by another tab. Retrying.',
         code: 'REFRESH_CONFLICT',
       });
       return;

@@ -4,26 +4,32 @@ type ApiResponse<T> = { data: T; error?: never; code?: never } | { data?: never;
 
 /* ─── Token refresh logic ──────────────────────────── */
 
-let refreshPromise: Promise<boolean> | null = null;
+type RefreshOutcome = 'ok' | 'retry' | 'fail';
+let refreshPromise: Promise<RefreshOutcome> | null = null;
 
-async function attemptTokenRefresh(): Promise<boolean> {
+async function attemptTokenRefresh(): Promise<RefreshOutcome> {
   try {
     const res = await fetch(`${API_URL}/api/auth/refresh`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' },
     });
-    return res.ok;
+    if (res.ok) return 'ok';
+    // REFRESH_CONFLICT means another tab rotated tokens concurrently — browser now has
+    // fresh cookies from the winning request. Retry the original request without logout.
+    const body = await res.json().catch(() => ({}));
+    if (body?.code === 'REFRESH_CONFLICT') return 'retry';
+    return 'fail';
   } catch {
-    return false;
+    return 'fail';
   }
 }
 
 /**
- * Deduplicated refresh — if multiple 401s fire concurrently,
+ * Deduplicated refresh — if multiple 401s fire concurrently in the same tab,
  * only one refresh request is made.
  */
-function refreshToken(): Promise<boolean> {
+function refreshToken(): Promise<RefreshOutcome> {
   if (!refreshPromise) {
     refreshPromise = attemptTokenRefresh().finally(() => {
       refreshPromise = null;
@@ -60,8 +66,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<ApiR
     // On 401 (expired access token), try to refresh and retry once.
     // Impersonation sessions have no refresh token — let the 401 propagate naturally.
     if (res.status === 401 && !impersonationToken && !path.includes('/api/auth/refresh') && !path.includes('/api/auth/login')) {
-      const refreshed = await refreshToken();
-      if (refreshed) {
+      const outcome = await refreshToken();
+      if (outcome === 'ok' || outcome === 'retry') {
         res = await fetch(`${API_URL}${path}`, {
           ...options,
           credentials: 'include',

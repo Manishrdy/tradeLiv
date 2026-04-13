@@ -31,6 +31,8 @@ import { requireAuth, requireRole, AuthRequest } from './middleware/auth';
 
 export function createApp() {
   const app = express();
+  // Trust the first proxy hop (nginx/OCI LB) so req.ip and rate limiters see the real client IP.
+  app.set('trust proxy', 1);
   const normalizeOrigin = (value: string): string | null => {
     try {
       return new URL(value).origin.toLowerCase();
