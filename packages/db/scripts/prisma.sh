@@ -12,13 +12,32 @@ USE_DB="${USE_DB:-dev}"
 ENV_FILE="$(cd "$(dirname "$0")/../../.." && pwd)/.env"
 
 RESOLVE_JS='
-const p = require("path");
 require("dotenv").config({ path: process.argv[1] });
 const useDb = (process.env.USE_DB || "dev").toLowerCase();
-const url = useDb === "prod" ? process.env.PROD_DATABASE_URL : process.env.DEV_DATABASE_URL;
-if (!url) { console.error(`Missing ${useDb === "prod" ? "PROD" : "DEV"}_DATABASE_URL in ${process.argv[1]}`); process.exit(1); }
+// For migrate/db-push/etc., Prisma needs a DIRECT connection (pgbouncer
+// poolers reject the statement-level operations migrations use).
+// PREFER_DIRECT=1 switches to the direct URL when available.
+const preferDirect = process.env.PREFER_DIRECT === "1";
+let url;
+if (useDb === "prod") {
+  url = preferDirect
+    ? (process.env.PROD_DIRECT_DATABASE_URL || process.env.PROD_DATABASE_URL)
+    : process.env.PROD_DATABASE_URL;
+} else {
+  url = preferDirect
+    ? (process.env.DEV_DIRECT_DATABASE_URL || process.env.DEV_DATABASE_URL)
+    : process.env.DEV_DATABASE_URL;
+}
+if (!url) { console.error(`Missing database URL for USE_DB=${useDb} (preferDirect=${preferDirect}) in ${process.argv[1]}`); process.exit(1); }
 process.stdout.write(url);
 '
+
+# Detect prisma subcommands that require a direct (non-pooled) connection
+case "${1:-}" in
+  migrate|db|introspect|studio)
+    export PREFER_DIRECT=1
+    ;;
+esac
 
 if [ -f "$ENV_FILE" ]; then
   DATABASE_URL="$(USE_DB="$USE_DB" node -e "$RESOLVE_JS" "$ENV_FILE")"
