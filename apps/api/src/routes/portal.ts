@@ -22,6 +22,7 @@ const portalWriteLimiter = rateLimit({
   max: 50,                   // 50 requests per IP per window
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { error: 'Too many actions performed. Please try again later.' },
 });
 
@@ -30,6 +31,7 @@ const portalMessageLimiter = rateLimit({
   max: 30,                   // 30 messages per IP per window
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { error: 'Too many messages sent. Please wait before sending more.' },
 });
 

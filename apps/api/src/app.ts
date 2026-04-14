@@ -152,6 +152,7 @@ export function createApp() {
     max: 500,
     standardHeaders: true,
     legacyHeaders: false,
+    validate: { xForwardedForHeader: false },
     message: { error: 'Too many requests. Please try again in 15 minutes.' },
   });
 
@@ -160,6 +161,7 @@ export function createApp() {
     max: 5,
     standardHeaders: true,
     legacyHeaders: false,
+    validate: { xForwardedForHeader: false },
     message: { error: 'Too many login attempts. Please try again in 15 minutes.' },
   });
 
@@ -168,6 +170,7 @@ export function createApp() {
     max: 120,
     standardHeaders: true,
     legacyHeaders: false,
+    validate: { xForwardedForHeader: false },
     message: { error: 'Too many requests. Please try again later.' },
   });
 
