@@ -240,6 +240,7 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
   const [isOffline, setIsOffline]     = useState(false);
   const [notifOpen, setNotifOpen]     = useState(false);
   const [notifUnread, setNotifUnread] = useState(0);
+  const breadcrumbLabels = useBreadcrumbStore((s) => s.labels);
 
   useEffect(() => {
     setHydrated(true);
@@ -391,7 +392,6 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
     .toUpperCase() ?? 'D';
 
   const sidebarWidth = collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_FULL;
-  const breadcrumbLabels = useBreadcrumbStore((s) => s.labels);
   const breadcrumbs = buildBreadcrumbs(pathname, breadcrumbLabels);
 
   /* ── Avatar upload handler ────────────────────────── */
