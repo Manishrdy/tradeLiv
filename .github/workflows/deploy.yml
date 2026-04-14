@@ -22,15 +22,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Reconstruct the prod .env file from the single PROD_ENV secret.
+      # next.config.ts auto-loads it for NEXT_PUBLIC_* bake-in, and tests
+      # read DEV_DATABASE_URL from it.
+      - name: Write .env from PROD_ENV secret
+        run: |
+          printf '%s' "${{ secrets.PROD_ENV }}" > .env
+          chmod 600 .env
+
       - name: Run API tests
         run: npm run test --workspace=apps/api
         env:
           NODE_ENV: test
           USE_DB: dev
-          DEV_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
-          JWT_SECRET: test-secret-for-ci-only-32-chars!!
-          JWT_EXPIRES_IN: 7d
-          FRONTEND_URL: http://localhost:3000
 
   # ─── 2. Build artifacts on GitHub runner (not on the 1 GB OCI VM) ───────────
   build:
@@ -49,12 +53,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Reconstruct .env so next.config.ts loads NEXT_PUBLIC_* at build time.
+      - name: Write .env from PROD_ENV secret
+        run: |
+          printf '%s' "${{ secrets.PROD_ENV }}" > .env
+          chmod 600 .env
+
       - name: Build packages (db, emails) + API + Web
-        # NEXT_PUBLIC_* must be present at web build time — Next.js bakes them into chunks
         env:
-          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
-          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
-          NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY }}
           NODE_ENV: production
         run: npm run build
 
@@ -68,7 +74,13 @@ jobs:
           # node_modules is NOT included; the VM installs its own (native deps
           # like sharp/bcryptjs must match the VM's architecture, which may
           # differ from GitHub's x64 runner).
+          # .env is included so the VM gets runtime secrets from the single
+          # PROD_ENV GitHub Secret — no separate .env management on the VM.
+          # include-hidden-files is required because actions/upload-artifact
+          # skips dotfiles by default.
+          include-hidden-files: true
           path: |
+            .env
             package.json
             package-lock.json
             apps/api/package.json
@@ -110,11 +122,11 @@ jobs:
       - name: Rsync artifacts to OCI VM
         # --delete keeps the remote in sync (removes stale chunks so old
         # page-*.js files that no longer reference the current HTML are purged).
-        # --exclude protects runtime state on the VM (logs, uploaded files, env).
+        # --exclude protects runtime state on the VM (logs, uploaded files,
+        # database backups). .env IS shipped — PROD_ENV GitHub Secret is the
+        # single source of truth for env vars.
         run: |
           rsync -az --delete \
-            --exclude='.env' \
-            --exclude='.env.*' \
             --exclude='node_modules' \
             --exclude='logs/' \
             --exclude='uploads/' \

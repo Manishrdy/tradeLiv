@@ -445,7 +445,7 @@ The `production` GitHub environment gate can be enabled in repo settings
 (Settings → Environments → production) to require manual approval before
 Stage 3 runs.
 
-### Required GitHub Secrets
+### Required GitHub Secrets (only 4)
 
 Go to **Settings → Secrets and variables → Actions** and add:
 
@@ -454,10 +454,30 @@ Go to **Settings → Secrets and variables → Actions** and add:
 | `OCI_HOST` | Public IP / hostname of your OCI compute instance |
 | `OCI_USER` | SSH user: `ubuntu` (Ubuntu) or `opc` (Oracle Linux) |
 | `OCI_SSH_KEY` | SSH private key (contents of the key file), matching an entry in the VM's `~/.ssh/authorized_keys` |
-| `TEST_DATABASE_URL` | PostgreSQL DSN used by CI test runner |
-| `NEXT_PUBLIC_API_URL` | `https://tradeliv.design/api` |
-| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe publishable key |
-| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Google Maps key |
+| `PROD_ENV` | **The entire contents of your production `.env` file**, pasted verbatim |
+
+#### How `PROD_ENV` works
+
+Rather than creating one GitHub Secret per env var (60+ of them in this
+project), we keep a single source of truth: your local production `.env`
+file. Copy its full contents, paste into the `PROD_ENV` secret.
+
+The workflow reconstructs it on each run:
+
+```yaml
+- run: |
+    printf '%s' "${{ secrets.PROD_ENV }}" > .env
+    chmod 600 .env
+```
+
+This written `.env` is then used three ways in one pipeline:
+1. **Tests** read `DEV_DATABASE_URL` from it.
+2. **`next build`** reads `NEXT_PUBLIC_*` from it and bakes them into the browser bundle (via the existing `loadEnv(...)` in `apps/web/next.config.ts`).
+3. **Rsynced to the VM** as part of the artifact, so the API reads `STRIPE_SECRET_KEY`, `JWT_SECRET`, etc. at runtime.
+
+**When you change an env var:** edit your local `.env` → update the `PROD_ENV` secret in GitHub (paste the full new file) → push any commit. The next deploy ships the new values everywhere.
+
+**Never commit `.env`.** It's gitignored. The file only ever lives on your laptop, in the GitHub Secret, and (briefly) on CI runners and the VM.
 
 (Docker-era secrets `OCIR_REGISTRY`, `OCIR_USERNAME`, `OCIR_TOKEN` are no
 longer used and can be deleted.)
@@ -510,22 +530,16 @@ sudo certbot --nginx -d tradeliv.design -d www.tradeliv.design
 ### First deploy — bootstrapping PM2
 
 The GitHub Actions workflow does `pm2 reload`, which requires the processes
-to already exist. For the very first deploy, start them manually after the
-first rsync has populated `~/tradeLiv/`:
+to already exist. For the very first deploy, let CI do the rsync + install
+(push to `main` once), then SSH in and start the processes:
 
 ```bash
-# On the VM
+# On the VM, after the first CI run has populated ~/tradeLiv/
 cd ~/tradeLiv
 
-# Create .env with production secrets (never checked into git)
-nano .env
-
-# Install deps once
-npm ci --omit=dev
-npx prisma generate --schema=packages/db/prisma/schema.prisma
-npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma
-
-# Start processes — explicit cwd + script paths
+# .env is already there (shipped from the PROD_ENV secret).
+# node_modules is already installed.
+# Just start the processes:
 pm2 start "npm run start --workspace=apps/api" --name tradeliv-api --cwd ~/tradeLiv
 pm2 start "npm run start --workspace=apps/web" --name tradeliv-web --cwd ~/tradeLiv
 pm2 save
