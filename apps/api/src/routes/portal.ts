@@ -40,9 +40,10 @@ router.use((_req, res, next) => {
 });
 
 // Explicit CSRF mitigation for state-changing portal endpoints
+// Match app.ts: require a non-simple header; value may be `fetch` (web client) or `XMLHttpRequest` (tests).
 router.use((req, res, next) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
-    if (req.headers['x-requested-with'] !== 'XMLHttpRequest') {
+    if (!req.headers['x-requested-with']) {
       res.status(403).json({ error: 'Missing required X-Requested-With header.' });
       return;
     }

@@ -37,7 +37,7 @@ export default function ProjectChatPanel({ projectId, clientName }: Props) {
   const loadMessages = useCallback(async () => {
     const r = await api.getMessages(projectId);
     if (r.data) {
-      const msgs = r.data;
+      const msgs = r.data.messages;
       setMessages(msgs);
       setUnread(msgs.filter((m: ChatMessage) => m.senderType === 'client' && !m.readAt).length);
     }

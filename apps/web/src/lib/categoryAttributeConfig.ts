@@ -126,6 +126,13 @@ export function resolveAttributeValue(
   },
   attr: AttributeConfig,
 ): { value: string | null; uncertain: boolean } {
+  const toMeaningfulString = (input: unknown): string | null => {
+    if (input == null) return null;
+    const text = String(input).trim();
+    if (!text) return null;
+    return text;
+  };
+
   let value: unknown = null;
   let uncertain = false;
 
@@ -145,7 +152,12 @@ export function resolveAttributeValue(
       break;
     case 'materials':
       value = product.materials?.[attr.key] ?? null;
-      if (Array.isArray(value)) value = value.join(', ');
+      if (Array.isArray(value)) {
+        value = value
+          .map((entry) => toMeaningfulString(entry))
+          .filter((entry): entry is string => entry != null)
+          .join(', ');
+      }
       break;
     case 'top':
       value = (product as Record<string, unknown>)[attr.key] ?? null;
@@ -167,6 +179,7 @@ export function resolveAttributeValue(
       break;
   }
 
-  if (value == null) return { value: null, uncertain: false };
-  return { value: String(value), uncertain };
+  const normalized = toMeaningfulString(value);
+  if (normalized == null) return { value: null, uncertain: false };
+  return { value: normalized, uncertain };
 }

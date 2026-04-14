@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthStore } from '@/lib/store/auth';
+import { useBreadcrumbStore } from '@/lib/store/breadcrumbs';
 import { api } from '@/lib/api';
 import NotificationPanel from '@/components/NotificationPanel';
 
@@ -92,9 +93,11 @@ const BREADCRUMB_LABELS: Record<string, string> = {
   new: 'New',
   rooms: 'Rooms',
   cart: 'Cart',
+  quotes: 'Quotes',
+  tracking: 'Tracking',
 };
 
-function buildBreadcrumbs(pathname: string) {
+function buildBreadcrumbs(pathname: string, labels: Record<string, string>) {
   const segments = pathname.split('/').filter(Boolean);
   if (segments.length <= 1) return [];
 
@@ -103,7 +106,10 @@ function buildBreadcrumbs(pathname: string) {
   for (let i = 0; i < segments.length; i++) {
     path += '/' + segments[i];
     const seg = segments[i];
-    const label = BREADCRUMB_LABELS[seg] ?? (seg.length > 20 ? seg.slice(0, 8) + '…' : seg);
+    const label =
+      BREADCRUMB_LABELS[seg] ??
+      labels[seg] ??
+      (seg.length > 20 ? seg.slice(0, 8) + '…' : seg);
     crumbs.push({ label, href: path });
   }
   return crumbs;
@@ -385,7 +391,8 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
     .toUpperCase() ?? 'D';
 
   const sidebarWidth = collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_FULL;
-  const breadcrumbs = buildBreadcrumbs(pathname);
+  const breadcrumbLabels = useBreadcrumbStore((s) => s.labels);
+  const breadcrumbs = buildBreadcrumbs(pathname, breadcrumbLabels);
 
   /* ── Avatar upload handler ────────────────────────── */
   function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {

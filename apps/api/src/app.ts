@@ -125,10 +125,12 @@ export function createApp() {
     res.json({ status: 'ok', service: 'furnlo-api' });
   });
 
-  // Auth endpoints: stricter limit to prevent brute force
+  // Auth endpoints: generous limit for /me/refresh chatter. Login-specific
+  // brute-force defense is handled by adminLoginLimiter and the DB-level
+  // failed-attempt lockout (5 tries → 15 min lockout per account).
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 20,
+    max: 500,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many requests. Please try again in 15 minutes.' },

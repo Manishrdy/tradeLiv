@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { api, OrderDetail, Payment } from '@/lib/api';
+import { useBreadcrumbStore } from '@/lib/store/breadcrumbs';
 
 function formatPrice(price: number | null) {
   if (price == null) return '—';
@@ -117,19 +118,24 @@ export default function OrderDetailPage() {
     });
   }
 
+  const setBreadcrumbLabel = useBreadcrumbStore((s) => s.setLabel);
+
   useEffect(() => {
     if (searchParams.get('payment') === 'success') setPaymentSuccess(true);
 
     api.getOrder(projectId, orderId).then((r) => {
       if (r.error) setNotFound(true);
-      else setOrder(r.data!);
+      else {
+        setOrder(r.data!);
+        setBreadcrumbLabel(orderId, `Order #${orderId.slice(0, 8)}`);
+      }
       setLoading(false);
     });
 
     api.getOrderPayments(orderId).then((r) => {
       if (r.data && r.data.length > 0) setPayment(r.data[0]);
     });
-  }, [projectId, orderId, searchParams]);
+  }, [projectId, orderId, searchParams, setBreadcrumbLabel]);
 
   async function handleCompletePayment() {
     setPayingNow(true);

@@ -120,7 +120,7 @@ function ChatWidget({ portalToken, clientName, designerName, onRegisterSSE }: {
   const loadMessages = useCallback(async () => {
     const r = await api.getPortalMessages(portalToken);
     if (r.data) {
-      const msgs = r.data;
+      const msgs = r.data.messages;
       setMessages(msgs);
       const unreadCount = msgs.filter((m: ChatMessage) => m.senderType === 'designer' && !m.readAt).length;
       setUnread(unreadCount);
@@ -435,20 +435,38 @@ function ComparisonModal({
   onClose: () => void;
 }) {
   const dash = '—';
+  const cleanText = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  };
+  const cleanList = (values: unknown): string[] => {
+    if (!Array.isArray(values)) return [];
+    return values
+      .map((entry) => cleanText(entry))
+      .filter((entry): entry is string => entry != null);
+  };
+  const hasValue = (value: string | React.ReactNode | null): boolean => {
+    if (value == null) return false;
+    if (typeof value === 'string') return value.trim().length > 0;
+    return true;
+  };
 
   const specRows: { label: string; get: (item: PortalShortlistItem) => string | React.ReactNode | null }[] = [
-    { label: 'Description', get: (i) => (i.product.metadata?.description as string) ?? null },
-    { label: 'Category',   get: (i) => i.product.category ?? null },
-    { label: 'Style',      get: (i) => (i.product.metadata?.style as string) ?? null },
-    { label: 'Material',   get: (i) => i.product.material ?? null },
+    { label: 'Description', get: (i) => cleanText(i.product.metadata?.description) },
+    { label: 'Category',   get: (i) => cleanText(i.product.category) },
+    { label: 'Style',      get: (i) => cleanText(i.product.metadata?.style) },
+    { label: 'Material',   get: (i) => cleanText(i.product.material) },
     { label: 'Dimensions', get: (i) => formatDimensions(i.product.dimensions) },
     {
       label: 'Finishes',
       get: (i) => {
-        const fins = i.product.finishes?.length
-          ? i.product.finishes
-          : (i.product.metadata?.availableColors as string[] | undefined)?.length
-            ? (i.product.metadata!.availableColors as string[])
+        const finishes = cleanList(i.product.finishes);
+        const colors = cleanList(i.product.metadata?.availableColors);
+        const fins = finishes.length
+          ? finishes
+          : colors.length
+            ? colors
             : null;
         return fins ? fins.join(', ') : null;
       },
@@ -456,21 +474,21 @@ function ComparisonModal({
     {
       label: 'Colors',
       get: (i) => {
-        const colors = i.product.metadata?.availableColors as string[] | undefined;
+        const colors = cleanList(i.product.metadata?.availableColors);
         return colors?.length ? colors.join(', ') : null;
       },
     },
     {
       label: 'Sizes',
       get: (i) => {
-        const sizes = i.product.metadata?.availableSizes as string[] | undefined;
+        const sizes = cleanList(i.product.metadata?.availableSizes);
         return sizes?.length ? sizes.join(', ') : null;
       },
     },
     {
       label: 'Key Features',
       get: (i) => {
-        const features = i.product.metadata?.keyFeatures as string[] | undefined;
+        const features = cleanList(i.product.metadata?.keyFeatures);
         const filtered = features?.filter(f => !/\bavailable in\b/i.test(f));
         return filtered?.length
           ? <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, lineHeight: 1.6 }}>
@@ -479,16 +497,18 @@ function ComparisonModal({
           : null;
       },
     },
-    { label: 'Assembly',   get: (i) => (i.product.metadata?.assembly as string) ?? null },
-    { label: 'Lead Time',  get: (i) => i.product.leadTime ?? null },
-    { label: 'Care',       get: (i) => (i.product.metadata?.careInstructions as string) ?? null },
-    { label: 'Warranty',   get: (i) => (i.product.metadata?.warranty as string) ?? null },
+    { label: 'Assembly',   get: (i) => cleanText(i.product.metadata?.assembly) },
+    { label: 'Lead Time',  get: (i) => cleanText(i.product.leadTime) },
+    { label: 'Care',       get: (i) => cleanText(i.product.metadata?.careInstructions) },
+    { label: 'Warranty',   get: (i) => cleanText(i.product.metadata?.warranty) },
   ];
 
   const noteRows: { label: string; get: (item: PortalShortlistItem) => string | null }[] = [
-    { label: 'Fit Assessment', get: (i) => i.fitAssessment ?? null },
-    { label: 'Designer Notes', get: (i) => i.sharedNotes ?? null },
+    { label: 'Fit Assessment', get: (i) => cleanText(i.fitAssessment) },
+    { label: 'Designer Notes', get: (i) => cleanText(i.sharedNotes) },
   ];
+  const visibleSpecRows = specRows.filter((row) => items.some((item) => hasValue(row.get(item))));
+  const visibleNoteRows = noteRows.filter((row) => items.some((item) => hasValue(row.get(item))));
 
   const colWidth = `${Math.floor(100 / items.length)}%`;
 
@@ -613,7 +633,7 @@ function ComparisonModal({
 
             {/* Spec + note rows */}
             <tbody>
-              {specRows.map((row) => (
+              {visibleSpecRows.map((row) => (
                 <tr key={row.label} style={{ borderTop: '1px solid var(--border)' }}>
                   <td style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
                     {row.label}
@@ -621,7 +641,7 @@ function ComparisonModal({
                   {items.map((item) => {
                     const val = row.get(item);
                     return (
-                      <td key={item.id} style={{ padding: '10px 12px', fontSize: 12.5, color: val ? 'var(--text-primary)' : 'var(--text-placeholder)', verticalAlign: 'top' }}>
+                      <td key={item.id} style={{ padding: '10px 12px', fontSize: 12.5, color: hasValue(val) ? 'var(--text-primary)' : 'var(--text-placeholder)', verticalAlign: 'top' }}>
                         {val ?? dash}
                       </td>
                     );
@@ -629,7 +649,7 @@ function ComparisonModal({
                 </tr>
               ))}
 
-              {noteRows.map((row, i) => (
+              {visibleNoteRows.map((row, i) => (
                 <tr key={row.label} style={{ borderTop: i === 0 ? '2px solid var(--border)' : '1px solid var(--border)' }}>
                   <td style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
                     {row.label}
@@ -637,7 +657,7 @@ function ComparisonModal({
                   {items.map((item) => {
                     const val = row.get(item);
                     return (
-                      <td key={item.id} style={{ padding: '10px 12px', fontSize: 12.5, color: val ? 'var(--text-secondary)' : 'var(--text-placeholder)', verticalAlign: 'top', lineHeight: 1.55 }}>
+                      <td key={item.id} style={{ padding: '10px 12px', fontSize: 12.5, color: hasValue(val) ? 'var(--text-secondary)' : 'var(--text-placeholder)', verticalAlign: 'top', lineHeight: 1.55 }}>
                         {val ?? dash}
                       </td>
                     );

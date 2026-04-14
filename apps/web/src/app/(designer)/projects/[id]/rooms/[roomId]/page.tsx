@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, Room, ShortlistItem, ProductListItem, ShortlistUpdatePayload } from '@/lib/api';
+import { useBreadcrumbStore } from '@/lib/store/breadcrumbs';
 
 /* ─── Helpers ───────────────────────────────────────── */
 
@@ -52,30 +53,52 @@ function ComparisonModal({
   onClose: () => void;
 }) {
   const dash = <span style={{ color: 'var(--text-placeholder)' }}>—</span>;
+  const cleanText = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  };
+  const cleanList = (values: unknown): string[] => {
+    if (!Array.isArray(values)) return [];
+    return values
+      .map((entry) => cleanText(entry))
+      .filter((entry): entry is string => entry != null);
+  };
+  const hasValue = (value: unknown): boolean => {
+    if (value == null) return false;
+    if (typeof value === 'string') return value.trim().length > 0;
+    if (Array.isArray(value)) return value.length > 0;
+    return true;
+  };
 
-  const specRows: { label: string; render: (item: ShortlistItem) => React.ReactNode; isNote?: boolean }[] = [
-    {
-      label: 'Description',
-      render: (i) => i.product.metadata?.description
-        ? <span style={{ fontSize: 12, lineHeight: 1.5 }}>{i.product.metadata.description as string}</span>
-        : dash,
-    },
-    { label: 'Category',       render: (i) => i.product.category  || dash },
-    { label: 'Style',          render: (i) => (i.product.metadata?.style as string) || dash },
-    { label: 'Material',       render: (i) => i.product.material  || dash },
-    { label: 'Dimensions',     render: (i) => formatDimensions(i.product.dimensions) || dash },
+  const specRows: {
+    label: string;
+    get: (item: ShortlistItem) => string | string[] | React.ReactNode | null;
+    render?: (value: string | string[] | React.ReactNode | null, item: ShortlistItem) => React.ReactNode;
+    isNote?: boolean;
+  }[] = [
+    { label: 'Description', get: (i) => cleanText(i.product.metadata?.description) },
+    { label: 'Category', get: (i) => cleanText(i.product.category) },
+    { label: 'Style', get: (i) => cleanText(i.product.metadata?.style) },
+    { label: 'Material', get: (i) => cleanText(i.product.material) },
+    { label: 'Dimensions', get: (i) => formatDimensions(i.product.dimensions) },
     {
       label: 'Finishes',
-      render: (i) => {
-        const availableColors = i.product.metadata?.availableColors as string[] | undefined;
-        const fins = i.product.finishes?.length
-          ? i.product.finishes
-          : availableColors?.length
+      get: (i) => {
+        const finishes = cleanList(i.product.finishes);
+        const availableColors = cleanList(i.product.metadata?.availableColors);
+        const fins = finishes.length
+          ? finishes
+          : availableColors.length
             ? availableColors
             : null;
-        return fins
+        return fins;
+      },
+      render: (value) => {
+        const values = Array.isArray(value) ? value : [];
+        return values.length > 0
           ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              {fins.map((f) => (
+              {values.map((f) => (
                 <span key={f} className="tag-chip" style={{ fontSize: 11 }}>{f}</span>
               ))}
             </div>
@@ -84,9 +107,10 @@ function ComparisonModal({
     },
     {
       label: 'Colors',
-      render: (i) => {
-        const colors = i.product.metadata?.availableColors as string[] | undefined;
-        return colors?.length
+      get: (i) => cleanList(i.product.metadata?.availableColors),
+      render: (value) => {
+        const colors = Array.isArray(value) ? value : [];
+        return colors.length
           ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
               {colors.map((c) => (
                 <span key={c} className="tag-chip" style={{ fontSize: 11 }}>{c}</span>
@@ -97,9 +121,10 @@ function ComparisonModal({
     },
     {
       label: 'Sizes',
-      render: (i) => {
-        const sizes = i.product.metadata?.availableSizes as string[] | undefined;
-        return sizes?.length
+      get: (i) => cleanList(i.product.metadata?.availableSizes),
+      render: (value) => {
+        const sizes = Array.isArray(value) ? value : [];
+        return sizes.length
           ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
               {sizes.map((s) => (
                 <span key={s} className="tag-chip" style={{ fontSize: 11 }}>{s}</span>
@@ -110,33 +135,39 @@ function ComparisonModal({
     },
     {
       label: 'Key Features',
-      render: (i) => {
-        const features = i.product.metadata?.keyFeatures as string[] | undefined;
+      get: (i) => {
+        const features = cleanList(i.product.metadata?.keyFeatures);
         const filtered = features?.filter(f => !/\bavailable in\b/i.test(f));
-        return filtered?.length
+        return filtered?.length ? filtered : null;
+      },
+      render: (value) => {
+        const features = Array.isArray(value) ? value : [];
+        return features.length
           ? <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, lineHeight: 1.6 }}>
-              {filtered.map((f, idx) => <li key={idx}>{f}</li>)}
+              {features.map((f, idx) => <li key={idx}>{f}</li>)}
             </ul>
           : dash;
       },
     },
-    { label: 'Assembly',       render: (i) => (i.product.metadata?.assembly as string) || dash },
-    { label: 'Lead Time',      render: (i) => i.product.leadTime  || dash },
-    { label: 'Care',           render: (i) => (i.product.metadata?.careInstructions as string) || dash },
-    { label: 'Warranty',       render: (i) => (i.product.metadata?.warranty as string) || dash },
+    { label: 'Assembly', get: (i) => cleanText(i.product.metadata?.assembly) },
+    { label: 'Lead Time', get: (i) => cleanText(i.product.leadTime) },
+    { label: 'Care', get: (i) => cleanText(i.product.metadata?.careInstructions) },
+    { label: 'Warranty', get: (i) => cleanText(i.product.metadata?.warranty) },
     {
       label: 'Source',
-      render: (i) => i.product.productUrl
-        ? <a href={i.product.productUrl} target="_blank" rel="noopener noreferrer"
+      get: (i) => cleanText(i.product.productUrl),
+      render: (_value, item) => item.product.productUrl
+        ? <a href={item.product.productUrl} target="_blank" rel="noopener noreferrer"
              style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'underline' }}>
             View product page
           </a>
         : dash,
     },
-    { label: 'Fit Assessment', render: (i) => i.fitAssessment     || dash, isNote: true },
-    { label: 'Shared Notes',   render: (i) => i.sharedNotes       || dash, isNote: true },
-    { label: 'Designer Notes', render: (i) => i.designerNotes     || dash, isNote: true },
+    { label: 'Fit Assessment', get: (i) => cleanText(i.fitAssessment), isNote: true },
+    { label: 'Shared Notes', get: (i) => cleanText(i.sharedNotes), isNote: true },
+    { label: 'Designer Notes', get: (i) => cleanText(i.designerNotes), isNote: true },
   ];
+  const visibleRows = specRows.filter((row) => items.some((item) => hasValue(row.get(item))));
 
   return (
     <div style={{
@@ -244,8 +275,8 @@ function ComparisonModal({
               </tr>
             </thead>
             <tbody>
-              {specRows.map((row, i) => {
-                const isFirstNote = row.isNote && !specRows[i - 1]?.isNote;
+              {visibleRows.map((row, i) => {
+                const isFirstNote = row.isNote && !visibleRows[i - 1]?.isNote;
                 return (
                   <tr key={row.label} style={{ borderTop: `${isFirstNote ? '2px' : '1px'} solid var(--border)` }}>
                     <td style={{
@@ -261,7 +292,7 @@ function ComparisonModal({
                         padding: '11px 16px', fontSize: 13, color: 'var(--text-primary)',
                         verticalAlign: 'top', borderLeft: '1px solid var(--border)', lineHeight: 1.55,
                       }}>
-                        {row.render(item)}
+                        {row.render ? row.render(row.get(item), item) : (row.get(item) as React.ReactNode) ?? dash}
                       </td>
                     ))}
                   </tr>
@@ -803,15 +834,19 @@ export default function RoomDetailPage() {
   const [compareItems, setCompareItems]             = useState<ShortlistItem[]>([]);
   const [showCompareModal, setShowCompareModal]     = useState(false);
 
+  const setBreadcrumbLabel = useBreadcrumbStore((s) => s.setLabel);
+
   useEffect(() => {
     api.getProject(projectId).then((r) => {
       if (r.error || !r.data) { setNotFound(true); setLoading(false); return; }
       const found = r.data.rooms.find((rm) => rm.id === roomId);
       if (!found) { setNotFound(true); setLoading(false); return; }
       setRoom(found);
+      setBreadcrumbLabel(projectId, r.data.name);
+      setBreadcrumbLabel(roomId, found.name);
       setLoading(false);
     });
-  }, [projectId, roomId]);
+  }, [projectId, roomId, setBreadcrumbLabel]);
 
   const loadShortlist = useCallback(() => {
     setShortlistLoading(true);

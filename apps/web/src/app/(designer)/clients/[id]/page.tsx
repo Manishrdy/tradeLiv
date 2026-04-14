@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, ClientDetail, ClientPayload, Address } from '@/lib/api';
+import { useBreadcrumbStore } from '@/lib/store/breadcrumbs';
 
 function GenerateLinkButton({ projectId, onGenerated }: { projectId: string; onGenerated: (token: string) => void }) {
   const [loading, setLoading] = useState(false);
@@ -295,13 +296,19 @@ export default function ClientDetailPage() {
   const [shipZip, setShipZip] = useState('');
   const [sameAddress, setSameAddress] = useState(true);
 
+  const setBreadcrumbLabel = useBreadcrumbStore((s) => s.setLabel);
+
   useEffect(() => {
     if (!id) return;
     api.getClient(id).then((r) => {
-      if (r.data) { setClient(r.data); populateForm(r.data); }
+      if (r.data) {
+        setClient(r.data);
+        populateForm(r.data);
+        setBreadcrumbLabel(id, r.data.name);
+      }
       setLoading(false);
     });
-  }, [id]);
+  }, [id, setBreadcrumbLabel]);
 
   function populateForm(c: ClientDetail) {
     setName(c.name);

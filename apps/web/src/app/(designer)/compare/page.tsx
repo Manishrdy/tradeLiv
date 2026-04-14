@@ -68,6 +68,19 @@ function formatPriceRange(p: Product): string {
   return dp != null ? currFmt.format(dp) : '—';
 }
 
+function nonEmptyText(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function nonEmptyList(values: string[] | null | undefined): string[] {
+  if (!values) return [];
+  return values
+    .map((value) => nonEmptyText(value))
+    .filter((value): value is string => value != null);
+}
+
 /* ─── Completeness scoring ─────────────────────────── */
 
 interface CompletenessResult {
@@ -557,6 +570,18 @@ export default function ComparePage() {
   }, [products, pinnedId]);
 
   const attributes = useMemo(() => getAttributesForCategory(primaryCategory), [primaryCategory]);
+  const visibleAttributes = useMemo(
+    () => attributes.filter((attr) => products.some((p) => resolveAttributeValue(p, attr).value != null)),
+    [attributes, products],
+  );
+  const hasFeaturesRow = useMemo(
+    () => products.some((p) => nonEmptyList(p.features).length > 0),
+    [products],
+  );
+  const hasFinishesRow = useMemo(
+    () => products.some((p) => nonEmptyList(p.finishes).length > 0),
+    [products],
+  );
 
   const pinnedProduct = products.find((p) => p.id === pinnedId) || null;
   const pinnedPrice = pinnedProduct ? getDisplayPrice(pinnedProduct, variantSelections[pinnedProduct.id]) : null;
@@ -1093,7 +1118,7 @@ export default function ComparePage() {
             </tr>
 
             {/* ── Category + common attribute rows ───── */}
-            {attributes.map((attr) => (
+            {visibleAttributes.map((attr) => (
               <tr key={attr.key}>
                 <td style={rowLabelStyle}><span style={labelTextStyle}>{attr.label}</span></td>
                 {products.map((p) => {
@@ -1108,32 +1133,40 @@ export default function ComparePage() {
             ))}
 
             {/* ── Features row ─────────────────────────── */}
+            {hasFeaturesRow && (
             <tr>
               <td style={rowLabelStyle}><span style={labelTextStyle}>Features</span></td>
               {products.map((p) => (
                 <td key={p.id} style={cellStyle(p.id === pinnedId)}>
-                  {p.features && p.features.length > 0 ? (
+                  {(() => {
+                    const features = nonEmptyList(p.features);
+                    return features.length > 0 ? (
                     <ul style={{ margin: 0, paddingLeft: 14, fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                      {p.features.slice(0, 5).map((f, i) => (<li key={i}>{f}</li>))}
-                      {p.features.length > 5 && (
-                        <li style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>+{p.features.length - 5} more</li>
+                      {features.slice(0, 5).map((f, i) => (<li key={i}>{f}</li>))}
+                      {features.length > 5 && (
+                        <li style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>+{features.length - 5} more</li>
                       )}
                     </ul>
-                  ) : (
+                    ) : (
                     <CellValue value={null} uncertain={false} />
-                  )}
+                    );
+                  })()}
                 </td>
               ))}
             </tr>
+            )}
 
             {/* ── Finishes row ─────────────────────────── */}
+            {hasFinishesRow && (
             <tr>
               <td style={rowLabelStyle}><span style={labelTextStyle}>Finishes</span></td>
               {products.map((p) => (
                 <td key={p.id} style={cellStyle(p.id === pinnedId)}>
-                  {p.finishes && p.finishes.length > 0 ? (
+                  {(() => {
+                    const finishes = nonEmptyList(p.finishes);
+                    return finishes.length > 0 ? (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                      {p.finishes.map((f, i) => (
+                      {finishes.map((f, i) => (
                         <span key={i} style={{
                           fontSize: 10.5, padding: '2px 8px', borderRadius: 999,
                           background: 'var(--bg-input)', border: '1px solid var(--border)',
@@ -1143,12 +1176,14 @@ export default function ComparePage() {
                         </span>
                       ))}
                     </div>
-                  ) : (
+                    ) : (
                     <CellValue value={null} uncertain={false} />
-                  )}
+                    );
+                  })()}
                 </td>
               ))}
             </tr>
+            )}
           </tbody>
         </table>
       </div>

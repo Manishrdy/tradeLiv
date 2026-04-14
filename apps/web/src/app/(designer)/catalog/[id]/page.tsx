@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, Product, ProductUpdatePayload, ProductDimensions, ProductMetadata, ExtractedProduct, deriveAvailableOptions } from '@/lib/api';
+import { useBreadcrumbStore } from '@/lib/store/breadcrumbs';
 
 const EXTRACT_STEPS = [
   'Visiting page…',
@@ -244,13 +245,19 @@ export default function ProductDetailPage() {
   const [description, setDescription] = useState('');
   const [editMetadata, setEditMetadata] = useState<ProductMetadata | null>(null);
 
+  const setBreadcrumbLabel = useBreadcrumbStore((s) => s.setLabel);
+
   useEffect(() => {
     if (!id) return;
     api.getProduct(id).then((r) => {
-      if (r.data) { setProduct(r.data); populateForm(r.data); }
+      if (r.data) {
+        setProduct(r.data);
+        populateForm(r.data);
+        setBreadcrumbLabel(id, r.data.productName);
+      }
       setLoading(false);
     });
-  }, [id]);
+  }, [id, setBreadcrumbLabel]);
 
   // Cycle extract step while re-extracting
   useEffect(() => {

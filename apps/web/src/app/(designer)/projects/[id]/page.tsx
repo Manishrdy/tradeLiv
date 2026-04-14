@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, ProjectDetail, ProjectUpdatePayload, Address, AuditLogEntry } from '@/lib/api';
+import { useBreadcrumbStore } from '@/lib/store/breadcrumbs';
 
 /* ─── Image compression ────────────────────────────── */
 
@@ -614,15 +615,20 @@ export default function ProjectOverviewPage() {
   const [error, setError]       = useState('');
   const [activity, setActivity] = useState<AuditLogEntry[]>([]);
 
+  const setBreadcrumbLabel = useBreadcrumbStore((s) => s.setLabel);
+
   useEffect(() => {
     api.getProject(id).then((r) => {
-      if (r.data) setProject(r.data);
+      if (r.data) {
+        setProject(r.data);
+        setBreadcrumbLabel(id, r.data.name);
+      }
       setLoading(false);
     });
     api.getProjectActivity(id).then((r) => {
       if (r.data) setActivity(r.data);
     });
-  }, [id]);
+  }, [id, setBreadcrumbLabel]);
 
   /* ── Inline save helper ──────────────────────────── */
   async function saveField(payload: Partial<ProjectUpdatePayload>) {

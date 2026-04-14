@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { api, QuoteDetail, QuoteUpdatePayload } from '@/lib/api';
+import { useBreadcrumbStore } from '@/lib/store/breadcrumbs';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -47,10 +48,13 @@ export default function QuoteDetailPage() {
 
   const isEditable = quote?.status === 'draft' || quote?.status === 'revision_requested';
 
+  const setBreadcrumbLabel = useBreadcrumbStore((s) => s.setLabel);
+
   const loadQuote = useCallback(async () => {
     const r = await api.getQuote(quoteId);
     if (!r.error && r.data) {
       setQuote(r.data);
+      setBreadcrumbLabel(quoteId, r.data.title || `Quote v${r.data.version}`);
       setFeeForm({
         taxRate: r.data.taxRate?.toString() || '',
         commissionType: r.data.commissionType || 'percentage',
@@ -60,7 +64,7 @@ export default function QuoteDetailPage() {
       });
     }
     setLoading(false);
-  }, [quoteId]);
+  }, [quoteId, setBreadcrumbLabel]);
 
   useEffect(() => { loadQuote(); }, [loadQuote]);
 

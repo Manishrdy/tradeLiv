@@ -876,6 +876,29 @@ export interface ChatMessage {
   readAt: string | null;
 }
 
+export interface ChatMessageListResponse {
+  messages: ChatMessage[];
+  hasMore: boolean;
+}
+
+function normalizeChatMessageListResponse(
+  payload: ChatMessageListResponse | ChatMessage[] | unknown,
+): ChatMessageListResponse {
+  if (Array.isArray(payload)) {
+    return { messages: payload as ChatMessage[], hasMore: false };
+  }
+  if (payload && typeof payload === 'object') {
+    const maybe = payload as Partial<ChatMessageListResponse>;
+    if (Array.isArray(maybe.messages)) {
+      return {
+        messages: maybe.messages,
+        hasMore: Boolean(maybe.hasMore),
+      };
+    }
+  }
+  return { messages: [], hasMore: false };
+}
+
 export interface PresenceStatus {
   designer: { lastSeen: string; online: boolean };
   client: { lastSeen: string; online: boolean };
@@ -1627,25 +1650,29 @@ export const api = {
     }),
 
   // Chat / Messaging
-  getMessages: (projectId: string, opts?: { after?: string; contextType?: string; contextId?: string }) => {
+  getMessages: async (projectId: string, opts?: { after?: string; contextType?: string; contextId?: string }) => {
     const params = new URLSearchParams();
     if (opts?.after) params.set('after', opts.after);
     if (opts?.contextType) params.set('contextType', opts.contextType);
     if (opts?.contextId) params.set('contextId', opts.contextId);
     const qs = params.toString();
-    return request<ChatMessage[]>(`/api/projects/${projectId}/messages${qs ? `?${qs}` : ''}`);
+    const response = await request<ChatMessageListResponse | ChatMessage[]>(`/api/projects/${projectId}/messages${qs ? `?${qs}` : ''}`);
+    if (!response.data) return response;
+    return { data: normalizeChatMessageListResponse(response.data) };
   },
 
   sendMessage: (projectId: string, payload: { text: string; senderType: 'designer' | 'client'; senderName: string; contextType?: string; contextId?: string; metadata?: Record<string, unknown> }) =>
     request<ChatMessage>(`/api/projects/${projectId}/messages`, { method: 'POST', body: JSON.stringify(payload) }),
 
-  getPortalMessages: (portalToken: string, opts?: { after?: string; contextType?: string; contextId?: string }) => {
+  getPortalMessages: async (portalToken: string, opts?: { after?: string; contextType?: string; contextId?: string }) => {
     const params = new URLSearchParams();
     if (opts?.after) params.set('after', opts.after);
     if (opts?.contextType) params.set('contextType', opts.contextType);
     if (opts?.contextId) params.set('contextId', opts.contextId);
     const qs = params.toString();
-    return request<ChatMessage[]>(`/api/portal/${portalToken}/messages${qs ? `?${qs}` : ''}`);
+    const response = await request<ChatMessageListResponse | ChatMessage[]>(`/api/portal/${portalToken}/messages${qs ? `?${qs}` : ''}`);
+    if (!response.data) return response;
+    return { data: normalizeChatMessageListResponse(response.data) };
   },
 
   sendPortalMessage: (portalToken: string, payload: { text: string; senderName: string; contextType?: string; contextId?: string; metadata?: Record<string, unknown> }) =>
