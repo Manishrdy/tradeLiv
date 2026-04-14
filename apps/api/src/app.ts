@@ -101,7 +101,26 @@ export function createApp() {
   app.use((req: Request, res: Response, next: NextFunction) => {
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
       if (req.path.startsWith('/api/webhooks/')) return next();
-      if (!req.headers['x-requested-with']) {
+      const hasRequestedWith = Boolean(req.headers['x-requested-with']);
+
+      const origin = typeof req.headers.origin === 'string' ? req.headers.origin : null;
+      const referer = typeof req.headers.referer === 'string' ? req.headers.referer : null;
+      const normalizedOrigin = origin ? normalizeOrigin(origin) : null;
+      const normalizedReferer = referer ? normalizeOrigin(referer) : null;
+      const secFetchSite = typeof req.headers['sec-fetch-site'] === 'string'
+        ? req.headers['sec-fetch-site']
+        : null;
+
+      // Some proxies/CDNs may strip non-simple custom headers.
+      // Treat same trusted-site Origin/Referer or browser same-site signal
+      // as equivalent CSRF proof.
+      const isTrustedBrowserRequest =
+        (normalizedOrigin && allowedOrigins.has(normalizedOrigin))
+        || (normalizedReferer && allowedOrigins.has(normalizedReferer))
+        || secFetchSite === 'same-origin'
+        || secFetchSite === 'same-site';
+
+      if (!hasRequestedWith && !isTrustedBrowserRequest) {
         res.status(403).json({ error: 'Missing required X-Requested-With header.' });
         return;
       }

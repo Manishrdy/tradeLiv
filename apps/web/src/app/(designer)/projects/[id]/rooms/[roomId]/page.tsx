@@ -56,6 +56,9 @@ function ComparisonModal({
   const cleanText = (value: unknown): string | null => {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
+    if (/^(?:[-—–]+|n\/?a|none|null|undefined|not\s+listed|not\s+available|unknown)$/i.test(trimmed)) {
+      return null;
+    }
     return trimmed ? trimmed : null;
   };
   const cleanList = (values: unknown): string[] => {

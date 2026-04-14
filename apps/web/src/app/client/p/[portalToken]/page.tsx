@@ -120,9 +120,10 @@ function ChatWidget({ portalToken, clientName, designerName, onRegisterSSE }: {
   const loadMessages = useCallback(async () => {
     const r = await api.getPortalMessages(portalToken);
     if (r.data) {
-      const msgs = r.data.messages;
+      const raw = (r.data as { messages?: unknown }).messages;
+      const msgs: ChatMessage[] = Array.isArray(raw) ? (raw as ChatMessage[]) : [];
       setMessages(msgs);
-      const unreadCount = msgs.filter((m: ChatMessage) => m.senderType === 'designer' && !m.readAt).length;
+      const unreadCount = msgs.filter((m) => m.senderType === 'designer' && !m.readAt).length;
       setUnread(unreadCount);
     }
   }, [portalToken]);
@@ -288,7 +289,7 @@ function ChatWidget({ portalToken, clientName, designerName, onRegisterSSE }: {
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: 13, fontWeight: 700, color: '#fff',
               }}>
-                {designerName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}
+                {(designerName || 'Designer').split(' ').map((n) => n[0] || '').join('').slice(0, 2).toUpperCase()}
               </div>
               <span style={{
                 position: 'absolute', bottom: 0, right: 0,
@@ -326,15 +327,15 @@ function ChatWidget({ portalToken, clientName, designerName, onRegisterSSE }: {
             display: 'flex', flexDirection: 'column', gap: 6,
             background: '#fafafa',
           }}>
-            {messages.length === 0 && (
+            {(!Array.isArray(messages) || messages.length === 0) && (
               <div style={{ textAlign: 'center', padding: '50px 20px', color: '#999', fontSize: 13 }}>
                 <div style={{ fontSize: 28, marginBottom: 10 }}>&#128172;</div>
                 No messages yet.<br />Start a conversation with your designer.
               </div>
             )}
-            {messages.map((m, idx) => {
+            {(Array.isArray(messages) ? messages : []).map((m, idx, arr) => {
               const isClient = m.senderType === 'client';
-              const isLast = idx === messages.length - 1;
+              const isLast = idx === arr.length - 1;
               return (
                 <div key={m.id} style={{ display: 'flex', flexDirection: 'column', alignItems: isClient ? 'flex-end' : 'flex-start' }}>
                   <div style={{
@@ -438,6 +439,9 @@ function ComparisonModal({
   const cleanText = (value: unknown): string | null => {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
+    if (/^(?:[-—–]+|n\/?a|none|null|undefined|not\s+listed|not\s+available|unknown)$/i.test(trimmed)) {
+      return null;
+    }
     return trimmed ? trimmed : null;
   };
   const cleanList = (values: unknown): string[] => {

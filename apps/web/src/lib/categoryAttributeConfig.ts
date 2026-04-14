@@ -126,10 +126,12 @@ export function resolveAttributeValue(
   },
   attr: AttributeConfig,
 ): { value: string | null; uncertain: boolean } {
+  const NULL_LIKE_TEXT = /^(?:[-—–]+|n\/?a|none|null|undefined|not\s+listed|not\s+available|unknown)$/i;
   const toMeaningfulString = (input: unknown): string | null => {
     if (input == null) return null;
     const text = String(input).trim();
     if (!text) return null;
+    if (NULL_LIKE_TEXT.test(text)) return null;
     return text;
   };
 
