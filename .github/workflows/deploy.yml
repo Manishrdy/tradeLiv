@@ -162,8 +162,13 @@ jobs:
             echo "==> Applying database migrations..."
             USE_DB=prod bash packages/db/scripts/prisma.sh migrate deploy --schema=packages/db/prisma/schema.prisma
 
-            echo "==> Reloading PM2 (zero-downtime)..."
-            pm2 reload tradeliv-api tradeliv-web --update-env
+            echo "==> Restarting PM2 processes..."
+            # Use 'restart' (not 'reload') so Next.js re-reads its build
+            # manifest from disk. 'reload' keeps the process warm but Next
+            # caches BUILD_ID/chunk paths in memory at startup; chunks
+            # rsynced into a new build then 404 until restart.
+            # ~1-2 sec downtime per process — acceptable for a solo deploy.
+            pm2 restart tradeliv-api tradeliv-web --update-env
             pm2 save
 
             echo "==> Current PM2 status:"
