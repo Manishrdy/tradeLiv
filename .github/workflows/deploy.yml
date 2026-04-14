@@ -157,10 +157,10 @@ jobs:
             npm ci --omit=dev --no-audit --no-fund
 
             echo "==> Generating Prisma client..."
-            npx prisma generate --schema=packages/db/prisma/schema.prisma
+            USE_DB=prod bash packages/db/scripts/prisma.sh generate --schema=packages/db/prisma/schema.prisma
 
             echo "==> Applying database migrations..."
-            npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma
+            USE_DB=prod bash packages/db/scripts/prisma.sh migrate deploy --schema=packages/db/prisma/schema.prisma
 
             echo "==> Reloading PM2 (zero-downtime)..."
             pm2 reload tradeliv-api tradeliv-web --update-env
