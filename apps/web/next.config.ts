@@ -13,7 +13,6 @@ const resolvedApiUrl = process.env.NEXT_PUBLIC_API_URL || (isProduction
   : (process.env.DEV_NEXT_PUBLIC_API_URL || 'http://localhost:4000'));
 
 const nextConfig: NextConfig = {
-  output: 'standalone',
   env: {
     NEXT_PUBLIC_API_URL: resolvedApiUrl,
     NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '',

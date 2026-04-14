@@ -10,7 +10,7 @@ A full-stack B2B SaaS platform for interior designers to manage clients, curate 
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Supabase-4169E1?logo=postgresql&logoColor=white)
 ![Prisma](https://img.shields.io/badge/Prisma-5.22-2D3748?logo=prisma&logoColor=white)
 ![Stripe](https://img.shields.io/badge/Stripe-Payments-635BFF?logo=stripe&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+![PM2](https://img.shields.io/badge/Runtime-PM2-2B037A?logo=pm2&logoColor=white)
 ![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub_Actions-2088FF?logo=githubactions&logoColor=white)
 ![OCI](https://img.shields.io/badge/Deployed_on-OCI-F80000?logo=oracle&logoColor=white)
 
@@ -87,10 +87,8 @@ furnlo/
 ├── .github/
 │   └── workflows/
 │       └── deploy.yml        # GitHub Actions CI/CD pipeline
-├── docker-compose.yml        # Local development (builds from source)
-├── docker-compose.prod.yml   # Production (pulls images from OCIR)
-├── .env.example              # Dev environment template
-└── .env.prod.example         # Production environment template
+├── docker-compose.yml        # Local development only (Browserless Chrome sidecar)
+└── .env.example              # Env template (dev + prod share the same shape)
 ```
 
 ---
@@ -167,7 +165,7 @@ SuperAdmin ⊃ Admin ⊃ Designer ← → Client (portal, no login)
 | **Real-time** | Server-Sent Events (SSE) |
 | **Email** | Nodemailer + Zoho Mail (SMTP/IMAP), React Email templates |
 | **Logging** | Winston + daily rotating file transport |
-| **Infrastructure** | Docker Compose, Nginx, OCI Compute (Ampere A1) |
+| **Infrastructure** | PM2, Nginx, OCI Compute (Ampere A1.Flex, 1 GB RAM) · Docker Compose for local dev only |
 | **CI/CD** | GitHub Actions → OCI Container Registry → OCI VM |
 | **Monorepo** | npm workspaces |
 
@@ -303,7 +301,7 @@ Copy `.env.example` → `.env` for local dev. Copy `.env.prod.example` → `.env
 
 ### Frontend build-time (`NEXT_PUBLIC_*`)
 
-These are baked into the Next.js bundle at build time and passed as Docker `--build-arg` in CI/CD.
+These are baked into the Next.js bundle at build time. In CI they are read from repo secrets during the Stage 2 build step (see [CI/CD Pipeline](#cicd-pipeline)).
 
 | Variable | Description |
 |----------|-------------|
@@ -358,48 +356,94 @@ The API runs `prisma migrate deploy` automatically on every cold start (`apps/ap
 
 Defined in `.github/workflows/deploy.yml`. Triggered on every push to `main`.
 
+### Why this shape?
+
+tradeLiv runs on an OCI **Ampere A1.Flex with 1 GB RAM** (always-free tier).
+Running `next build` on 1 GB is fragile — the build can be OOM-killed or swap
+the whole machine. So the pipeline is designed around a single rule:
+
+> **The VM never compiles. It only receives files and runs them.**
+
+GitHub Actions (which has 16 GB RAM on its runners) does every compile step —
+`tsc`, `next build`, Prisma client generation — then ships the compiled
+artifacts to the VM over SSH. The VM's only job is `npm ci --omit=dev` and
+`pm2 reload`.
+
 ### Pipeline stages
 
 ```
 Push to main
      │
      ▼
-┌─────────┐     ┌──────────────────────┐     ┌──────────────┐
-│  Test   │────▶│  Build & Push Images │────▶│    Deploy    │
-│         │     │                      │     │              │
-│ npm ci  │     │ docker buildx        │     │ SSH into OCI │
-│ jest    │     │ → OCIR (API image)   │     │ docker pull  │
-│         │     │ → OCIR (Web image)   │     │ rolling up   │
-└─────────┘     └──────────────────────┘     └──────────────┘
-                  (only on main push,
-                   skipped on PRs)
+┌─────────┐     ┌──────────────────────┐     ┌────────────────────┐
+│  Test   │────▶│   Build on CI        │────▶│      Deploy        │
+│         │     │                      │     │                    │
+│ npm ci  │     │ npm ci               │     │ rsync artifacts    │
+│ jest    │     │ build packages       │     │   → ~/tradeLiv/    │
+│         │     │ build apps/api (tsc) │     │ ssh:               │
+│         │     │ build apps/web       │     │  npm ci --omit=dev │
+│         │     │   (next build)       │     │  prisma generate   │
+│         │     │ upload artifact      │     │  prisma migrate    │
+│         │     │                      │     │  pm2 reload        │
+└─────────┘     └──────────────────────┘     └────────────────────┘
+                   (PRs skip build/deploy)
 ```
 
 ### Stage 1 — Test
 
 - Installs dependencies (`npm ci`)
-- Runs API test suite (`npm run test --workspace=apps/api`)
-- Uses `TEST_DATABASE_URL` secret for real database tests
-- PRs run tests but do not build or deploy
+- Runs API test suite against `TEST_DATABASE_URL`
+- PRs run tests but stop here — no build, no deploy
 
-### Stage 2 — Build & Push Images
+### Stage 2 — Build (on GitHub's runner)
 
-- Uses `docker/setup-buildx-action` with GitHub Actions layer cache (`type=gha`)
-- Logs into OCI Container Registry (OCIR)
-- Builds two images from the **repo root** (monorepo build context):
-  - `tradeliv-api` — Express.js backend
-  - `tradeliv-web` — Next.js 15 frontend (standalone output, ~100 MB image)
-- Tags each image with `:<git-sha>` (immutable) and `:latest`
-- `NEXT_PUBLIC_*` env vars are passed as `--build-arg` and baked into the frontend bundle
+Runs on `ubuntu-latest`. `NEXT_PUBLIC_*` vars are injected **as environment
+variables** at build time because Next.js bakes them into the client bundle
+at compile — they cannot be supplied later at runtime.
+
+Produces these outputs, uploaded as a GitHub Actions artifact:
+
+```
+apps/web/.next/              ← compiled Next.js (server + client chunks)
+apps/web/public/             ← static assets
+apps/web/next.config.ts
+apps/web/package.json
+apps/api/dist/               ← compiled TypeScript
+apps/api/package.json
+packages/db/dist/            ← compiled Prisma client wrappers
+packages/db/prisma/          ← schema + migrations
+packages/emails/dist/        ← compiled email templates
+package.json + package-lock.json
+```
+
+**Notably NOT included:** `node_modules` and all `src/` folders. Source isn't
+needed at runtime, and `node_modules` is skipped because some dependencies
+(`sharp`, `bcryptjs`) ship native binaries that must match the VM's CPU
+architecture. The VM installs its own.
 
 ### Stage 3 — Deploy
 
-- SSHs into the OCI VM using a stored private key
-- Pulls the new images by git SHA
-- Takes a pre-deploy database backup
-- Performs a rolling restart (`docker compose up --no-deps`) — API and Web are replaced one at a time
-- Prunes old images to free disk space
-- Gated behind a GitHub `production` environment (add manual approval in GitHub Settings if desired)
+1. **Download** the artifact built in Stage 2.
+2. **Write the SSH key** from the `OCI_SSH_KEY` secret to `~/.ssh/id_rsa`.
+3. **`rsync -az --delete`** the artifact into `~/tradeLiv/` on the VM.
+   - `--delete` removes files that no longer exist in the build (e.g. old
+     hashed `page-*.js` chunks), preventing stale bundles from lingering.
+   - `--exclude` protects `.env`, `logs/`, `uploads/`, `backups/` so runtime
+     state is never overwritten.
+4. **SSH into the VM** and run:
+   - `npm ci --omit=dev` — installs production dependencies only. Native
+     modules get built/downloaded for the VM's architecture.
+   - `npx prisma generate` — regenerate the Prisma client against the
+     current schema and the freshly installed `@prisma/client`.
+   - `npx prisma migrate deploy` — apply any pending migrations.
+   - `pm2 reload tradeliv-api tradeliv-web --update-env` — zero-downtime
+     restart (PM2 spawns a new worker, waits for it to be ready, then stops
+     the old one).
+   - `pm2 save` — persists the process list so PM2 restores it on VM reboot.
+
+The `production` GitHub environment gate can be enabled in repo settings
+(Settings → Environments → production) to require manual approval before
+Stage 3 runs.
 
 ### Required GitHub Secrets
 
@@ -407,16 +451,16 @@ Go to **Settings → Secrets and variables → Actions** and add:
 
 | Secret | Description |
 |--------|-------------|
-| `OCIR_REGISTRY` | OCI Container Registry host + namespace, e.g. `iad.ocir.io/<tenancy-namespace>` |
-| `OCIR_USERNAME` | `<tenancy-namespace>/oracleidentitycloudservice/<username>` |
-| `OCIR_TOKEN` | OCI auth token — **not** your account password. Generate in OCI Console → Profile → Auth Tokens |
-| `OCI_HOST` | Public IP address of your OCI compute instance |
+| `OCI_HOST` | Public IP / hostname of your OCI compute instance |
 | `OCI_USER` | SSH user: `ubuntu` (Ubuntu) or `opc` (Oracle Linux) |
-| `OCI_SSH_KEY` | SSH private key (contents of `~/.ssh/id_rsa`) |
+| `OCI_SSH_KEY` | SSH private key (contents of the key file), matching an entry in the VM's `~/.ssh/authorized_keys` |
 | `TEST_DATABASE_URL` | PostgreSQL DSN used by CI test runner |
 | `NEXT_PUBLIC_API_URL` | `https://tradeliv.design/api` |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe publishable key |
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Google Maps key |
+
+(Docker-era secrets `OCIR_REGISTRY`, `OCIR_USERNAME`, `OCIR_TOKEN` are no
+longer used and can be deleted.)
 
 ---
 
@@ -424,70 +468,163 @@ Go to **Settings → Secrets and variables → Actions** and add:
 
 ### One-time server setup
 
-Provision an OCI Compute instance — use **VM.Standard.A1.Flex** (Ampere ARM64, always-free tier: up to 4 OCPUs + 24 GB RAM). Recommended: 2 OCPU, 8 GB RAM. Use **Ubuntu 22.04 LTS** as the image. Then run:
+Provision an OCI Compute instance — **VM.Standard.A1.Flex** (Ampere ARM64,
+always-free tier). 1 OCPU + 1 GB RAM is workable for this deploy shape
+because the VM never compiles. Use **Ubuntu 22.04 LTS**.
 
 ```bash
-# On the OCI VM
-bash scripts/server-setup.sh
+# On the OCI VM — one-time bootstrap
+
+# 1. Install Node 20 + npm
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# 2. Install PM2 globally
+sudo npm install -g pm2
+
+# 3. Install nginx + certbot
+sudo apt-get install -y nginx certbot python3-certbot-nginx
+
+# 4. Create the app directory owned by the deploy user
+sudo mkdir -p /home/ubuntu/tradeLiv
+sudo chown -R ubuntu:ubuntu /home/ubuntu/tradeLiv
+
+# 5. Enable PM2 to survive reboots
+pm2 startup systemd     # then run the printed `sudo env PATH=...` command
+pm2 save
 ```
 
-This installs Docker, Docker Compose plugin, configures the firewall (ports 22/80/443), and installs Certbot.
-
-> Also open ports 80 and 443 in your OCI VCN Security List (OCI Console → Networking → VCN → Security Lists → Add Ingress Rules).
+Open ports 22, 80, 443 in the OCI VCN Security List (OCI Console →
+Networking → VCN → Security Lists → Add Ingress Rules) **and** in `ufw`
+on the VM (`sudo ufw allow 22,80,443/tcp`).
 
 ### SSL certificate
 
 Once your DNS A record points `tradeliv.design` to the VM's IP:
 
 ```bash
-sudo certbot certonly --standalone -d tradeliv.design -d www.tradeliv.design
-# Auto-renewal
-sudo systemctl enable --now certbot.timer
+sudo certbot --nginx -d tradeliv.design -d www.tradeliv.design
+# Auto-renewal is installed automatically via /etc/cron.d/certbot
 ```
 
-### Manual first deploy
+### First deploy — bootstrapping PM2
+
+The GitHub Actions workflow does `pm2 reload`, which requires the processes
+to already exist. For the very first deploy, start them manually after the
+first rsync has populated `~/tradeLiv/`:
 
 ```bash
-# Copy files to server
-scp docker-compose.prod.yml ubuntu@YOUR_IP:/opt/tradeliv/
-scp -r docker/ ubuntu@YOUR_IP:/opt/tradeliv/docker/
+# On the VM
+cd ~/tradeLiv
 
-# On the server: create .env.prod from the template
-cp .env.prod.example /opt/tradeliv/.env.prod
-nano /opt/tradeliv/.env.prod   # fill in all secrets
+# Create .env with production secrets (never checked into git)
+nano .env
 
-# First-time start
-cd /opt/tradeliv
-OCIR_REGISTRY=iad.ocir.io/<tenancy-namespace> IMAGE_TAG=latest \
-  docker compose -f docker-compose.prod.yml up -d
+# Install deps once
+npm ci --omit=dev
+npx prisma generate --schema=packages/db/prisma/schema.prisma
+npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma
+
+# Start processes — explicit cwd + script paths
+pm2 start "npm run start --workspace=apps/api" --name tradeliv-api --cwd ~/tradeLiv
+pm2 start "npm run start --workspace=apps/web" --name tradeliv-web --cwd ~/tradeLiv
+pm2 save
 ```
 
-After this, all future deploys are fully automatic on every push to `main`.
+From this point on, every push to `main` is fully automated.
 
-### How docker-compose.prod.yml works
+### Nginx configuration (reverse proxy)
 
-Unlike `docker-compose.yml` (which builds from source), `docker-compose.prod.yml`:
+Nginx terminates TLS and forwards `/api/*` to port 4000 and everything else
+to port 3000 (`next start`). Put this in `/etc/nginx/sites-available/tradeliv`
+and symlink into `sites-enabled/`:
 
-- **Pulls pre-built images from OCIR** — no build step on the server
-- Loads all secrets from `.env.prod` via `env_file`
-- Has **healthchecks** on the API — `web` won't start until the API passes
-- Mounts **named volumes** for logs (`api-logs`) and DB backups (`db-backups`) so they persist across container restarts
-- Keeps all services on an internal Docker network — only Nginx is exposed to the internet
+```nginx
+server {
+  listen 443 ssl http2;
+  server_name tradeliv.design www.tradeliv.design;
 
-### Nginx configuration
+  ssl_certificate     /etc/letsencrypt/live/tradeliv.design/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/tradeliv.design/privkey.pem;
 
-| File | Used by | Purpose |
-|------|---------|---------|
-| `docker/nginx.conf` | `docker-compose.yml` (dev) | HTTP-only proxy, no SSL |
-| `docker/nginx.prod.conf` | `docker-compose.prod.yml` (prod) | HTTP→HTTPS redirect, TLS, gzip, security headers, SSE route |
+  client_max_body_size 20M;
+  gzip on;
+  gzip_types text/plain text/css application/javascript application/json image/svg+xml;
 
-Production nginx handles:
-- **TLS termination** — Let's Encrypt certs mounted from `/etc/letsencrypt`
-- **HTTP → HTTPS** redirect (301)
-- **HSTS**, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`
-- **Gzip** compression for text, CSS, JS, JSON, SVG
-- **SSE route** (`/api/events`) — no buffering, 1-hour read timeout, `chunked_transfer_encoding`
-- **20 MB** upload limit (`client_max_body_size`)
+  # Server-Sent Events: disable buffering, long read timeout
+  location ~ ^/api/(events|portal/.+/events) {
+    proxy_pass http://127.0.0.1:4000;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 3600s;
+    chunked_transfer_encoding on;
+  }
+
+  location /api/ {
+    proxy_pass http://127.0.0.1:4000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+
+server {
+  listen 80;
+  server_name tradeliv.design www.tradeliv.design;
+  return 301 https://$host$request_uri;
+}
+```
+
+### Manual deploy (bypassing CI)
+
+If you ever need to deploy without pushing to `main`:
+
+```bash
+# On your laptop (fat machine — builds here, not on the VM)
+npm ci
+npm run build
+
+# Ship compiled artifacts
+rsync -az --delete \
+  --exclude='.env' --exclude='node_modules' --exclude='logs/' \
+  --exclude='backups/' --exclude='uploads/' \
+  ./ ubuntu@$OCI_HOST:~/tradeLiv/
+
+# Finish the deploy on the VM
+ssh ubuntu@$OCI_HOST bash -lc '
+  cd ~/tradeLiv &&
+  npm ci --omit=dev &&
+  npx prisma generate --schema=packages/db/prisma/schema.prisma &&
+  npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma &&
+  pm2 reload tradeliv-api tradeliv-web --update-env &&
+  pm2 save
+'
+```
+
+### Why we dropped `output: 'standalone'`
+
+Next.js has a `standalone` output mode that produces a minimal self-contained
+server bundle. It's designed for Docker images. The catch: standalone only
+emits the server code — `.next/static/` and `public/` must be **manually
+copied** into the standalone directory after every build, otherwise every
+`/_next/static/chunks/*.js` returns 404 and the browser refuses to execute
+them (wrong MIME type from the HTML fallback).
+
+For a non-Docker PM2 deploy, this manual-copy step is a footgun. We removed
+`output: 'standalone'` from `next.config.ts` and switched the `start` script
+to plain `next start`, which serves its own static files correctly with zero
+extra steps. The runtime cost is ~50 MB extra RAM — acceptable on a 1 GB VM.
 
 ---
 
@@ -497,28 +634,29 @@ Production nginx handles:
 GitHub (push to main)
         │
         ▼
-GitHub Actions
-  ├── Run tests
-  ├── docker build --push → iad.ocir.io/<ns>/tradeliv-api:<sha>
-  └── docker build --push → iad.ocir.io/<ns>/tradeliv-web:<sha>
+GitHub Actions (ubuntu-latest, 16 GB RAM)
+  ├── Stage 1: test       → jest
+  ├── Stage 2: build      → next build + tsc + prisma generate
+  │                       → upload artifact
+  └── Stage 3: deploy     → rsync artifact + ssh pm2 reload
         │
-        ▼ SSH
-OCI Compute VM (tradeliv.design)
-  └── /opt/tradeliv/
-        ├── docker-compose.prod.yml
-        ├── docker/nginx.prod.conf
-        └── .env.prod
+        ▼ SSH over port 22
+OCI A1.Flex VM, 1 GB RAM (tradeliv.design)
+  ├── nginx  (system service)      → TLS + reverse proxy
+  │     ├── :443 → 127.0.0.1:3000  (Next.js — tradeliv-web)
+  │     └── :443/api → :4000        (Express — tradeliv-api)
+  └── PM2 (user service)
+        ├── tradeliv-api    → node apps/api/dist/index.js
+        └── tradeliv-web    → next start
               │
-              ├── chrome   (ghcr.io/browserless/chromium)
-              ├── api      (OCIR → tradeliv-api:<sha>)
-              ├── web      (OCIR → tradeliv-web:<sha>)
-              └── nginx    (nginx:alpine — ports 80, 443)
+              ▼
+        Supabase PostgreSQL (external)
 ```
 
 **Data persistence:**
-- `api-logs` volume → Winston log files (daily rotation)
-- `db-backups` volume → `pg_dump` snapshots (runs on restart + every 6 hours via cron)
-- Database → Supabase PostgreSQL (external, not in Docker)
+- API logs → `apps/api/logs/` (Winston daily rotation), excluded from rsync
+- DB backups → `backups/` on the VM (pre-migration snapshots), excluded from rsync
+- Database → Supabase PostgreSQL (external managed service)
 
 ---
 
