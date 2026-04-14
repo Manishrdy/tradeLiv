@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev --port 3000",
-    "build": "next build",
+    "build": "next build && npm run postbuild",
+    "postbuild": "cp -r .next/static .next/standalone/apps/web/.next/static && cp -r public .next/standalone/apps/web/public",
     "start": "node .next/standalone/apps/web/server.js",
     "lint": "next lint"
   },
