@@ -26,9 +26,13 @@ jobs:
       # next.config.ts auto-loads it for NEXT_PUBLIC_* bake-in, and tests
       # read DEV_DATABASE_URL from it.
       - name: Write .env from PROD_ENV secret
+        env:
+          PROD_ENV: ${{ secrets.PROD_ENV }}
         run: |
-          printf '%s' "${{ secrets.PROD_ENV }}" > .env
+          printf '%s' "$PROD_ENV" > .env
           chmod 600 .env
+          echo "Wrote .env — $(wc -l < .env) lines, $(wc -c < .env) bytes"
+          echo "Keys present: $(grep -cE '^[A-Z_]+=' .env)"
 
       - name: Run API tests
         run: npm run test --workspace=apps/api
@@ -55,9 +59,13 @@ jobs:
 
       # Reconstruct .env so next.config.ts loads NEXT_PUBLIC_* at build time.
       - name: Write .env from PROD_ENV secret
+        env:
+          PROD_ENV: ${{ secrets.PROD_ENV }}
         run: |
-          printf '%s' "${{ secrets.PROD_ENV }}" > .env
+          printf '%s' "$PROD_ENV" > .env
           chmod 600 .env
+          echo "Wrote .env — $(wc -l < .env) lines, $(wc -c < .env) bytes"
+          echo "Keys present: $(grep -cE '^[A-Z_]+=' .env)"
 
       - name: Build packages (db, emails) + API + Web
         env:
