@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Tradeliv — Trade. Design. Deliver.',
+  title: 'tradeLiv — Trade. Design. Deliver.',
   description: 'The professional trade platform for interior designers and their clients. Manage projects, curate products, and place orders.',
   openGraph: {
     title: 'Tradeliv — Trade. Design. Deliver.',
