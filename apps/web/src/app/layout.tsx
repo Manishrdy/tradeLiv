@@ -1,34 +1,35 @@
 import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
 import './globals.css';
+
+const inter = Inter({
+  subsets: ['latin'],
+  variable: '--font-inter',
+  weight: ['300', '400', '500', '600', '700', '800', '900'],
+});
 
 export const metadata: Metadata = {
   title: 'tradeLiv — Trade. Design. Deliver.',
-  description: 'The professional trade platform for interior designers and their clients. Manage projects, curate products, and place orders.',
+  description: 'The sourcing platform for interior designers. Extract products from 500+ brands, compare cross-brand, collaborate with clients in real time, and place consolidated orders.',
   openGraph: {
-    title: 'Tradeliv — Trade. Design. Deliver.',
-    description: 'The professional trade platform for interior designers. Manage clients, curate products, and streamline orders.',
+    title: 'tradeLiv — Trade. Design. Deliver.',
+    description: 'The sourcing platform for interior designers. Compare products across brands, collaborate with clients, and place consolidated orders — all from one dashboard.',
     type: 'website',
-    siteName: 'Tradeliv',
+    siteName: 'tradeLiv',
+    images: [{ url: '/landing/sofa-1.jpg', width: 1200, height: 630, alt: 'tradeLiv — The sourcing platform for interior designers' }],
   },
   twitter: {
-    card: 'summary',
-    title: 'Tradeliv — Trade. Design. Deliver.',
-    description: 'The professional trade platform for interior designers.',
+    card: 'summary_large_image',
+    title: 'tradeLiv — Trade. Design. Deliver.',
+    description: 'The sourcing platform for interior designers. One platform, one order.',
+    images: ['/landing/sofa-1.jpg'],
   },
   robots: { index: true, follow: true },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
-          rel="stylesheet"
-        />
-      </head>
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body>{children}</body>
     </html>
   );

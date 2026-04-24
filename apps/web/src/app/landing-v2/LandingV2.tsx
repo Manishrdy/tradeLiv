@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import './landing-v2.css';
@@ -116,13 +117,14 @@ const FAQS = [
   { q: 'Do my clients need to create an account?', a: 'No. Clients access their shortlist via a simple link — no signup, no passwords. They can approve items, leave notes, and chat with you directly in the portal.' },
   { q: 'How are trade discounts handled?', a: 'Your negotiated trade rates take priority over default pricing. When a product has multiple discount sources, the best rate wins automatically. You can also override manually on any line item.' },
   { q: 'Can I keep private notes that clients can\'t see?', a: 'Yes. Designer notes are internal-only and never visible in the client portal. Use them for fit assessments, priority rankings, and anything you\'d rather not share.' },
-  { q: 'How does consolidated ordering work?', a: 'You place one order in tradeLiv. Behind the scenes we split it into brand-specific purchase orders, track each shipment, and surface a unified view to you and your client.' },
-  { q: 'Is there a free trial?', a: 'tradeLiv is free during beta. No credit card required. Set up in under 2 minutes.' },
+  { q: 'How does consolidated ordering work?', a: 'You place one order in tradeLiv. We route it into brand-specific purchase orders, track each shipment, and surface a unified view to you and your client.' },
+  { q: 'Is there a free trial?', a: 'tradeLiv is free during open beta — no credit card required, set up in under 2 minutes. Subscription plans will be announced at launch. Early beta members receive founding-member pricing.' },
 ];
 
 /* ─── Main ──────────────────────────────────────────────── */
 export default function LandingV2() {
   const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <div className="lv2-root">
@@ -147,7 +149,36 @@ export default function LandingV2() {
               Get Started
             </Link>
           </div>
+          <button
+            className="lv2-mobile-menu-btn"
+            onClick={() => setMenuOpen((o) => !o)}
+            aria-label="Toggle navigation menu"
+            aria-expanded={menuOpen}
+          >
+            {menuOpen ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                <line x1="4" y1="7" x2="20" y2="7" /><line x1="4" y1="13" x2="20" y2="13" /><line x1="4" y1="19" x2="20" y2="19" />
+              </svg>
+            )}
+          </button>
         </div>
+        {menuOpen && (
+          <div className="lv2-mobile-menu">
+            <a href="#product" onClick={() => setMenuOpen(false)}>Product</a>
+            <a href="#teams" onClick={() => setMenuOpen(false)}>For Teams</a>
+            <a href="#integrations" onClick={() => setMenuOpen(false)}>Brands</a>
+            <a href="#faq" onClick={() => setMenuOpen(false)}>FAQ</a>
+            <div className="lv2-mobile-menu-divider" />
+            <Link href="/login" onClick={() => setMenuOpen(false)}>Log in</Link>
+            <Link href="/signup" className="lv2-mobile-menu-cta" onClick={() => setMenuOpen(false)}>
+              Get Started
+            </Link>
+          </div>
+        )}
       </nav>
 
       {/* ── Hero ────────────────────────────────────────── */}
@@ -224,7 +255,15 @@ export default function LandingV2() {
                     { img: '/landing/thumb-chair.jpg', brand: 'Pottery Barn', name: 'Belford Chair', price: '$2,950' },
                   ].map((p) => (
                     <div key={p.name} className="lv2-hero-preview-card">
-                      <img src={p.img} alt={p.name} />
+                      <div style={{ position: 'relative', height: 120 }}>
+                        <Image
+                          src={p.img}
+                          alt={p.name}
+                          fill
+                          sizes="(max-width: 760px) 50vw, 200px"
+                          style={{ objectFit: 'cover' }}
+                        />
+                      </div>
                       <div className="lv2-hero-preview-card-meta">
                         <div className="brand">{p.brand}</div>
                         <div className="name">{p.name}</div>
@@ -319,7 +358,7 @@ export default function LandingV2() {
                   <span className="lv2-mock-url-badge">Extract</span>
                 </div>
                 <div className="lv2-mock-row">
-                  <img src="/landing/thumb-sofa.jpg" alt="Sofa" />
+                  <Image src="/landing/thumb-sofa.jpg" alt="Sofa" width={48} height={48} style={{ objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>Arden 3-Seater Sofa</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>$12,450 · Oak + Linen · 84×36×32 in</div>
@@ -327,7 +366,7 @@ export default function LandingV2() {
                   {Icon.checkGreen}
                 </div>
                 <div className="lv2-mock-row">
-                  <img src="/landing/thumb-chair.jpg" alt="Chair" />
+                  <Image src="/landing/thumb-chair.jpg" alt="Chair" width={48} height={48} style={{ objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>Nara Accent Chair</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>$4,200 · Walnut + Velvet · 28×30×33 in</div>
@@ -335,7 +374,7 @@ export default function LandingV2() {
                   {Icon.checkGreen}
                 </div>
                 <div className="lv2-mock-row">
-                  <img src="/landing/thumb-table.jpg" alt="Table" />
+                  <Image src="/landing/thumb-table.jpg" alt="Table" width={48} height={48} style={{ objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>Elara Coffee Table</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>$3,890 · Marble + Brass · 48×24×16 in</div>
@@ -365,14 +404,18 @@ export default function LandingV2() {
                 <div className="lv2-mock-compare">
                   <div className="lv2-mock-compare-card pinned">
                     <span className="lv2-mock-compare-pin">PINNED</span>
-                    <img src="/landing/sofa-1.jpg" alt="Arden" />
+                    <div style={{ position: 'relative', height: 110, borderRadius: 8, overflow: 'hidden', marginBottom: 10 }}>
+                      <Image src="/landing/sofa-1.jpg" alt="Arden" fill sizes="200px" style={{ objectFit: 'cover' }} />
+                    </div>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>Arden 3-Seater</div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Crate & Barrel</div>
                     <div style={{ fontSize: 14, fontWeight: 700, marginTop: 6 }}>$12,450</div>
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>84×36×32 · 6–8 wks</div>
                   </div>
                   <div className="lv2-mock-compare-card">
-                    <img src="/landing/sofa-2.jpg" alt="Oslo" />
+                    <div style={{ position: 'relative', height: 110, borderRadius: 8, overflow: 'hidden', marginBottom: 10 }}>
+                      <Image src="/landing/sofa-2.jpg" alt="Oslo" fill sizes="200px" style={{ objectFit: 'cover' }} />
+                    </div>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>Oslo Lounge</div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>West Elm</div>
                     <div style={{ fontSize: 14, fontWeight: 700, marginTop: 6 }}>$9,800</div>
@@ -409,7 +452,7 @@ export default function LandingV2() {
                     Client Portal — Harper Residence · Living Room
                   </div>
                   <div className="lv2-mock-portal-item">
-                    <img src="/landing/thumb-sofa.jpg" alt="Sofa" />
+                    <Image src="/landing/thumb-sofa.jpg" alt="Sofa" width={40} height={40} style={{ objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>Arden 3-Seater Sofa</div>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>$12,450 · Oak + Linen</div>
@@ -417,7 +460,7 @@ export default function LandingV2() {
                     <span className="lv2-mock-portal-pill approved">Approved</span>
                   </div>
                   <div className="lv2-mock-portal-item">
-                    <img src="/landing/thumb-chair.jpg" alt="Chair" />
+                    <Image src="/landing/thumb-chair.jpg" alt="Chair" width={40} height={40} style={{ objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>Nara Accent Chair</div>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>$4,200 · Walnut + Velvet</div>
@@ -425,7 +468,7 @@ export default function LandingV2() {
                     <span className="lv2-mock-portal-pill pending">Pending</span>
                   </div>
                   <div className="lv2-mock-portal-item">
-                    <img src="/landing/thumb-table.jpg" alt="Table" />
+                    <Image src="/landing/thumb-table.jpg" alt="Table" width={40} height={40} style={{ objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>Elara Coffee Table</div>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>$3,890 · Marble + Brass</div>
@@ -526,6 +569,11 @@ export default function LandingV2() {
               </div>
             </Reveal>
           </div>
+          <Reveal delay={200}>
+            <p style={{ textAlign: 'center', marginTop: 32, fontSize: 14, color: 'var(--text-muted)' }}>
+              Free during open beta &mdash; subscription plans announced at launch. Early members receive founding-member pricing.
+            </p>
+          </Reveal>
         </div>
       </section>
 
@@ -559,7 +607,7 @@ export default function LandingV2() {
               <div className="lv2-flow-step">
                 <span className="lv2-flow-num">04</span>
                 <h5>Order</h5>
-                <p>One checkout, one invoice. tradeLiv splits POs across brands and tracks each shipment.</p>
+                <p>One checkout, one invoice. tradeLiv routes POs to each brand and tracks every shipment.</p>
               </div>
             </div>
           </Reveal>
@@ -572,7 +620,7 @@ export default function LandingV2() {
           <Reveal>
             <div className="lv2-section-head">
               <span className="lv2-eyebrow">Brand Catalog</span>
-              <h2 className="lv2-section-title">Every brand in your rolodex.</h2>
+              <h2 className="lv2-section-title">Every brand at your fingertips.</h2>
               <p className="lv2-section-sub">
                 tradeLiv works with any brand with a public website — plus direct integrations and trade pricing for top retailers.
               </p>
@@ -603,9 +651,10 @@ export default function LandingV2() {
               <h2 className="lv2-section-title">Hours saved. Happier clients.</h2>
             </div>
           </Reveal>
-          <div className="lv2-testimonials">
+          <div className="lv2-testimonials lv2-testimonials-3">
             <Reveal delay={0}>
               <div className="lv2-quote">
+                <div className="lv2-quote-stars">★★★★★</div>
                 <div className="lv2-quote-body">
                   &ldquo;I used to spend three hours per room just pulling specs into a comparison deck. With tradeLiv it&apos;s fifteen minutes — and the client portal is a lifesaver.&rdquo;
                 </div>
@@ -620,6 +669,7 @@ export default function LandingV2() {
             </Reveal>
             <Reveal delay={80}>
               <div className="lv2-quote">
+                <div className="lv2-quote-stars">★★★★★</div>
                 <div className="lv2-quote-body">
                   &ldquo;The consolidated ordering alone pays for itself. One invoice, automatic PO splits, and the trade discounts apply without me thinking about it.&rdquo;
                 </div>
@@ -632,12 +682,49 @@ export default function LandingV2() {
                 </div>
               </div>
             </Reveal>
+            <Reveal delay={160}>
+              <div className="lv2-quote">
+                <div className="lv2-quote-stars">★★★★★</div>
+                <div className="lv2-quote-body">
+                  &ldquo;We run a six-person studio and tradeLiv finally gave us one shared place for sourcing. No more duplicate research across projects.&rdquo;
+                </div>
+                <div className="lv2-quote-author">
+                  <div className="lv2-quote-avatar">SL</div>
+                  <div className="lv2-quote-meta">
+                    <div className="name">Sarah Lin</div>
+                    <div className="role">Studio Director · Lin &amp; Associates, Chicago</div>
+                  </div>
+                </div>
+              </div>
+            </Reveal>
           </div>
         </div>
       </section>
 
+      {/* ── Team ────────────────────────────────────────── */}
+      <section className="lv2-section">
+        <div className="lv2-container">
+          <Reveal>
+            <div className="lv2-section-head">
+              <span className="lv2-eyebrow">The Team</span>
+              <h2 className="lv2-section-title">Built by people who&apos;ve felt the pain.</h2>
+              <p className="lv2-section-sub">
+                tradeLiv was started by designers and operators who spent years stitching together spreadsheets, browser tabs, and email threads just to source a single room. We built the platform we always wished existed.
+              </p>
+            </div>
+          </Reveal>
+          <Reveal delay={120}>
+            <div style={{ textAlign: 'center' }}>
+              <Link href="/about" className="lv2-btn-ghost">
+                Meet the team {Icon.arrow}
+              </Link>
+            </div>
+          </Reveal>
+        </div>
+      </section>
+
       {/* ── FAQ ─────────────────────────────────────────── */}
-      <section className="lv2-section" id="faq">
+      <section className="lv2-section" id="faq" style={{ background: 'var(--bg-card)' }}>
         <div className="lv2-container">
           <Reveal>
             <div className="lv2-section-head">
@@ -672,7 +759,7 @@ export default function LandingV2() {
                 <Link href="/signup" className="lv2-btn-primary lv2-btn-gold">
                   Start Free {Icon.arrow}
                 </Link>
-                <a href="mailto:chaitanya.alla@tradeliv.design?subject=tradeLiv%20Demo%20Request" className="lv2-btn-ghost" style={{ background: 'rgba(255,255,255,0.06)', color: '#fff', borderColor: 'rgba(255,255,255,0.15)' }}>
+                <a href="mailto:support@tradeliv.design?subject=tradeLiv%20Demo%20Request" className="lv2-btn-ghost" style={{ background: 'rgba(255,255,255,0.06)', color: '#fff', borderColor: 'rgba(255,255,255,0.15)' }}>
                   Book a Demo
                 </a>
               </div>
@@ -706,7 +793,7 @@ export default function LandingV2() {
               <ul>
                 <li><a href="/about">About</a></li>
                 <li><a href="/contact">Contact</a></li>
-                <li><a href="mailto:hello@tradeliv.com">Email Us</a></li>
+                <li><a href="mailto:support@tradeliv.design">Email Us</a></li>
               </ul>
             </div>
             <div className="lv2-footer-col">
