@@ -156,9 +156,6 @@ jobs:
             echo "==> Installing production dependencies (native bindings compiled for VM arch)..."
             npm ci --omit=dev --no-audit --no-fund
 
-            echo "==> Generating Prisma client..."
-            USE_DB=prod bash packages/db/scripts/prisma.sh generate --schema=packages/db/prisma/schema.prisma
-
             echo "==> Applying database migrations..."
             USE_DB=prod bash packages/db/scripts/prisma.sh migrate deploy --schema=packages/db/prisma/schema.prisma
 

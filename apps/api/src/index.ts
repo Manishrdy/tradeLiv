@@ -30,6 +30,7 @@ import { verifySmtpConnection } from './services/emailService';
 import { purgeExpiredMessages } from './services/messageService';
 import { purgeOldNotifications } from './services/notificationService';
 import { startBackupJob } from './jobs/backupJob';
+import { startKeepAliveJob } from './jobs/keepAliveJob';
 import { runBackup } from './services/backupService';
 
 const app = createApp();
@@ -62,6 +63,9 @@ async function start() {
 
     // Start database backup cron job
     startBackupJob().catch((err) => logger.warn('[backup] Failed to start backup job', { err }));
+
+    // Keep Supabase active — pings DB every 24h to prevent inactivity pause
+    startKeepAliveJob();
 
     // Take a backup on every server restart
     runBackup('restart').catch((err) => logger.warn('[backup] Restart backup failed', { err }));
