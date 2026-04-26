@@ -273,11 +273,19 @@ jobs:
             trap dump_diagnostics ERR
 
             echo "==> Resetting PM2 state before replacing process definitions..."
-            pm2_retry stop tradeliv-api || true
-            pm2_retry stop tradeliv-web || true
-            pm2_retry delete all || true
+            # Skip stop/delete if the PM2 daemon is not running — each PM2 CLI
+            # invocation spawns a Node.js process (~96 MB heap) and retrying
+            # "process not found" errors is pointless and spikes memory on the
+            # 1 GB VM. One ping check replaces up to 15 blind retry invocations.
+            if NODE_OPTIONS="$PM2_CLI_NODE_OPTIONS" pm2 ping >/dev/null 2>&1; then
+              NODE_OPTIONS="$PM2_CLI_NODE_OPTIONS" pm2 stop tradeliv-api 2>/dev/null || true
+              NODE_OPTIONS="$PM2_CLI_NODE_OPTIONS" pm2 stop tradeliv-web 2>/dev/null || true
+              NODE_OPTIONS="$PM2_CLI_NODE_OPTIONS" pm2 delete all 2>/dev/null || true
+            fi
             pm2_retry kill || true
-            sleep 3
+            # Give the OS time to reclaim memory from the killed daemon and CLI
+            # processes before the API startup spike hits.
+            sleep 10
 
             echo "==> Starting API..."
             pm2_retry start ecosystem.config.js --only tradeliv-api --update-env
