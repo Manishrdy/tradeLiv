@@ -177,10 +177,25 @@ jobs:
             echo "==> Flushing PM2 logs to prevent daemon bloat..."
             pm2 flush || true
 
+            echo "==> Memory before startup:"
+            free -h
+
+            echo "==> Ensuring swap is available on the 1 GB VM..."
+            if ! swapon --show=NAME | grep -q '^/swapfile$'; then
+              sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+              sudo chmod 600 /swapfile
+              sudo mkswap /swapfile
+              sudo swapon /swapfile
+              grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+            fi
+
+            echo "==> Memory after swap check:"
+            free -h
+
             echo "==> Stopping PM2 processes..."
             pm2 stop tradeliv-api tradeliv-web || true
 
-            trap 'echo "==> Deploy failed — PM2 status and recent logs:"; pm2 status || true; pm2 logs --nostream --lines 80 || true' ERR
+            trap 'echo "==> Deploy failed — memory, PM2 status, OOM evidence, and recent logs:"; free -h || true; sudo dmesg -T | grep -i -E "killed process|out of memory|oom" | tail -30 || true; pm2 status || true; pm2 logs --nostream --lines 80 || true' ERR
 
             echo "==> Replacing PM2 process definitions from ecosystem.config.js..."
             pm2 delete tradeliv-api tradeliv-web || true
