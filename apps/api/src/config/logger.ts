@@ -42,10 +42,7 @@ const logger = winston.createLogger({
       level: 'error',
       format: fileFormat,
     }),
-    // Console in development
-    ...(process.env.NODE_ENV !== 'production'
-      ? [new winston.transports.Console({ format: consoleFormat })]
-      : []),
+    new winston.transports.Console({ format: consoleFormat }),
   ],
 });
 

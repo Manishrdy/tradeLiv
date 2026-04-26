@@ -38,11 +38,15 @@ const PORT = process.env.API_PORT ?? 4000;
 
 /* ─── Auto-migrate & start ────────────────────────── */
 async function start() {
-  try {
-    runMigrations(resolvedDirectUrl ?? process.env.DATABASE_URL!);
-  } catch (err) {
-    logger.error('Migration failed — aborting startup', { error: (err as Error).message });
-    process.exit(1);
+  if (process.env.RUN_MIGRATIONS_ON_STARTUP === 'true') {
+    try {
+      runMigrations(resolvedDirectUrl ?? process.env.DATABASE_URL!);
+    } catch (err) {
+      logger.error('Migration failed — aborting startup', { error: (err as Error).message });
+      process.exit(1);
+    }
+  } else {
+    logger.info('Skipping startup migrations; deploy pipeline handles migrate deploy');
   }
 
   // Verify SMTP connection on startup — logs warning if misconfigured but never blocks boot
@@ -67,8 +71,11 @@ async function start() {
     // Keep Supabase active — pings DB every 24h to prevent inactivity pause
     startKeepAliveJob();
 
-    // Take a backup on every server restart
-    runBackup('restart').catch((err) => logger.warn('[backup] Restart backup failed', { err }));
+    if (process.env.RUN_BACKUP_ON_STARTUP === 'true') {
+      runBackup('restart').catch((err) => logger.warn('[backup] Restart backup failed', { err }));
+    } else {
+      logger.info('[backup] Startup backup disabled');
+    }
   });
 }
 
