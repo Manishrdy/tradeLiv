@@ -157,7 +157,7 @@ jobs:
             npm ci --omit=dev --no-audit --no-fund
 
             echo "==> Applying database migrations..."
-            USE_DB=prod bash packages/db/scripts/prisma.sh migrate deploy --schema=packages/db/prisma/schema.prisma
+            NODE_OPTIONS='--max-old-space-size=256' USE_DB=prod bash packages/db/scripts/prisma.sh migrate deploy --schema=packages/db/prisma/schema.prisma
 
             echo "==> Restarting PM2 processes..."
             # Use 'restart' (not 'reload') so Next.js re-reads its build
