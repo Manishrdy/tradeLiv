@@ -416,29 +416,31 @@ packages/emails/dist/        ← compiled email templates
 package.json + package-lock.json
 ```
 
-**Notably NOT included:** `node_modules` and all `src/` folders. Source isn't
-needed at runtime, and `node_modules` is skipped because some dependencies
-(`sharp`, `bcryptjs`) ship native binaries that must match the VM's CPU
-architecture. The VM installs its own.
+**Notably NOT included in the artifact:** `node_modules` and all `src/` folders.
+Source isn't needed at runtime. Production dependencies are installed later in
+the deploy job on the Linux GitHub runner, then rsynced to the VM so the 1 GB
+VM does not have to run `npm ci`.
 
 ### Stage 3 — Deploy
 
 1. **Download** the artifact built in Stage 2.
-2. **Write the SSH key** from the `OCI_SSH_KEY` secret to `~/.ssh/id_rsa`.
-3. **`rsync -az --delete`** the artifact into `~/tradeLiv/` on the VM.
+2. **Install production dependencies** inside the release directory on the
+   GitHub runner with `npm ci --omit=dev --no-audit --no-fund`.
+3. **Run database migrations** from the runner with `prisma migrate deploy`.
+4. **Write the SSH key** from the `OCI_SSH_KEY` secret to `~/.ssh/id_rsa`.
+5. **`rsync -az --delete`** the release directory into `~/tradeLiv/` on the VM.
    - `--delete` removes files that no longer exist in the build (e.g. old
      hashed `page-*.js` chunks), preventing stale bundles from lingering.
-   - `--exclude` protects `.env`, `logs/`, `uploads/`, `backups/` so runtime
-     state is never overwritten.
-4. **SSH into the VM** and run:
-   - `npm ci --omit=dev` — installs production dependencies only. Native
-     modules get built/downloaded for the VM's architecture.
-   - `npx prisma generate` — regenerate the Prisma client against the
-     current schema and the freshly installed `@prisma/client`.
-   - `npx prisma migrate deploy` — apply any pending migrations.
-   - `pm2 reload tradeliv-api tradeliv-web --update-env` — zero-downtime
-     restart (PM2 spawns a new worker, waits for it to be ready, then stops
-     the old one).
+   - `--exclude` protects `logs/`, `uploads/`, and `backups/` so runtime state
+     is never overwritten.
+   - `.env` is shipped from the `PROD_ENV` GitHub Secret and is the single
+     source of truth for runtime configuration.
+6. **SSH into the VM** and run:
+   - verify/create swap for the 1 GB VM
+   - flush PM2 logs so the daemon does not retain old log buffers
+   - reset the PM2 daemon and stale process list
+   - `pm2 start ecosystem.config.js --only tradeliv-api --update-env`
+   - `pm2 start ecosystem.config.js --only tradeliv-web --update-env`
    - `pm2 save` — persists the process list so PM2 restores it on VM reboot.
 
 The `production` GitHub environment gate can be enabled in repo settings
