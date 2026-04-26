@@ -78,10 +78,9 @@ jobs:
           name: build-output
           retention-days: 3
           if-no-files-found: error
-          # Only ship what the server needs to run — keep the artifact small.
-          # node_modules is NOT included; the VM installs its own (native deps
-          # like sharp/bcryptjs must match the VM's architecture, which may
-          # differ from GitHub's x64 runner).
+          # node_modules is NOT included here — prod deps are installed fresh
+          # in the deploy job (on the runner, not the VM) and rsynced over.
+          # This keeps the artifact small while avoiding OOM on the 1 GB VM.
           # .env is included so the VM gets runtime secrets from the single
           # PROD_ENV GitHub Secret — no separate .env management on the VM.
           # include-hidden-files is required because actions/upload-artifact
@@ -107,7 +106,7 @@ jobs:
             packages/types/package.json
             packages/types/src/
 
-  # ─── 3. Deploy: rsync artifacts to OCI VM + reload PM2 ──────────────────────
+  # ─── 3. Deploy: install deps + migrate on runner, rsync to VM, reload PM2 ───
   deploy:
     name: Deploy
     needs: build
@@ -120,6 +119,24 @@ jobs:
           name: build-output
           path: release/
 
+      # Install prod deps on the GitHub runner (7 GB RAM) so the OCI VM (1 GB)
+      # never has to run npm ci or @prisma/engines postinstall.
+      # Both runner and VM are linux/amd64 Ubuntu — native modules are compatible.
+      # npm cache keyed on package-lock.json means subsequent deploys are fast.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: release/package-lock.json
+
+      - name: Install production dependencies
+        run: cd release && npm ci --omit=dev --no-audit --no-fund
+
+      - name: Run database migrations
+        run: |
+          cd release
+          NODE_OPTIONS='--max-old-space-size=512' USE_DB=prod bash packages/db/scripts/prisma.sh migrate deploy --schema=packages/db/prisma/schema.prisma
+
       - name: Set up SSH
         run: |
           mkdir -p ~/.ssh
@@ -127,15 +144,14 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H "${{ secrets.OCI_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Rsync artifacts to OCI VM
-        # --delete keeps the remote in sync (removes stale chunks so old
-        # page-*.js files that no longer reference the current HTML are purged).
+      - name: Rsync build + node_modules to OCI VM
+        # --delete keeps the remote in sync (removes stale chunks and old packages).
+        # node_modules is now included — built on runner, rsynced to VM.
         # --exclude protects runtime state on the VM (logs, uploaded files,
         # database backups). .env IS shipped — PROD_ENV GitHub Secret is the
         # single source of truth for env vars.
         run: |
           rsync -az --delete \
-            --exclude='node_modules' \
             --exclude='logs/' \
             --exclude='uploads/' \
             --exclude='backups/' \
@@ -143,7 +159,9 @@ jobs:
             release/ \
             ${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }}:~/tradeLiv/
 
-      - name: Stop apps, deploy, restart (with rollback on failure)
+      # VM only needs to stop apps, wait for files to land, then restart.
+      # All heavy work (npm ci, migrations) already done on the runner above.
+      - name: Stop apps, rsync lands, restart PM2 (rollback on failure)
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.OCI_HOST }}
@@ -153,22 +171,16 @@ jobs:
             set -e
             cd ~/tradeLiv
 
-            echo "==> Stopping PM2 processes to free RAM before install..."
+            echo "==> Stopping PM2 processes..."
             pm2 stop tradeliv-api tradeliv-web || true
 
             trap 'echo "==> Deploy failed — restarting existing processes..."; pm2 restart tradeliv-api tradeliv-web || true' ERR
 
-            echo "==> Installing production dependencies..."
-            npm ci --omit=dev --no-audit --no-fund
-
-            echo "==> Applying database migrations..."
-            NODE_OPTIONS='--max-old-space-size=256' USE_DB=prod bash packages/db/scripts/prisma.sh migrate deploy --schema=packages/db/prisma/schema.prisma
-
-            trap - ERR
-
             echo "==> Starting PM2 processes with new build..."
             pm2 restart tradeliv-api tradeliv-web --update-env
             pm2 save
+
+            trap - ERR
 
             echo "==> Current PM2 status:"
             pm2 status
