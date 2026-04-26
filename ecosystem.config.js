@@ -18,9 +18,9 @@ module.exports = {
     },
     {
       name: 'tradeliv-web',
-      script: 'node',
-      args: 'node_modules/.bin/next start --port 3000',
-      cwd: '/home/ubuntu/tradeLiv/apps/web',
+      script: 'npm',
+      args: 'run start --workspace=apps/web',
+      cwd: '/home/ubuntu/tradeLiv',
       instances: 1,
       autorestart: true,
       max_restarts: 10,
