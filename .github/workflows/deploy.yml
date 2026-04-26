@@ -88,6 +88,7 @@ jobs:
           include-hidden-files: true
           path: |
             .env
+            ecosystem.config.js
             package.json
             package-lock.json
             apps/api/package.json
@@ -174,10 +175,10 @@ jobs:
             echo "==> Stopping PM2 processes..."
             pm2 stop tradeliv-api tradeliv-web || true
 
-            trap 'echo "==> Deploy failed — restarting existing processes..."; pm2 restart tradeliv-api tradeliv-web || true' ERR
+            trap 'echo "==> Deploy failed — restarting existing processes..."; pm2 startOrRestart ecosystem.config.js || true' ERR
 
             echo "==> Starting PM2 processes with new build..."
-            pm2 restart tradeliv-api tradeliv-web --update-env
+            pm2 startOrRestart ecosystem.config.js
             pm2 save
 
             trap - ERR
