@@ -160,9 +160,11 @@ jobs:
             release/ \
             ${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }}:~/tradeLiv/
 
-      # VM only needs to stop apps, wait for files to land, then restart.
+      # VM only needs to replace PM2 process definitions from the shipped
+      # ecosystem file after rsync. Start one app at a time on the 1 GB VM so
+      # startup spikes do not overlap and trigger the OOM killer.
       # All heavy work (npm ci, migrations) already done on the runner above.
-      - name: Stop apps, rsync lands, restart PM2 (rollback on failure)
+      - name: Stop apps, rsync lands, restart PM2
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.OCI_HOST }}
@@ -178,10 +180,19 @@ jobs:
             echo "==> Stopping PM2 processes..."
             pm2 stop tradeliv-api tradeliv-web || true
 
-            trap 'echo "==> Deploy failed — restarting existing processes..."; pm2 restart tradeliv-api tradeliv-web --update-env || true' ERR
+            trap 'echo "==> Deploy failed — PM2 status and recent logs:"; pm2 status || true; pm2 logs --nostream --lines 80 || true' ERR
 
-            echo "==> Starting PM2 processes with new build..."
-            pm2 restart tradeliv-api tradeliv-web --update-env
+            echo "==> Replacing PM2 process definitions from ecosystem.config.js..."
+            pm2 delete tradeliv-api tradeliv-web || true
+
+            echo "==> Starting API..."
+            pm2 start ecosystem.config.js --only tradeliv-api --update-env
+            sleep 5
+
+            echo "==> Starting web..."
+            pm2 start ecosystem.config.js --only tradeliv-web --update-env
+            sleep 10
+
             pm2 save
 
             trap - ERR
