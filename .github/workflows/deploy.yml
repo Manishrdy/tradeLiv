@@ -143,7 +143,7 @@ jobs:
             release/ \
             ${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }}:~/tradeLiv/
 
-      - name: Install prod deps, run migrations, reload PM2
+      - name: Stop apps, deploy, restart (with rollback on failure)
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.OCI_HOST }}
@@ -153,18 +153,20 @@ jobs:
             set -e
             cd ~/tradeLiv
 
-            echo "==> Installing production dependencies (native bindings compiled for VM arch)..."
+            echo "==> Stopping PM2 processes to free RAM before install..."
+            pm2 stop tradeliv-api tradeliv-web || true
+
+            trap 'echo "==> Deploy failed — restarting existing processes..."; pm2 restart tradeliv-api tradeliv-web || true' ERR
+
+            echo "==> Installing production dependencies..."
             npm ci --omit=dev --no-audit --no-fund
 
             echo "==> Applying database migrations..."
             NODE_OPTIONS='--max-old-space-size=256' USE_DB=prod bash packages/db/scripts/prisma.sh migrate deploy --schema=packages/db/prisma/schema.prisma
 
-            echo "==> Restarting PM2 processes..."
-            # Use 'restart' (not 'reload') so Next.js re-reads its build
-            # manifest from disk. 'reload' keeps the process warm but Next
-            # caches BUILD_ID/chunk paths in memory at startup; chunks
-            # rsynced into a new build then 404 until restart.
-            # ~1-2 sec downtime per process — acceptable for a solo deploy.
+            trap - ERR
+
+            echo "==> Starting PM2 processes with new build..."
             pm2 restart tradeliv-api tradeliv-web --update-env
             pm2 save
 
