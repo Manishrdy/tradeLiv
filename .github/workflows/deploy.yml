@@ -204,19 +204,54 @@ jobs:
                 "$HOME/.pm2/logs/tradeliv-api-out-0.log" \
                 "$HOME/.pm2/logs/tradeliv-api-error-0.log" \
                 "$HOME/.pm2/logs/tradeliv-web-out-1.log" \
-                "$HOME/.pm2/logs/tradeliv-web-error-1.log"; do
+                "$HOME/.pm2/logs/tradeliv-web-error-1.log" \
+                "$HOME/tradeLiv/logs/combined-$(date +%Y-%m-%d).log" \
+                "$HOME/tradeLiv/logs/error-$(date +%Y-%m-%d).log"; do
                 echo "==> $file"
                 tail -80 "$file" 2>/dev/null || true
               done
             }
 
-            require_online() {
+            app_status() {
               app="$1"
-              status="$(pm2 describe "$app" 2>/dev/null | awk -F'│' '/ status / {gsub(/ /, "", $3); print $3; exit}')"
-              if [ "$status" != "online" ]; then
-                echo "$app is ${status:-missing}"
-                return 1
-              fi
+              pm2 jlist 2>/dev/null | node -e '
+                const fs = require("fs");
+                const app = process.argv[1];
+                const raw = fs.readFileSync(0, "utf8");
+                let list = [];
+                try { list = JSON.parse(raw); } catch {}
+                const proc = list.find((p) => p?.name === app);
+                process.stdout.write(proc?.pm2_env?.status || "missing");
+              ' "$app"
+            }
+
+            wait_for_online() {
+              app="$1"
+              timeout_seconds="${2:-90}"
+              deadline=$(( $(date +%s) + timeout_seconds ))
+              stable=0
+              last_status=""
+
+              while [ "$(date +%s)" -lt "$deadline" ]; do
+                status="$(app_status "$app")"
+                last_status="$status"
+                echo "==> $app status: ${status:-unknown}"
+
+                if [ "$status" = "online" ]; then
+                  stable=$((stable + 1))
+                  # Require two consecutive online checks to avoid flapping.
+                  if [ "$stable" -ge 2 ]; then
+                    return 0
+                  fi
+                else
+                  stable=0
+                fi
+
+                sleep 5
+              done
+
+              echo "$app did not stabilize to online (last status: ${last_status:-unknown})"
+              return 1
             }
 
             trap dump_diagnostics ERR
@@ -231,13 +266,11 @@ jobs:
 
             echo "==> Starting API..."
             pm2 start ecosystem.config.js --only tradeliv-api --update-env
-            sleep 5
-            require_online tradeliv-api
+            wait_for_online tradeliv-api 120
 
             echo "==> Starting web..."
             pm2 start ecosystem.config.js --only tradeliv-web --update-env
-            sleep 10
-            require_online tradeliv-web
+            wait_for_online tradeliv-web 120
 
             pm2 save
 

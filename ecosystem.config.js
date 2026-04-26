@@ -15,6 +15,8 @@ module.exports = {
         // Cap heap so the OOM killer doesn't fire on the 1 GB OCI VM.
         // API settles at ~80 MB at runtime; 256 MB leaves room for the web app.
         NODE_OPTIONS: '--max-old-space-size=256',
+        // Run backups on cron/manual triggers, not immediately at API boot.
+        RUN_BACKUP_ON_STARTUP: 'false',
       },
     },
     {
