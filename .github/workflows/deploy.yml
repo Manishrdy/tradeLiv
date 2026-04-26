@@ -193,6 +193,26 @@ jobs:
             pm2 start ecosystem.config.js --only tradeliv-web --update-env
             sleep 10
 
+            echo "==> Verifying PM2 processes stayed online..."
+            pm2 jlist | node -e "
+              let input = '';
+              process.stdin.on('data', chunk => input += chunk);
+              process.stdin.on('end', () => {
+                const apps = JSON.parse(input);
+                const expected = ['tradeliv-api', 'tradeliv-web'];
+                const bad = expected
+                  .map(name => apps.find(app => app.name === name))
+                  .filter(app => !app || app.pm2_env.status !== 'online');
+
+                if (bad.length) {
+                  for (const app of bad) {
+                    console.error(app ? app.name + ' is ' + app.pm2_env.status : 'missing PM2 app');
+                  }
+                  process.exit(1);
+                }
+              });
+            "
+
             pm2 save
 
             trap - ERR
