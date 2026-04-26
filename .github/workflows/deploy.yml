@@ -195,7 +195,32 @@ jobs:
             echo "==> Stopping PM2 processes..."
             pm2 stop tradeliv-api tradeliv-web || true
 
-            trap 'echo "==> Deploy failed — memory, PM2 status, OOM evidence, and recent logs:"; free -h || true; sudo dmesg -T | grep -i -E "killed process|out of memory|oom" | tail -30 || true; pm2 status || true; pm2 logs --nostream --lines 80 || true' ERR
+            dump_diagnostics() {
+              echo "==> Deploy failed — memory, PM2 status, OOM evidence, and recent logs:"
+              free -h || true
+              sudo dmesg -T | grep -i -E "killed process|out of memory|oom" | tail -30 || true
+              pm2 status || true
+              for file in \
+                "$HOME/.pm2/pm2.log" \
+                "$HOME/.pm2/logs/tradeliv-api-out-0.log" \
+                "$HOME/.pm2/logs/tradeliv-api-error-0.log" \
+                "$HOME/.pm2/logs/tradeliv-web-out-1.log" \
+                "$HOME/.pm2/logs/tradeliv-web-error-1.log"; do
+                echo "==> $file"
+                tail -80 "$file" 2>/dev/null || true
+              done
+            }
+
+            require_online() {
+              app="$1"
+              status="$(pm2 describe "$app" 2>/dev/null | awk -F'│' '/ status / {gsub(/ /, "", $3); print $3; exit}')"
+              if [ "$status" != "online" ]; then
+                echo "$app is ${status:-missing}"
+                return 1
+              fi
+            }
+
+            trap dump_diagnostics ERR
 
             echo "==> Replacing PM2 process definitions from ecosystem.config.js..."
             pm2 delete tradeliv-api tradeliv-web || true
@@ -203,30 +228,12 @@ jobs:
             echo "==> Starting API..."
             pm2 start ecosystem.config.js --only tradeliv-api --update-env
             sleep 5
+            require_online tradeliv-api
 
             echo "==> Starting web..."
             pm2 start ecosystem.config.js --only tradeliv-web --update-env
             sleep 10
-
-            echo "==> Verifying PM2 processes stayed online..."
-            pm2 jlist | node -e "
-              let input = '';
-              process.stdin.on('data', chunk => input += chunk);
-              process.stdin.on('end', () => {
-                const apps = JSON.parse(input);
-                const expected = ['tradeliv-api', 'tradeliv-web'];
-                const bad = expected
-                  .map(name => apps.find(app => app.name === name))
-                  .filter(app => !app || app.pm2_env.status !== 'online');
-
-                if (bad.length) {
-                  for (const app of bad) {
-                    console.error(app ? app.name + ' is ' + app.pm2_env.status : 'missing PM2 app');
-                  }
-                  process.exit(1);
-                }
-              });
-            "
+            require_online tradeliv-web
 
             pm2 save
 
