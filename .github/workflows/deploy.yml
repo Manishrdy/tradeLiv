@@ -194,11 +194,27 @@ jobs:
             echo "==> Memory after swap check:"
             free -h
 
+            # PM2 CLI itself runs on Node; keep its heap small on this 1 GB VM.
+            PM2_CLI_NODE_OPTIONS="--max-old-space-size=96"
+
+            pm2_retry() {
+              attempt=1
+              max_attempts=5
+              while [ "$attempt" -le "$max_attempts" ]; do
+                NODE_OPTIONS="$PM2_CLI_NODE_OPTIONS" pm2 "$@" && return 0
+                code=$?
+                echo "pm2 $* failed with exit $code (attempt $attempt/$max_attempts)"
+                sleep $((attempt * 2))
+                attempt=$((attempt + 1))
+              done
+              return 1
+            }
+
             dump_diagnostics() {
               echo "==> Deploy failed — memory, PM2 status, OOM evidence, and recent logs:"
               free -h || true
               sudo dmesg -T | grep -i -E "killed process|out of memory|oom" | tail -30 || true
-              pm2 status || true
+              NODE_OPTIONS="$PM2_CLI_NODE_OPTIONS" pm2 status || true
               for file in \
                 "$HOME/.pm2/pm2.log" \
                 "$HOME/.pm2/logs/tradeliv-api-out-0.log" \
@@ -214,7 +230,7 @@ jobs:
 
             app_status() {
               app="$1"
-              pm2 jlist 2>/dev/null | node -e '
+              NODE_OPTIONS="$PM2_CLI_NODE_OPTIONS" pm2 jlist 2>/dev/null | node -e '
                 const fs = require("fs");
                 const app = process.argv[1];
                 const raw = fs.readFileSync(0, "utf8");
@@ -257,26 +273,25 @@ jobs:
             trap dump_diagnostics ERR
 
             echo "==> Resetting PM2 state before replacing process definitions..."
-            pm2 stop tradeliv-api || true
-            pm2 stop tradeliv-web || true
-            pm2 delete tradeliv-api || true
-            pm2 delete tradeliv-web || true
-            pm2 kill || true
+            pm2_retry stop tradeliv-api || true
+            pm2_retry stop tradeliv-web || true
+            pm2_retry delete all || true
+            pm2_retry kill || true
             sleep 3
 
             echo "==> Starting API..."
-            pm2 start ecosystem.config.js --only tradeliv-api --update-env
+            pm2_retry start ecosystem.config.js --only tradeliv-api --update-env
             wait_for_online tradeliv-api 120
 
             echo "==> Starting web..."
-            pm2 start ecosystem.config.js --only tradeliv-web --update-env
+            pm2_retry start ecosystem.config.js --only tradeliv-web --update-env
             wait_for_online tradeliv-web 120
 
-            pm2 save
+            pm2_retry save
 
             trap - ERR
 
             echo "==> Current PM2 status:"
-            pm2 status
+            NODE_OPTIONS="$PM2_CLI_NODE_OPTIONS" pm2 status
 
             echo "==> Deploy complete."
