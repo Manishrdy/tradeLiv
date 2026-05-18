@@ -301,6 +301,7 @@ export function logRouteError(
   fileName: string,
   err: unknown,
   req: { path?: string; method?: string; body?: unknown; params?: unknown; query?: unknown; user?: { id?: string } },
+  severity: 'error' | 'warn' | 'critical' = 'error',
 ): void {
   const error = err instanceof Error ? err : new Error(String(err));
   logError({
@@ -316,5 +317,6 @@ export function logRouteError(
       query: req.query as Record<string, unknown>,
     },
     designerId: req.user?.id,
+    severity,
   });
 }

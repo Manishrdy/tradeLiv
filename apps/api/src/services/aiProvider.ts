@@ -5,6 +5,49 @@ import logger from '../config/logger';
 
 export type AIProvider = 'claude' | 'gemini' | 'agent-router';
 
+/* ─── Typed errors for upstream AI failures ────────── */
+
+export type AIServiceErrorCode =
+  | 'INSUFFICIENT_CREDITS'
+  | 'AUTH_FAILED'
+  | 'RATE_LIMITED'
+  | 'OVERLOADED'
+  | 'UPSTREAM_ERROR';
+
+export class AIServiceError extends Error {
+  constructor(
+    public readonly code: AIServiceErrorCode,
+    message: string,
+    public readonly status?: number,
+    public readonly requestId?: string,
+    public readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = 'AIServiceError';
+  }
+}
+
+function classifyAnthropicError(err: any): AIServiceError {
+  const status: number | undefined = err?.status;
+  const requestId: string | undefined = err?.request_id ?? err?.requestID;
+  const upstreamMessage: string =
+    err?.error?.error?.message ?? err?.error?.message ?? err?.message ?? 'Anthropic API error';
+
+  if (status === 400 && /credit balance is too low/i.test(upstreamMessage)) {
+    return new AIServiceError('INSUFFICIENT_CREDITS', upstreamMessage, status, requestId, err);
+  }
+  if (status === 401 || status === 403) {
+    return new AIServiceError('AUTH_FAILED', upstreamMessage, status, requestId, err);
+  }
+  if (status === 429) {
+    return new AIServiceError('RATE_LIMITED', upstreamMessage, status, requestId, err);
+  }
+  if (status === 529 || status === 503) {
+    return new AIServiceError('OVERLOADED', upstreamMessage, status, requestId, err);
+  }
+  return new AIServiceError('UPSTREAM_ERROR', upstreamMessage, status, requestId, err);
+}
+
 /* ─── Singleton clients (lazy-initialized) ────────── */
 
 let _claude: Anthropic | null = null;
@@ -92,15 +135,19 @@ export async function generateWithTools(
   const client = provider === 'agent-router' ? getAgentRouterClient() : getClaudeClient();
   const model = getModelForProvider(provider);
 
-  const response = await client.messages.create({
-    model,
-    max_tokens: opts.maxTokens,
-    system: opts.system,
-    messages: [{ role: 'user', content: opts.userMessage }],
-    tools: opts.tools,
-  } as any);
+  try {
+    const response = await client.messages.create({
+      model,
+      max_tokens: opts.maxTokens,
+      system: opts.system,
+      messages: [{ role: 'user', content: opts.userMessage }],
+      tools: opts.tools,
+    } as any);
 
-  return extractAnthropicText(response);
+    return extractAnthropicText(response);
+  } catch (err) {
+    throw classifyAnthropicError(err);
+  }
 }
 
 /* ─── Provider implementations ───────────────────── */
@@ -110,14 +157,18 @@ async function generateWithAnthropic(
   model: string,
   opts: GenerateOptions,
 ): Promise<string> {
-  const response = await client.messages.create({
-    model,
-    max_tokens: opts.maxTokens,
-    system: opts.system,
-    messages: [{ role: 'user', content: opts.userMessage }],
-  });
+  try {
+    const response = await client.messages.create({
+      model,
+      max_tokens: opts.maxTokens,
+      system: opts.system,
+      messages: [{ role: 'user', content: opts.userMessage }],
+    });
 
-  return extractAnthropicText(response);
+    return extractAnthropicText(response);
+  } catch (err) {
+    throw classifyAnthropicError(err);
+  }
 }
 
 function extractAnthropicText(response: Anthropic.Message): string {

@@ -12,6 +12,7 @@ import {
 import logger from '../config/logger';
 import { logRouteError } from '../services/errorLogger';
 import { registerUuidValidation } from '../middleware/validateParams';
+import { AIServiceError, AIServiceErrorCode } from '../services/aiProvider';
 
 const router = Router();
 router.use(requireAuth, requireRole('designer'));
@@ -241,6 +242,21 @@ async function validateImageUrl(url: string): Promise<boolean> {
 /* ─── Error code mapping for extraction errors ──────── */
 
 function extractionErrorResponse(err: any, sourceUrl: string) {
+  if (err instanceof AIServiceError) {
+    const codeMap: Record<AIServiceErrorCode, { status: number; hint: string }> = {
+      INSUFFICIENT_CREDITS: { status: 503, hint: 'Our AI service is temporarily unavailable. Please try again in a few minutes or add the product manually.' },
+      AUTH_FAILED:          { status: 503, hint: 'Our AI service is temporarily unavailable. Please try again later or add the product manually.' },
+      RATE_LIMITED:         { status: 503, hint: 'Too many extraction requests right now. Please wait a moment and try again.' },
+      OVERLOADED:           { status: 503, hint: 'Our AI service is busy. Please try again in a minute.' },
+      UPSTREAM_ERROR:       { status: 502, hint: 'AI extraction failed. Please try a different URL or add the product manually.' },
+    };
+    const { status, hint } = codeMap[err.code];
+    return {
+      status,
+      body: { error: hint, errorCode: `AI_${err.code}` as const, hint },
+    };
+  }
+
   if (err instanceof ExtractionError) {
     const statusMap: Record<string, number> = {
       BOT_BLOCKED: 422,
@@ -693,8 +709,18 @@ router.post('/extract', async (req: AuthRequest, res: Response) => {
     const result: ExtractionResult = await extractProductFromUrl(parsed.data.sourceUrl);
     res.json(result);
   } catch (err: any) {
-    logger.error('catalog extract error', { err, sourceUrl: parsed.data.sourceUrl });
-    logRouteError('routes/catalog.ts', err, req);
+    if (err instanceof AIServiceError) {
+      logger.warn('catalog extract: AI service error', {
+        code: err.code,
+        status: err.status,
+        requestId: err.requestId,
+        sourceUrl: parsed.data.sourceUrl,
+      });
+      logRouteError('routes/catalog.ts', err, req, 'warn');
+    } else {
+      logger.error('catalog extract error', { err, sourceUrl: parsed.data.sourceUrl });
+      logRouteError('routes/catalog.ts', err, req);
+    }
     const errRes = extractionErrorResponse(err, parsed.data.sourceUrl);
     res.status(errRes.status).json(errRes.body);
   }
@@ -748,6 +774,14 @@ router.post('/extract/batch', async (req: AuthRequest, res: Response) => {
     results: results.map((r, i) => {
       if (r.status === 'fulfilled') return r.value;
       const err = r.reason;
+      if (err instanceof AIServiceError) {
+        logger.warn('catalog batch extract: AI service error', {
+          code: err.code,
+          status: err.status,
+          requestId: err.requestId,
+          sourceUrl: parsed.data.urls[i],
+        });
+      }
       const errRes = extractionErrorResponse(err, parsed.data.urls[i]);
       return {
         url: parsed.data.urls[i],
