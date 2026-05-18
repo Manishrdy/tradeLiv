@@ -21,6 +21,7 @@ import {
 } from '@furnlo/emails';
 import logger from '../config/logger';
 import { logRouteError, logError } from '../services/errorLogger';
+import { withPrismaRetry } from '../services/prismaRetry';
 
 const router = Router();
 
@@ -449,7 +450,10 @@ router.post('/login', async (req: Request, res: Response) => {
   const { email, password, remember } = parsed.data;
 
   try {
-    const designer = await prisma.designer.findUnique({ where: { email } });
+    const designer = await withPrismaRetry(
+      () => prisma.designer.findUnique({ where: { email } }),
+      { context: 'auth.login.findDesigner' },
+    );
     if (!designer) {
       res.status(401).json({ error: 'Invalid email or password.' });
       return;
@@ -536,7 +540,10 @@ router.post('/admin/login', async (req: Request, res: Response) => {
   const { email, password, remember } = parsed.data;
 
   try {
-    const designer = await prisma.designer.findUnique({ where: { email } });
+    const designer = await withPrismaRetry(
+      () => prisma.designer.findUnique({ where: { email } }),
+      { context: 'auth.login.findDesigner' },
+    );
     if (!designer) {
       res.status(401).json({ error: 'Invalid email or password.' });
       return;
