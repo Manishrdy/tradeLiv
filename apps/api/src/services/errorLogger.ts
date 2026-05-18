@@ -155,6 +155,24 @@ function truncatePayload(obj?: Record<string, unknown>): Record<string, unknown>
 }
 
 /**
+ * Pull structured diagnostic fields off a Prisma error so the GitHub issue / error log
+ * shows the actual code (P1017, P2021, …) and meta context, not just a blank
+ * "Invalid prisma.x.y() invocation:" header. Returns undefined for non-Prisma errors.
+ */
+function extractPrismaErrorDetails(err: unknown): Record<string, unknown> | undefined {
+  if (!err || typeof err !== 'object') return undefined;
+  const name = (err as { name?: unknown }).name;
+  if (typeof name !== 'string' || !name.startsWith('PrismaClient')) return undefined;
+  const e = err as Record<string, unknown>;
+  const details: Record<string, unknown> = { prismaErrorName: name };
+  if (e.code !== undefined) details.prismaCode = e.code;
+  if (e.meta !== undefined) details.prismaMeta = e.meta;
+  if (e.clientVersion !== undefined) details.prismaClientVersion = e.clientVersion;
+  if (e.batchRequestIdx !== undefined) details.prismaBatchRequestIdx = e.batchRequestIdx;
+  return details;
+}
+
+/**
  * Fire-and-forget error log writer.
  * Failures are logged to Winston but never propagate to the caller.
  */
@@ -304,13 +322,18 @@ export function logRouteError(
   severity: 'error' | 'warn' | 'critical' = 'error',
 ): void {
   const error = err instanceof Error ? err : new Error(String(err));
+  const prismaDetails = extractPrismaErrorDetails(err);
+  const errorPayload: Record<string, unknown> | undefined =
+    !(err instanceof Error)
+      ? { raw: String(err), ...(prismaDetails ?? {}) }
+      : prismaDetails;
   logError({
     fileName,
     routePath: req.path,
     httpMethod: req.method,
     errorMessage: error.message,
     errorStack: error.stack,
-    errorPayload: !(err instanceof Error) ? { raw: String(err) } : undefined,
+    errorPayload,
     inputPayload: {
       body: req.body as Record<string, unknown>,
       params: req.params as Record<string, unknown>,

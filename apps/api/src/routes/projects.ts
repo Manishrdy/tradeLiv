@@ -117,13 +117,28 @@ async function getOwnedProject(projectId: string, designerId: string, includeArc
 router.get('/stats', async (req: AuthRequest, res: Response) => {
   const designerId = req.user!.id;
   try {
-    const [activeProjects, totalClients, totalShortlisted, totalOrders] = await Promise.all([
+    const results = await Promise.allSettled([
       prisma.project.count({ where: { designerId, status: { in: ['active', 'ordered'] } } }),
       prisma.client.count({ where: { designerId } }),
       prisma.shortlistItem.count({ where: { designerId } }),
       prisma.order.count({ where: { designerId } }),
     ]);
-    res.json({ activeProjects, totalClients, totalShortlisted, totalOrders });
+    const labels = ['activeProjects', 'totalClients', 'totalShortlisted', 'totalOrders'] as const;
+    const stats: Record<typeof labels[number], number> = {
+      activeProjects: 0, totalClients: 0, totalShortlisted: 0, totalOrders: 0,
+    };
+    let partial = false;
+    results.forEach((r, i) => {
+      const label = labels[i];
+      if (r.status === 'fulfilled') {
+        stats[label] = r.value;
+      } else {
+        partial = true;
+        logger.error('projects stats count failed', { label, err: r.reason, designerId });
+        logRouteError('routes/projects.ts', r.reason, req);
+      }
+    });
+    res.json({ ...stats, ...(partial ? { partial: true } : {}) });
   } catch (err) {
     logger.error('projects route error', { err, path: req.path, method: req.method });
     logRouteError('routes/projects.ts', err, req);
