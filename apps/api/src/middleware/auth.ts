@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { prisma } from '@furnlo/db';
 import { config } from '../config';
+import { withPrismaRetry } from '../services/prismaRetry';
 
 export interface AuthRequest extends Request {
   user?: { id: string; role: 'designer' | 'client' | 'admin' };
@@ -51,10 +52,14 @@ export function requireRole(...roles: Array<'designer' | 'client' | 'admin'>) {
 
     // For admin role, verify against DB — a revoked admin's JWT still carries role:'admin'
     if (req.user.role === 'admin') {
-      const designer = await prisma.designer.findUnique({
-        where: { id: req.user.id },
-        select: { isAdmin: true },
-      });
+      const designer = await withPrismaRetry(
+        () =>
+          prisma.designer.findUnique({
+            where: { id: req.user!.id },
+            select: { isAdmin: true },
+          }),
+        { context: 'requireRole.admin' },
+      );
       if (!designer?.isAdmin) {
         res.status(403).json({ error: 'Admin access has been revoked.' });
         return;
@@ -70,10 +75,14 @@ export async function requireSuperAdmin(req: AuthRequest, res: Response, next: N
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
-  const designer = await prisma.designer.findUnique({
-    where: { id: req.user.id },
-    select: { isSuperAdmin: true },
-  });
+  const designer = await withPrismaRetry(
+    () =>
+      prisma.designer.findUnique({
+        where: { id: req.user!.id },
+        select: { isSuperAdmin: true },
+      }),
+    { context: 'requireSuperAdmin' },
+  );
   if (!designer?.isSuperAdmin) {
     res.status(403).json({ error: 'Super admin access required.' });
     return;
