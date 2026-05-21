@@ -827,3 +827,4 @@ PROD_DIRECT_DATABASE_URL="postgresql://postgres.[ref]:[password]@aws-0-us-west-2
   - `curl http://127.0.0.1:4000/health`
   - preflight check to `/api/auth/admin/login` with `Origin: https://www.tradeliv.design`
   - browser network confirms `Access-Control-Allow-Origin` and cookie domain/flags.
+
