@@ -1,29 +1,10 @@
-import dotenv from 'dotenv';
-import path from 'path';
-dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
+// MUST be the first import: loads .env and sets DATABASE_URL before any module
+// initializes the Prisma client. tsx/esbuild hoist imports to the top, so relying
+// on statement order (dotenv between imports) is unsafe. See bootstrap-env.ts.
+import { dbEnv as useDb, directUrl as resolvedDirectUrl } from './bootstrap-env';
 
-// Prefer explicit NODE_ENV from process manager/container.
-// Fallback to development to avoid accidental production mode in local runs.
-const resolvedNodeEnv = (process.env.NODE_ENV || 'development').toLowerCase();
-process.env.NODE_ENV = resolvedNodeEnv === 'production' ? 'production' : 'development';
-
-// FRONTEND_URL drives CORS. If not explicitly set, derive from environment-specific defaults.
-if (!process.env.FRONTEND_URL) {
-  process.env.FRONTEND_URL = process.env.NODE_ENV === 'production'
-    ? (process.env.PROD_FRONTEND_URL || 'http://localhost:3000')
-    : (process.env.DEV_FRONTEND_URL || 'http://localhost:3000');
-}
-
-// Resolve DATABASE_URL from USE_DB toggle (dev | prod)
-import { resolveDbUrl, runMigrations } from './config/db';
-const { url: resolvedDbUrl, directUrl: resolvedDirectUrl, backupUrl: resolvedBackupUrl, dbEnv: useDb } = resolveDbUrl(process.env);
-process.env.DATABASE_URL = resolvedDbUrl;
-process.env.DIRECT_DATABASE_URL = resolvedDirectUrl ?? resolvedDbUrl;
-process.env.BACKUP_DATABASE_URL = resolvedBackupUrl ?? resolvedDirectUrl ?? resolvedDbUrl;
-
+import { runMigrations } from './config/db';
 import { assertAuthEnv } from './config';
-assertAuthEnv();
-
 import logger from './config/logger';
 import { createApp } from './app';
 import { verifySmtpConnection } from './services/emailService';
@@ -32,6 +13,8 @@ import { purgeOldNotifications } from './services/notificationService';
 import { startBackupJob } from './jobs/backupJob';
 import { startKeepAliveJob } from './jobs/keepAliveJob';
 import { runBackup } from './services/backupService';
+
+assertAuthEnv();
 
 const app = createApp();
 const PORT = process.env.API_PORT ?? 4000;
