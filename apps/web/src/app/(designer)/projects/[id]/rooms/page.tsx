@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { useParams } from 'next/navigation';
-import Link from 'next/link';
+import { useParams } from '@/lib/router';
+import Link from '@/components/Link';
 import { api, Room, RoomPayload, FurnitureCategory } from '@/lib/api';
 
 /* ── Constants ──────────────────────────────────────────── */

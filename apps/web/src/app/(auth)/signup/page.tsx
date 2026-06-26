@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useRef } from 'react';
-import Link from 'next/link';
+import Link from '@/components/Link';
 import { api } from '@/lib/api';
 
 type Phase = 1 | 2 | 'success';

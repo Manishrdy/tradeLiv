@@ -4,8 +4,9 @@ A full-stack B2B SaaS platform for interior designers to manage clients, curate 
 
 ![Node](https://img.shields.io/badge/Node.js-≥20-339933?logo=nodedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript&logoColor=white)
-![Next.js](https://img.shields.io/badge/Next.js-15-000000?logo=nextdotjs&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-6-646CFF?logo=vite&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![React Router](https://img.shields.io/badge/React_Router-6-CA4245?logo=reactrouter&logoColor=white)
 ![Express](https://img.shields.io/badge/Express-4.21-000000?logo=express&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Supabase-4169E1?logo=postgresql&logoColor=white)
 ![Prisma](https://img.shields.io/badge/Prisma-5.22-2D3748?logo=prisma&logoColor=white)
@@ -53,11 +54,11 @@ tradeLiv gives designers a single platform to:
 │                    Nginx Reverse Proxy                        │
 │          (SSL termination, HTTP→HTTPS, gzip, HSTS)           │
 ├───────────────────────────┬───────────────────────────────────┤
-│     Next.js 15 (Web)      │        Express.js (API)           │
-│   React 19 + Zustand      │   JWT Auth · Zod Validation       │
-│   App Router (SSR)        │   Winston Logging · Rate Limits   │
-│   Stripe.js               │   Stripe Webhooks · SSE Events    │
-│   Port 3000               │   Port 4000                       │
+│   Vite + React 19 (Web)   │        Express.js (API)           │
+│  Static SPA · react-router│   JWT Auth · Zod Validation       │
+│  Zustand · Stripe.js      │   Winston Logging · Rate Limits   │
+│  Prerendered public pages │   Stripe Webhooks · SSE Events    │
+│  Served static · Port 3000│   Port 4000                       │
 ├───────────────────────────┴──────────────┬────────────────────┤
 │              Prisma ORM                  │ Browserless Chrome │
 │         PostgreSQL (Supabase)            │ Puppeteer Scraping │
@@ -73,7 +74,10 @@ tradeLiv gives designers a single platform to:
 ```
 furnlo/
 ├── apps/
-│   ├── web/                  # Next.js 15 frontend
+│   ├── web/                  # Vite + React 19 SPA (static build → dist/)
+│   │   ├── src/routes.tsx    # react-router route tree
+│   │   ├── scripts/prerender.mjs  # SEO prerender of public pages (build step)
+│   │   └── serve.mjs         # Zero-dep static file server (PM2 runtime)
 │   └── api/                  # Express.js backend
 ├── packages/
 │   ├── db/                   # Prisma schema + migrations + generated client
@@ -81,7 +85,8 @@ furnlo/
 │   └── types/                # Shared TypeScript types
 ├── docker/
 │   ├── nginx.conf            # Dev reverse proxy (HTTP only)
-│   └── nginx.prod.conf       # Production reverse proxy (HTTPS + TLS)
+│   ├── nginx.prod.conf       # Production reverse proxy (HTTPS + TLS)
+│   └── web.conf             # Static-SPA nginx config (Docker web image)
 ├── scripts/
 │   └── server-setup.sh       # OCI VM bootstrap script
 ├── .github/
@@ -155,7 +160,7 @@ SuperAdmin ⊃ Admin ⊃ Designer ← → Client (portal, no login)
 
 | Layer | Technology |
 |-------|------------|
-| **Frontend** | Next.js 15, React 19, TypeScript 5.7, Tailwind CSS, Zustand 5 |
+| **Frontend** | Vite 6, React 19, react-router 6, TypeScript 5.7, Tailwind CSS, Zustand 5 — static SPA, no Node runtime |
 | **Backend** | Express.js 4.21, TypeScript 5.7, Zod validation |
 | **Database** | PostgreSQL (Supabase), Prisma 5.22 ORM |
 | **Auth** | JWT + HTTP-only cookies, bcryptjs, role-based middleware |
@@ -165,7 +170,7 @@ SuperAdmin ⊃ Admin ⊃ Designer ← → Client (portal, no login)
 | **Real-time** | Server-Sent Events (SSE) |
 | **Email** | Nodemailer + Zoho Mail (SMTP/IMAP), React Email templates |
 | **Logging** | Winston + daily rotating file transport |
-| **Infrastructure** | PM2, Nginx, OCI Compute (Ampere A1.Flex, 1 GB RAM) · Docker Compose for local dev only |
+| **Infrastructure** | PM2, Nginx, OCI Compute (Ampere A1.Flex, 1 GB RAM) · Docker Compose for local dev only · frontend ships as static files (no Node web server) |
 | **CI/CD** | GitHub Actions → OCI Container Registry → OCI VM |
 | **Monorepo** | npm workspaces |
 
@@ -206,17 +211,43 @@ npm run dev
 
 | Service | URL |
 |---------|-----|
-| Web (Next.js) | http://localhost:3000 |
+| Web (Vite dev server) | http://localhost:3000 |
 | API (Express) | http://localhost:4000 |
 | Chrome (Browserless) | ws://localhost:3100 |
 | Prisma Studio | http://localhost:5555 (`npm run db:studio`) |
+
+> The web app is a **Vite + React static SPA** (no Next.js / no SSR). `npm run dev`
+> runs the Vite dev server with HMR; the production artifact is a folder of static
+> files (`apps/web/dist/`) served by nginx (or the tiny `serve.mjs` under PM2).
 
 ### Partial dev
 
 ```bash
 npm run dev:api    # Docker Chrome container + API only
-npm run dev:web    # Next.js frontend only
+npm run dev:web    # Vite dev server (frontend) only
 ```
+
+### Building & serving the static frontend
+
+The frontend compiles to plain static HTML/CSS/JS — there is no frontend Node
+server in production.
+
+```bash
+# Build the SPA + prerender the public marketing pages → apps/web/dist/
+VITE_API_URL=http://localhost:4000 npm run build:web
+
+# Serve the built files locally to smoke-test (zero-dependency static server)
+node apps/web/serve.mjs            # http://localhost:3000  (PORT env overrides)
+```
+
+`npm run build:web` runs `vite build` then `node scripts/prerender.mjs`, which
+prerenders `/`, `/about`, `/contact`, `/terms`, `/privacy` to real HTML for SEO and
+emits a `200.html` SPA shell that every other (client-routed) path falls back to.
+
+Frontend config is **build-time only** — `VITE_API_URL`, `VITE_GOOGLE_MAPS_API_KEY`,
+and `VITE_STRIPE_PUBLISHABLE_KEY` are inlined into the bundle when you build. The
+legacy `NEXT_PUBLIC_*` names are still accepted as a fallback (so the existing
+`PROD_ENV` secret keeps working).
 
 ### Useful scripts
 
@@ -299,15 +330,18 @@ Copy `.env.example` → `.env` for local dev. Copy `.env.prod.example` → `.env
 | `AUTH_COOKIE_DOMAIN` | `.tradeliv.design` | Cookie domain scope |
 | `AUTH_COOKIE_SECURE` | `true` | HTTPS-only cookies |
 
-### Frontend build-time (`NEXT_PUBLIC_*`)
+### Frontend build-time (`VITE_*`)
 
-These are baked into the Next.js bundle at build time. In CI they are read from repo secrets during the Stage 2 build step (see [CI/CD Pipeline](#cicd-pipeline)).
+These are inlined into the Vite bundle at build time. In CI they are read from the
+`PROD_ENV` secret during the Stage 2 build step (see [CI/CD Pipeline](#cicd-pipeline)).
+The legacy `NEXT_PUBLIC_*` names are still honored as a fallback by `vite.config.ts`,
+so no secret rename is required.
 
-| Variable | Description |
-|----------|-------------|
-| `NEXT_PUBLIC_API_URL` | Full API base URL (e.g. `https://tradeliv.design/api`) |
-| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe publishable key |
-| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Google Maps API key |
+| Variable | Legacy fallback | Description |
+|----------|-----------------|-------------|
+| `VITE_API_URL` | `NEXT_PUBLIC_API_URL` / `PROD_NEXT_PUBLIC_API_URL` | Full API base URL (e.g. `https://tradeliv.design`) |
+| `VITE_STRIPE_PUBLISHABLE_KEY` | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe publishable key |
+| `VITE_GOOGLE_MAPS_API_KEY` | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Google Maps API key |
 
 ---
 
@@ -359,13 +393,13 @@ Defined in `.github/workflows/deploy.yml`. Triggered on every push to `main`.
 ### Why this shape?
 
 tradeLiv runs on an OCI **Ampere A1.Flex with 1 GB RAM** (always-free tier).
-Running `next build` on 1 GB is fragile — the build can be OOM-killed or swap
-the whole machine. So the pipeline is designed around a single rule:
+Running the full build (`tsc` + `vite build`) on 1 GB is fragile — it can be
+OOM-killed or swap the whole machine. So the pipeline is designed around a single rule:
 
 > **The VM never compiles. It only receives files and runs them.**
 
 GitHub Actions (which has 16 GB RAM on its runners) does every compile step —
-`tsc`, `next build`, Prisma client generation — then ships the compiled
+`tsc`, `vite build` + prerender, Prisma client generation — then ships the compiled
 artifacts to the VM over SSH. The VM's only job is `npm ci --omit=dev` and
 `pm2 reload`.
 
@@ -382,7 +416,7 @@ Push to main
 │ jest    │     │ build packages       │     │   → ~/tradeLiv/    │
 │         │     │ build apps/api (tsc) │     │ ssh:               │
 │         │     │ build apps/web       │     │  npm ci --omit=dev │
-│         │     │   (next build)       │     │  prisma generate   │
+│         │     │  (vite + prerender)  │     │  prisma generate   │
 │         │     │ upload artifact      │     │  prisma migrate    │
 │         │     │                      │     │  pm2 reload        │
 └─────────┘     └──────────────────────┘     └────────────────────┘
@@ -397,16 +431,15 @@ Push to main
 
 ### Stage 2 — Build (on GitHub's runner)
 
-Runs on `ubuntu-latest`. `NEXT_PUBLIC_*` vars are injected **as environment
-variables** at build time because Next.js bakes them into the client bundle
-at compile — they cannot be supplied later at runtime.
+Runs on `ubuntu-latest`. `VITE_*` (with `NEXT_PUBLIC_*` fallback) vars are read
+from the reconstructed `.env` at build time because Vite inlines them into the
+client bundle at compile — they cannot be supplied later at runtime.
 
 Produces these outputs, uploaded as a GitHub Actions artifact:
 
 ```
-apps/web/.next/              ← compiled Next.js (server + client chunks)
-apps/web/public/             ← static assets
-apps/web/next.config.ts
+apps/web/dist/               ← static SPA bundle + prerendered pages + 200.html
+apps/web/serve.mjs           ← zero-dep static server (PM2 runtime)
 apps/web/package.json
 apps/api/dist/               ← compiled TypeScript
 apps/api/package.json
@@ -474,7 +507,7 @@ The workflow reconstructs it on each run:
 
 This written `.env` is then used three ways in one pipeline:
 1. **Tests** read `DEV_DATABASE_URL` from it.
-2. **`next build`** reads `NEXT_PUBLIC_*` from it and bakes them into the browser bundle (via the existing `loadEnv(...)` in `apps/web/next.config.ts`).
+2. **`vite build`** reads `VITE_*` / `NEXT_PUBLIC_*` from it and inlines them into the browser bundle (via `loadEnv(...)` in `apps/web/vite.config.ts`).
 3. **Rsynced to the VM** as part of the artifact, so the API reads `STRIPE_SECRET_KEY`, `JWT_SECRET`, etc. at runtime.
 
 **When you change an env var:** edit your local `.env` → update the `PROD_ENV` secret in GitHub (paste the full new file) → push any commit. The next deploy ships the new values everywhere.
@@ -540,10 +573,10 @@ to already exist. For the very first deploy, let CI do the rsync + install
 cd ~/tradeLiv
 
 # .env is already there (shipped from the PROD_ENV secret).
-# node_modules is already installed.
-# Just start the processes:
-pm2 start "npm run start --workspace=apps/api" --name tradeliv-api --cwd ~/tradeLiv
-pm2 start "npm run start --workspace=apps/web" --name tradeliv-web --cwd ~/tradeLiv
+# node_modules is already installed; apps/web/dist is the prebuilt static bundle.
+# Just start the processes from the shipped ecosystem file:
+pm2 start ecosystem.config.js --only tradeliv-api
+pm2 start ecosystem.config.js --only tradeliv-web   # serves apps/web/dist via serve.mjs
 pm2 save
 ```
 
@@ -552,8 +585,18 @@ From this point on, every push to `main` is fully automated.
 ### Nginx configuration (reverse proxy)
 
 Nginx terminates TLS and forwards `/api/*` to port 4000 and everything else
-to port 3000 (`next start`). Put this in `/etc/nginx/sites-available/tradeliv`
-and symlink into `sites-enabled/`:
+to port 3000 (the static `serve.mjs` server). Put this in
+`/etc/nginx/sites-available/tradeliv` and symlink into `sites-enabled/`.
+
+> **Optional (fully Node-less frontend):** instead of proxying `/` to `serve.mjs`
+> on :3000, point nginx straight at the static files and drop the `tradeliv-web`
+> PM2 process entirely. Replace the `location /` block below with:
+> ```nginx
+> root /home/ubuntu/tradeLiv/apps/web/dist;
+> index index.html;
+> location / { try_files $uri $uri/ /200.html; }
+> ```
+> (`docker/web.conf` is the same config used by the Docker web image.)
 
 ```nginx
 server {
@@ -628,19 +671,26 @@ ssh ubuntu@$OCI_HOST bash -lc '
 '
 ```
 
-### Why we dropped `output: 'standalone'`
+### Why we migrated off Next.js to a Vite SPA
 
-Next.js has a `standalone` output mode that produces a minimal self-contained
-server bundle. It's designed for Docker images. The catch: standalone only
-emits the server code — `.next/static/` and `public/` must be **manually
-copied** into the standalone directory after every build, otherwise every
-`/_next/static/chunks/*.js` returns 404 and the browser refuses to execute
-them (wrong MIME type from the HTML fallback).
+The web app was almost entirely client-rendered already (data is fetched in the
+browser from the separate Express API; auth is cookie-based). The only things
+that needed the Next.js Node server were `middleware.ts` (route gating) and one
+cookie-reading server component — both easily moved to the client.
 
-For a non-Docker PM2 deploy, this manual-copy step is a footgun. We removed
-`output: 'standalone'` from `next.config.ts` and switched the `start` script
-to plain `next start`, which serves its own static files correctly with zero
-extra steps. The runtime cost is ~50 MB extra RAM — acceptable on a 1 GB VM.
+On a 1 GB VM, the `next start` process was the single biggest memory consumer
+(budgeted ~450 MB in PM2). Migrating to **Vite + react-router** turns the frontend
+into a folder of static files, removing the Node web server entirely:
+
+- **Build** (in CI/Docker, never on the VM): `vite build` + a small prerender step
+  that emits real HTML for the public marketing pages (SEO) and a `200.html` SPA
+  shell for client routes.
+- **Serve**: nginx serves the static `dist/` directly, or — to keep the existing
+  reverse-proxy untouched — a ~40 MB zero-dependency `serve.mjs` under PM2 on :3000
+  (with SPA fallback + immutable asset caching).
+
+Net effect: the `tradeliv-web` footprint drops from **~450 MB → ~40 MB** (or 0 if
+nginx serves the files directly), freeing headroom on the always-free VM.
 
 ---
 
@@ -652,18 +702,18 @@ GitHub (push to main)
         ▼
 GitHub Actions (ubuntu-latest, 16 GB RAM)
   ├── Stage 1: test       → jest
-  ├── Stage 2: build      → next build + tsc + prisma generate
+  ├── Stage 2: build      → vite build + prerender + tsc + prisma generate
   │                       → upload artifact
   └── Stage 3: deploy     → rsync artifact + ssh pm2 reload
         │
         ▼ SSH over port 22
 OCI A1.Flex VM, 1 GB RAM (tradeliv.design)
   ├── nginx  (system service)      → TLS + reverse proxy
-  │     ├── :443 → 127.0.0.1:3000  (Next.js — tradeliv-web)
+  │     ├── :443 → 127.0.0.1:3000  (static SPA — tradeliv-web / serve.mjs)
   │     └── :443/api → :4000        (Express — tradeliv-api)
   └── PM2 (user service)
         ├── tradeliv-api    → node apps/api/dist/index.js
-        └── tradeliv-web    → next start
+        └── tradeliv-web    → node serve.mjs  (serves apps/web/dist, ~40 MB)
               │
               ▼
         Supabase PostgreSQL (external)
@@ -719,7 +769,7 @@ OCI A1.Flex VM, 1 GB RAM (tradeliv.design)
 | **Decimal (not float) for money** | Prisma `Decimal` type avoids floating-point rounding in financial calculations |
 | **Dual DB toggle (`USE_DB`)** | Switch between dev/prod databases at runtime — no URL editing |
 | **Root build context in Docker** | Monorepo: both apps depend on `packages/db`, `packages/types` — build context must include the full repo |
-| **Next.js standalone output** | Self-contained `server.js` bundle — reduces web image from ~1 GB to ~100 MB |
+| **Vite static SPA over Next.js** | App was already client-rendered; serving static files removes the frontend Node server (~450 MB → ~40 MB on the 1 GB VM) while keeping SEO via prerendered public pages |
 | **GitHub Actions layer cache** | `type=gha` cache cuts repeat build times by 60–80% |
 | **Pre-deploy DB backup** | Automatic `pg_dump` snapshot before every production deploy, stored in the `db-backups` volume |
 
@@ -819,12 +869,53 @@ PROD_DIRECT_DATABASE_URL="postgresql://postgres.[ref]:[password]@aws-0-us-west-2
   1. `npm run build --workspace=packages/db`
   2. `npm run build --workspace=packages/emails`
   3. `npm run build --workspace=apps/api`
-  4. `npm run build --workspace=apps/web -- --no-lint`
+  4. `npm run build --workspace=apps/web`
 - Start commands:
   - API: `node dist/index.js` (cwd `apps/api`)
-  - Web: `node .next/standalone/apps/web/server.js` (cwd `apps/web`)
+  - Web: `node serve.mjs` (cwd `apps/web`) — see the migration note below
 - Validation:
   - `curl http://127.0.0.1:4000/health`
   - preflight check to `/api/auth/admin/login` with `Origin: https://www.tradeliv.design`
   - browser network confirms `Access-Control-Allow-Origin` and cookie domain/flags.
+
+---
+
+### Frontend migration — Next.js → Vite static SPA (2026-06-25)
+
+**Goal:** remove the frontend Node server to reclaim RAM on the 1 GB OCI VM. The
+`next start` process was budgeted ~450 MB in PM2 — by far the largest consumer.
+
+**What changed**
+- `apps/web` is now a **Vite 6 + React 19 + react-router 6** static SPA. Next.js
+  (App Router, `middleware.ts`, server components, `next/*` imports) was removed.
+- Route protection moved from edge middleware to the existing client-side layout
+  guards (`api.getMe()` / `getAdminMe()`); real authorization is still enforced
+  per-endpoint by the API, so security is unchanged.
+- Thin compat shims (`src/components/Link.tsx`, `src/lib/router.ts`) kept page-level
+  churn to one-line import swaps across ~50 files.
+- Public marketing pages (`/`, `/about`, `/contact`, `/terms`, `/privacy`) are
+  **prerendered to static HTML** at build time (`scripts/prerender.mjs`, Vite SSR +
+  `StaticRouter`) for SEO; a `200.html` shell is the SPA fallback for all other routes.
+- Frontend env vars renamed `NEXT_PUBLIC_*` → `VITE_*`; `vite.config.ts` still reads
+  the legacy names from the `PROD_ENV` secret as a fallback (no secret changes needed).
+
+**Runtime / deploy**
+- `ecosystem.config.js` `tradeliv-web` now runs `serve.mjs` (zero-dependency static
+  server, SPA fallback + immutable asset caching) instead of `next start` —
+  `max_memory_restart` dropped from 450 MB to 120 MB (settles ~40 MB).
+- `deploy.yml` ships `apps/web/dist/` + `serve.mjs` instead of the `.next` build.
+- `apps/web/Dockerfile` final stage is `nginx:alpine` serving `dist/` (no Node);
+  `docker/web.conf` added; `docker-compose.yml` web service uses `VITE_*` build args.
+- **Fully Node-less option:** point the VM's nginx at `apps/web/dist` (see the nginx
+  block above) and remove `tradeliv-web` from PM2 — frontend RAM then drops to 0.
+
+**Run locally after this change**
+```bash
+npm install
+# dev (HMR):
+npm run dev                  # Chrome + API + Vite web + Stripe listener
+# or build + serve the static frontend:
+VITE_API_URL=http://localhost:4000 npm run build:web
+node apps/web/serve.mjs      # http://localhost:3000
+```
 

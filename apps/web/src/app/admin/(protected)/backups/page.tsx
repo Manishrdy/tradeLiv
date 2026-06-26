@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter } from '@/lib/router';
 import { api, BackupConfig, BackupRun, BackupStats } from '@/lib/api';
 
 const STATUS_STYLE: Record<string, { color: string; bg: string }> = {

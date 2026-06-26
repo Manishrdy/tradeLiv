@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter } from '@/lib/router';
 import { api, AdminUser, AdminDesigner } from '@/lib/api';
 
 export default function AdminTeamPage() {

@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
-import Link from 'next/link';
+import { useRouter, usePathname } from '@/lib/router';
+import { Outlet } from 'react-router-dom';
+import Link from '@/components/Link';
 import { api, AdminNotification } from '@/lib/api';
 
 interface AdminUserState {
@@ -131,7 +132,7 @@ const NAV = [
   },
 ];
 
-export default function AdminProtectedLayout({ children }: { children: React.ReactNode }) {
+export default function AdminProtectedLayout() {
   const router   = useRouter();
   const pathname = usePathname();
   const [admin, setAdmin]       = useState<AdminUserState | null>(null);
@@ -157,7 +158,7 @@ export default function AdminProtectedLayout({ children }: { children: React.Rea
   // SSE for admin notifications
   useEffect(() => {
     if (!admin) return;
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL ?? '';
+    const baseUrl = import.meta.env.VITE_API_URL ?? '';
     const es = new EventSource(`${baseUrl}/api/admin/notifications/stream`, { withCredentials: true });
 
     es.addEventListener('admin_unread_count', (e) => {
@@ -474,7 +475,7 @@ export default function AdminProtectedLayout({ children }: { children: React.Rea
 
       {/* ── Main content ────────────────────────────────── */}
       <main style={{ marginLeft: 220, flex: 1, minWidth: 0 }}>
-        {children}
+        <Outlet />
       </main>
     </div>
   );

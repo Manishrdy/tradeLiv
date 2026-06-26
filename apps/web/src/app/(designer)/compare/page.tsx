@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { useSearchParams, useRouter } from '@/lib/router';
+import Link from '@/components/Link';
 import { api, Product, ProjectSummary, Room, RecommendationResult, deriveAvailableOptions, ProductVariant } from '@/lib/api';
 import {
   getAttributesForCategory,

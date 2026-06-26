@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { useParams, useRouter } from '@/lib/router';
+import Link from '@/components/Link';
 import { api, Room, ShortlistItem, ProductListItem, ShortlistUpdatePayload } from '@/lib/api';
 import { useBreadcrumbStore } from '@/lib/store/breadcrumbs';
 
@@ -863,7 +863,7 @@ export default function RoomDetailPage() {
 
   // ── SSE: real-time sync ────────────────────────────
   useEffect(() => {
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
     const es = new EventSource(`${API_URL}/api/projects/${projectId}/events`, { withCredentials: true });
     es.addEventListener('shortlist_updated', () => { loadShortlist(); });
     return () => es.close();

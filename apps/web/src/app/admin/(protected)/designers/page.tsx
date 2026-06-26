@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import Link from 'next/link';
+import Link from '@/components/Link';
 import { api, AdminDesigner } from '@/lib/api';
 
 const STATUS_OPTIONS = ['', 'email_pending', 'pending_review', 'approved', 'rejected', 'suspended'];

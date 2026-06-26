@@ -1,8 +1,8 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
-import Link from 'next/link';
+import { useSearchParams } from '@/lib/router';
+import Link from '@/components/Link';
 import { api } from '@/lib/api';
 
 type State = 'loading' | 'success' | 'error' | 'expired';

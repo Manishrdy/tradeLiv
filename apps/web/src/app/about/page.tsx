@@ -1,11 +1,5 @@
-import type { Metadata } from 'next';
-import Link from 'next/link';
+import Link from '@/components/Link';
 import '../landing-v2/landing-v2.css';
-
-export const metadata: Metadata = {
-  title: 'About — tradeLiv',
-  description: 'The team and mission behind tradeLiv — the sourcing platform built for interior designers.',
-};
 
 export default function AboutPage() {
   return (

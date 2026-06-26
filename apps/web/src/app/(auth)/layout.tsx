@@ -1,7 +1,9 @@
-export default function AuthLayout({ children }: { children: React.ReactNode }) {
+import { Outlet } from 'react-router-dom';
+
+export default function AuthLayout() {
   return (
     <div className="min-h-screen overflow-hidden">
-      {children}
+      <Outlet />
     </div>
   );
 }

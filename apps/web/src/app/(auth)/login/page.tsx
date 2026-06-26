@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import Link from '@/components/Link';
+import { useRouter, useSearchParams } from '@/lib/router';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/lib/store/auth';
 
@@ -47,7 +47,16 @@ const LABEL: React.CSSProperties = {
 
 export default function LoginPage() {
   const router  = useRouter();
+  const searchParams = useSearchParams();
   const setUser = useAuthStore((s) => s.setUser);
+  const existingUser = useAuthStore((s) => s.user);
+  const redirectTo = searchParams.get('redirect') || '/dashboard';
+
+  // Already signed in (per persisted store) → skip the login form.
+  useEffect(() => {
+    if (existingUser) router.replace(redirectTo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [email,      setEmail]      = useState('');
   const [password,   setPassword]   = useState('');
@@ -66,10 +75,10 @@ export default function LoginPage() {
     const iv = setInterval(() => {
       p += 2.2;
       setProgress(Math.min(p, 100));
-      if (p >= 100) { clearInterval(iv); router.push('/dashboard'); }
+      if (p >= 100) { clearInterval(iv); router.push(redirectTo); }
     }, 40);
     return () => clearInterval(iv);
-  }, [success, router]);
+  }, [success, router, redirectTo]);
 
   const emailError = touched.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? 'Enter a valid email address.' : '';
   const passwordError = touched.password && !password ? 'Password is required.' : '';

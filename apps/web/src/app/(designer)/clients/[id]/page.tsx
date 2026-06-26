@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { useParams, useRouter } from '@/lib/router';
+import Link from '@/components/Link';
 import { api, ClientDetail, ClientPayload, Address } from '@/lib/api';
 import { useBreadcrumbStore } from '@/lib/store/breadcrumbs';
 

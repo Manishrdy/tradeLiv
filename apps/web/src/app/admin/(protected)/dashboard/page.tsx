@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
+import Link from '@/components/Link';
 import { api, AdminEnhancedStats, AdminDesigner } from '@/lib/api';
 
 function StatCard({ label, value, sub }: { label: string; value: number | string; sub?: string }) {
