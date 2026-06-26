@@ -7,8 +7,8 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n docker,api,web,stripe -c magenta,blue,green,yellow \"docker-compose up chrome\" \"npm run dev --workspace=apps/api\" \"npm run dev --workspace=apps/web\" \"stripe listen --forward-to localhost:4000/api/webhooks/stripe\"",
-    "dev:api": "docker-compose up chrome -d && npm run dev --workspace=apps/api",
+    "dev": "concurrently -n api,web,stripe -c blue,green,yellow \"npm run dev --workspace=apps/api\" \"npm run dev --workspace=apps/web\" \"stripe listen --forward-to localhost:4000/api/webhooks/stripe\"",
+    "dev:api": "npm run dev --workspace=apps/api",
     "dev:web": "npm run dev --workspace=apps/web",
     "build": "npm run build:api && npm run build --workspace=apps/web",
     "build:packages": "npm run build --workspace=packages/db && npm run build --workspace=packages/emails",
