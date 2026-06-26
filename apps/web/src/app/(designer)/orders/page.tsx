@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import Link from 'next/link';
+import Link from '@/components/Link';
 import { api, OrderSummaryGlobal } from '@/lib/api';
 
 /* ── Status config ───────────────────────────────── */

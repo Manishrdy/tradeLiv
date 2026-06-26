@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import Link from '@/components/Link';
+import { useRouter } from '@/lib/router';
 import { api } from '@/lib/api';
 
 function EyeIcon({ open }: { open: boolean }) {

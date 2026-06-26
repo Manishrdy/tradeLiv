@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { useParams, usePathname } from 'next/navigation';
+import { Outlet } from 'react-router-dom';
+import Link from '@/components/Link';
+import { useParams, usePathname } from '@/lib/router';
 import { api } from '@/lib/api';
 import ProjectChatPanel from '@/components/ProjectChatPanel';
 
@@ -14,8 +15,8 @@ const TABS = [
   { label: 'Orders',   href: (id: string) => `/projects/${id}/orders` },
 ];
 
-export default function ProjectLayout({ children }: { children: React.ReactNode }) {
-  const { id } = useParams<{ id: string }>();
+export default function ProjectLayout() {
+  const { id = '' } = useParams<{ id: string }>();
   const pathname = usePathname();
   const [clientName, setClientName] = useState<string | null>(null);
 
@@ -63,7 +64,7 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
         })}
       </div>
 
-      {children}
+      <Outlet />
 
       {/* Unified Chat Panel — available on all project pages */}
       {clientName && <ProjectChatPanel projectId={id} clientName={clientName} />}

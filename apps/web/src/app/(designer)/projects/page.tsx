@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { useRouter } from '@/lib/router';
+import Link from '@/components/Link';
 import { api, ProjectSummary } from '@/lib/api';
 
 /* ── Constants ─────────────────────────────────────── */

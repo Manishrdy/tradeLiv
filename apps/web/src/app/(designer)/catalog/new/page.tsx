@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { useRouter } from '@/lib/router';
+import Link from '@/components/Link';
 import { api, ProductPayload, ExtractedProduct, DuplicateProduct, ProductMetadata, ProductImages, ProductOption, ProductVariant, deriveAvailableOptions, findVariantPrice } from '@/lib/api';
 
 const EXTRACT_STEPS = [

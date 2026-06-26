@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import { useParams } from 'next/navigation';
-import Link from 'next/link';
+import { useParams } from '@/lib/router';
+import Link from '@/components/Link';
 import { api, OrderSummary } from '@/lib/api';
 
 function formatPrice(price: number | null) {

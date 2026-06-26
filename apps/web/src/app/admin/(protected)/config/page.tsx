@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter } from '@/lib/router';
 import { api, PlatformConfigEntry } from '@/lib/api';
 
 const GROUP_COLORS: Record<string, { color: string; bg: string }> = {

@@ -32,7 +32,7 @@ export default function ProjectChatPanel({ projectId, clientName }: Props) {
   const [clientLastSeen, setClientLastSeen] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+  const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
   const loadMessages = useCallback(async () => {
     const r = await api.getMessages(projectId);

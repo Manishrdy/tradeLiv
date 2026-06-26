@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams } from '@/lib/router';
 import { api, PortalProject, PortalShortlistItem, PortalRoom, PortalProduct, ChatMessage, QuoteSummary, QuoteDetail } from '@/lib/api';
 
 /* ─── Helpers ─────────────────────────────────────── */
@@ -1280,7 +1280,7 @@ export default function PortalPage() {
   // ── SSE: single connection for all real-time events ──
   useEffect(() => {
     if (!portalToken) return;
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
     const es = new EventSource(`${API_URL}/api/portal/${portalToken}/events`);
 
     // Project events

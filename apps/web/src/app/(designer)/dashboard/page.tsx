@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import Link from 'next/link';
+import Link from '@/components/Link';
 import { useAuthStore } from '@/lib/store/auth';
 import { api, DesignerProfile, DashboardStats, ProjectSummary } from '@/lib/api';
 

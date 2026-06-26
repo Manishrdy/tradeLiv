@@ -25,9 +25,11 @@ module.exports = {
       },
     },
     {
+      // Static SPA server for the Vite build output (apps/web/dist). Replaces the
+      // Next.js `next start` process — serves prerendered pages + SPA fallback at
+      // ~40 MB RSS instead of ~450 MB, the main RAM win on the 1 GB VM.
       name: 'tradeliv-web',
-      script: '/home/ubuntu/tradeLiv/node_modules/next/dist/bin/next',
-      args: 'start --port 3000',
+      script: 'serve.mjs',
       cwd: '/home/ubuntu/tradeLiv/apps/web',
       interpreter: 'node',
       instances: 1,
@@ -35,15 +37,12 @@ module.exports = {
       autorestart: true,
       max_restarts: 10,
       restart_delay: 5000,
-      // Graceful restart before the kernel OOM killer fires. PM2 restart is
-      // ~10s; an OOM kill + cold start is 60–120s and surfaces as gateway
-      // timeouts to users.
-      max_memory_restart: '450M',
+      max_memory_restart: '120M',
       kill_timeout: 5000,
       env: {
         NODE_ENV: 'production',
-        // Next.js startup is heavier; keep enough room for the OS, PM2, and API.
-        NODE_OPTIONS: '--max-old-space-size=384',
+        PORT: '3000',
+        NODE_OPTIONS: '--max-old-space-size=96',
       },
     },
   ],

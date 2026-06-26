@@ -1,11 +1,6 @@
-import type { Metadata } from 'next';
+import { Outlet } from 'react-router-dom';
 
-export const metadata: Metadata = {
-  title: 'Your Project — Tradeliv',
-  description: 'View your project details, review product selections, and communicate with your designer.',
-};
-
-export default function PortalLayout({ children }: { children: React.ReactNode }) {
+export default function PortalLayout() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
       {/* Top nav */}
@@ -28,7 +23,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
 
       {/* Page content — wider max-width, responsive padding */}
       <main className="portal-main" style={{ maxWidth: 960, margin: '0 auto', padding: '32px 20px 80px' }}>
-        {children}
+        <Outlet />
       </main>
 
       {/* Responsive CSS for mobile-first */}

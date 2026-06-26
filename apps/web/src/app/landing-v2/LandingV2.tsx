@@ -1,7 +1,6 @@
 'use client';
 
-import Image from 'next/image';
-import Link from 'next/link';
+import Link from '@/components/Link';
 import { useEffect, useRef, useState } from 'react';
 import './landing-v2.css';
 
@@ -256,12 +255,10 @@ export default function LandingV2() {
                   ].map((p) => (
                     <div key={p.name} className="lv2-hero-preview-card">
                       <div style={{ position: 'relative', height: 120 }}>
-                        <Image
+                        <img
                           src={p.img}
                           alt={p.name}
-                          fill
-                          sizes="(max-width: 760px) 50vw, 200px"
-                          style={{ objectFit: 'cover' }}
+                          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
                         />
                       </div>
                       <div className="lv2-hero-preview-card-meta">
@@ -358,7 +355,7 @@ export default function LandingV2() {
                   <span className="lv2-mock-url-badge">Extract</span>
                 </div>
                 <div className="lv2-mock-row">
-                  <Image src="/landing/thumb-sofa.jpg" alt="Sofa" width={48} height={48} style={{ objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
+                  <img src="/landing/thumb-sofa.jpg" alt="Sofa" width={48} height={48} style={{ objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>Arden 3-Seater Sofa</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>$12,450 · Oak + Linen · 84×36×32 in</div>
@@ -366,7 +363,7 @@ export default function LandingV2() {
                   {Icon.checkGreen}
                 </div>
                 <div className="lv2-mock-row">
-                  <Image src="/landing/thumb-chair.jpg" alt="Chair" width={48} height={48} style={{ objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
+                  <img src="/landing/thumb-chair.jpg" alt="Chair" width={48} height={48} style={{ objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>Nara Accent Chair</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>$4,200 · Walnut + Velvet · 28×30×33 in</div>
@@ -374,7 +371,7 @@ export default function LandingV2() {
                   {Icon.checkGreen}
                 </div>
                 <div className="lv2-mock-row">
-                  <Image src="/landing/thumb-table.jpg" alt="Table" width={48} height={48} style={{ objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
+                  <img src="/landing/thumb-table.jpg" alt="Table" width={48} height={48} style={{ objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>Elara Coffee Table</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>$3,890 · Marble + Brass · 48×24×16 in</div>
@@ -405,7 +402,7 @@ export default function LandingV2() {
                   <div className="lv2-mock-compare-card pinned">
                     <span className="lv2-mock-compare-pin">PINNED</span>
                     <div style={{ position: 'relative', height: 110, borderRadius: 8, overflow: 'hidden', marginBottom: 10 }}>
-                      <Image src="/landing/sofa-1.jpg" alt="Arden" fill sizes="200px" style={{ objectFit: 'cover' }} />
+                      <img src="/landing/sofa-1.jpg" alt="Arden" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
                     </div>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>Arden 3-Seater</div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Crate & Barrel</div>
@@ -414,7 +411,7 @@ export default function LandingV2() {
                   </div>
                   <div className="lv2-mock-compare-card">
                     <div style={{ position: 'relative', height: 110, borderRadius: 8, overflow: 'hidden', marginBottom: 10 }}>
-                      <Image src="/landing/sofa-2.jpg" alt="Oslo" fill sizes="200px" style={{ objectFit: 'cover' }} />
+                      <img src="/landing/sofa-2.jpg" alt="Oslo" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
                     </div>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>Oslo Lounge</div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>West Elm</div>
@@ -452,7 +449,7 @@ export default function LandingV2() {
                     Client Portal — Harper Residence · Living Room
                   </div>
                   <div className="lv2-mock-portal-item">
-                    <Image src="/landing/thumb-sofa.jpg" alt="Sofa" width={40} height={40} style={{ objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
+                    <img src="/landing/thumb-sofa.jpg" alt="Sofa" width={40} height={40} style={{ objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>Arden 3-Seater Sofa</div>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>$12,450 · Oak + Linen</div>
@@ -460,7 +457,7 @@ export default function LandingV2() {
                     <span className="lv2-mock-portal-pill approved">Approved</span>
                   </div>
                   <div className="lv2-mock-portal-item">
-                    <Image src="/landing/thumb-chair.jpg" alt="Chair" width={40} height={40} style={{ objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
+                    <img src="/landing/thumb-chair.jpg" alt="Chair" width={40} height={40} style={{ objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>Nara Accent Chair</div>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>$4,200 · Walnut + Velvet</div>
@@ -468,7 +465,7 @@ export default function LandingV2() {
                     <span className="lv2-mock-portal-pill pending">Pending</span>
                   </div>
                   <div className="lv2-mock-portal-item">
-                    <Image src="/landing/thumb-table.jpg" alt="Table" width={40} height={40} style={{ objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
+                    <img src="/landing/thumb-table.jpg" alt="Table" width={40} height={40} style={{ objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>Elara Coffee Table</div>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>$3,890 · Marble + Brass</div>

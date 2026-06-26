@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
-import Link from 'next/link';
+import { useRouter, usePathname } from '@/lib/router';
+import { Outlet } from 'react-router-dom';
+import Link from '@/components/Link';
 import { useAuthStore } from '@/lib/store/auth';
 import { useBreadcrumbStore } from '@/lib/store/breadcrumbs';
 import { api } from '@/lib/api';
@@ -224,7 +225,7 @@ function KbdBadge({ shortcut }: { shortcut: string }) {
 const SIDEBAR_FULL = 220;
 const SIDEBAR_COLLAPSED = 60;
 
-export default function DesignerLayout({ children }: { children: React.ReactNode }) {
+export default function DesignerLayout() {
   const router   = useRouter();
   const pathname = usePathname();
   const { user, setUser, clearAuth } = useAuthStore();
@@ -249,7 +250,10 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
         setUser({ id: r.data.id, fullName: r.data.fullName, email: r.data.email, status: r.data.status });
       } else {
         clearAuth();
-        router.replace('/login');
+        const dest = pathname && pathname !== '/dashboard'
+          ? `/login?redirect=${encodeURIComponent(pathname)}`
+          : '/login';
+        router.replace(dest);
       }
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -296,7 +300,7 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
   /* ── Notification SSE stream ─────────────────────── */
   useEffect(() => {
     if (!user) return;
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+    const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
     // Fetch initial unread count
     api.getNotificationUnreadCount().then((r) => {
@@ -786,7 +790,7 @@ export default function DesignerLayout({ children }: { children: React.ReactNode
             })}
           </nav>
         )}
-        {children}
+        <Outlet />
       </main>
 
       {/* ── Logout confirmation modal ─────────────────── */}

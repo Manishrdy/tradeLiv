@@ -1,11 +1,5 @@
-import type { Metadata } from 'next';
-import Link from 'next/link';
+import Link from '@/components/Link';
 import '../landing-v2/landing-v2.css';
-
-export const metadata: Metadata = {
-  title: 'Contact — tradeLiv',
-  description: 'Get in touch with the tradeLiv team.',
-};
 
 export default function ContactPage() {
   return (

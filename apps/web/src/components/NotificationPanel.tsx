@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { useRouter } from 'next/navigation';
+import { useRouter } from '@/lib/router';
 import { api, Notification, NotificationType } from '@/lib/api';
 
 /* ── Helpers ─────────────────────────────────────────── */

@@ -35,7 +35,8 @@
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
-    "prisma": "^5.22.0"
+    "prisma": "^5.22.0",
+    "react-router-dom": "^6.28.0"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0"

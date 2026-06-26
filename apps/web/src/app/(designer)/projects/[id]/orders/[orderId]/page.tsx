@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
+import { useParams, useSearchParams } from '@/lib/router';
+import Link from '@/components/Link';
 import { api, OrderDetail, Payment } from '@/lib/api';
 import { useBreadcrumbStore } from '@/lib/store/breadcrumbs';
 

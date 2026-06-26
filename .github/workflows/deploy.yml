@@ -23,7 +23,7 @@ jobs:
         run: npm ci
 
       # Reconstruct the prod .env file from the single PROD_ENV secret.
-      # next.config.ts auto-loads it for NEXT_PUBLIC_* bake-in, and tests
+      # vite.config.ts loads it (VITE_*/NEXT_PUBLIC_* bake-in), and tests
       # read DEV_DATABASE_URL from it.
       - name: Write .env from PROD_ENV secret
         env:
@@ -57,7 +57,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Reconstruct .env so next.config.ts loads NEXT_PUBLIC_* at build time.
+      # Reconstruct .env so vite.config.ts loads VITE_*/NEXT_PUBLIC_* at build time.
       - name: Write .env from PROD_ENV secret
         env:
           PROD_ENV: ${{ secrets.PROD_ENV }}
@@ -94,10 +94,8 @@ jobs:
             apps/api/package.json
             apps/api/dist/
             apps/web/package.json
-            apps/web/next.config.ts
-            apps/web/public/
-            apps/web/.next/
-            !apps/web/.next/cache
+            apps/web/serve.mjs
+            apps/web/dist/
             packages/db/package.json
             packages/db/prisma/
             packages/db/dist/

@@ -1,11 +1,5 @@
-import type { Metadata } from 'next';
-import Link from 'next/link';
+import Link from '@/components/Link';
 import '../landing-v2/landing-v2.css';
-
-export const metadata: Metadata = {
-  title: 'Privacy Policy — tradeLiv',
-  description: 'How tradeLiv collects, uses, and protects your data.',
-};
 
 const EFFECTIVE_DATE = 'April 23, 2025';
 

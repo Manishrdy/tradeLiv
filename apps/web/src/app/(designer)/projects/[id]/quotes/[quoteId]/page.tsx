@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter } from '@/lib/router';
 import { api, QuoteDetail, QuoteUpdatePayload } from '@/lib/api';
 import { useBreadcrumbStore } from '@/lib/store/breadcrumbs';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
 function formatPrice(price: number | null | undefined) {
   if (price == null) return '--';

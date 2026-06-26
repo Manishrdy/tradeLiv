@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import Link from '@/components/Link';
+import { useRouter } from '@/lib/router';
 import { api, ProductListItem } from '@/lib/api';
 
 /* ── Helpers ───────────────────────────────────────── */
